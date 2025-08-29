@@ -1,27 +1,23 @@
 // utils/supabase/server.ts
-import { createServerClient } from '@supabase/ssr'
+import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
+/** Server-side client for RSC, route handlers, and server components */
 export async function createClient() {
-  // In Next 15, cookies() should be awaited
-  const cookieStore = await cookies()
+  const cookieStore = await cookies() // Next.js 15: cookies() is async
 
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!, // anon (publishable) key
     {
       cookies: {
         get(name: string) {
           return cookieStore.get(name)?.value
         },
-        set(
-          name: string,
-          value: string,
-          options: Parameters<typeof cookieStore.set>[0] extends object ? any : any
-        ) {
+        set(name: string, value: string, options: CookieOptions) {
           cookieStore.set({ name, value, ...options })
         },
-        remove(name: string, options?: Parameters<typeof cookieStore.set>[0]) {
+        remove(name: string, options: CookieOptions) {
           cookieStore.set({ name, value: '', ...options })
         },
       },
