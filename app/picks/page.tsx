@@ -1,198 +1,230 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
-import { createClient } from '@/utils/supabase/client'
+import Image from 'next/image'
 
 type League = { id: string; name: string; season: number }
 type Team = {
   id: string; name: string; abbreviation: string;
-  primary_color?: string|null; secondary_color?: string|null;
-  tertiary_color?: string|null; quaternary_color?: string|null;
+  color_primary?: string|null; color_secondary?: string|null;
+  color_tertiary?: string|null; color_quaternary?: string|null;
+  color_pref_light?: 'primary'|'secondary'|'tertiary'|'quaternary'|null;
+  color_pref_dark?:  'primary'|'secondary'|'tertiary'|'quaternary'|null;
   logo?: string|null; logo_dark?: string|null;
 }
 type Game = {
-  id: string; game_utc: string; week: number;
-  home: Team; away: Team;
-  home_score?: number|null; away_score?: number|null;
+  id: string; game_utc: string; week: number; status?: string;
+  home: Team; away: Team; home_score?: number|null; away_score?: number|null;
 }
+type PickRow = { team_id: string; game_id: string }
 
 function parseHex(hex?: string|null) {
   if (!hex) return null
-  const s = hex.trim().replace('#','')
-  if (![3,6].includes(s.length)) return null
+  const s = hex.replace('#','').trim()
   const v = s.length===3 ? s.split('').map(c=>c+c).join('') : s
-  const r = parseInt(v.slice(0,2),16), g = parseInt(v.slice(2,4),16), b = parseInt(v.slice(4,6),16)
-  return { r, g, b }
+  if (v.length!==6) return null
+  const r=parseInt(v.slice(0,2),16), g=parseInt(v.slice(2,4),16), b=parseInt(v.slice(4,6),16)
+  return { r,g,b }
 }
-function relLuminance({r,g,b}:{r:number,g:number,b:number}) {
-  const f = (c:number)=>{ c/=255; return c<=0.03928? c/12.92 : Math.pow((c+0.055)/1.055, 2.4) }
-  const R=f(r), G=f(g), B=f(b); return 0.2126*R + 0.7152*G + 0.0722*B
+function relL({r,g,b}:{r:number;g:number;b:number}) {
+  const f=(c:number)=>{ c/=255; return c<=0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055,2.4) }
+  const R=f(r), G=f(g), B=f(b); return 0.2126*R+0.7152*G+0.0722*B
 }
 function contrast(bgHex:string, textHex:string) {
   const bg=parseHex(bgHex), tx=parseHex(textHex); if(!bg||!tx) return 0
-  const L1=relLuminance(bg)+0.05, L2=relLuminance(tx)+0.05
-  return L1>L2 ? L1/L2 : L2/L1
+  const L1=relL(bg)+0.05, L2=relL(tx)+0.05; return L1>L2 ? L1/L2 : L2/L1
 }
-function bestTextColor(bgHex?: string|null) {
-  const bg = bgHex || '#e5e7eb'
-  return contrast(bg, '#ffffff') >= contrast(bg, '#000000') ? '#ffffff' : '#000000'
+function textOn(bg?:string|null) {
+  const c = contrast(bg||'#e5e7eb', '#000')
+  return c >= contrast(bg||'#e5e7eb', '#fff') ? '#000' : '#fff'
+}
+function tint(hex?:string|null, t=0.9) {
+  const c = parseHex(hex); if(!c) return '#eceff1'
+  const r=Math.round(c.r+(255-c.r)*t), g=Math.round(c.g+(255-c.g)*t), b=Math.round(c.b+(255-c.b)*t)
+  return `rgb(${r} ${g} ${b})`
+}
+function colorByKey(t?:Team, k?:string|null) {
+  if (!t) return null
+  return k==='primary'?t.color_primary
+    : k==='secondary'?t.color_secondary
+    : k==='tertiary'?t.color_tertiary
+    : k==='quaternary'?t.color_quaternary
+    : null
+}
+function baseColor(t?:Team, dark=false) {
+  const pref = dark ? t?.color_pref_dark : t?.color_pref_light
+  return colorByKey(t, pref) || t?.color_primary || t?.color_secondary || t?.color_tertiary || t?.color_quaternary || '#eceff1'
 }
 function usePrefersDark() {
   const [dark, setDark] = useState(false)
-  useEffect(() => {
+  useEffect(()=>{
     const mq = window.matchMedia?.('(prefers-color-scheme: dark)')
-    const sync = () => setDark(!!mq?.matches)
-    sync()
-    mq?.addEventListener?.('change', sync)
-    return () => mq?.removeEventListener?.('change', sync)
-  }, [])
+    const sync=()=>setDark(!!mq?.matches); sync()
+    mq?.addEventListener?.('change', sync); return ()=>mq?.removeEventListener?.('change', sync)
+  },[])
   return dark
 }
 
-function Pill({ team, disabled=false, active=false, onClick }:{
-  team:Team, disabled?:boolean, active?:boolean, onClick?:()=>void
+function TeamPill({
+  team, active, disabled, onClick,
+}:{
+  team: Team; active?: boolean; disabled?: boolean; onClick?: ()=>void
 }) {
-  // fallback order: primary → secondary → tertiary → quaternary
-  const bg =
-    team.primary_color ||
-    team.secondary_color ||
-    team.tertiary_color ||
-    team.quaternary_color ||
-    '#e5e7eb'
-  const text = bestTextColor(bg)
+  const dark = usePrefersDark()
+  const b = baseColor(team, dark)
+  const bg = tint(b, 0.90)
+  const fg = textOn(bg)
+  const borderWidth = active ? 2 : 1
+  const logo = dark ? (team.logo_dark || team.logo) : (team.logo || team.logo_dark)
+
   return (
     <button
       onClick={disabled?undefined:onClick}
-      aria-pressed={active}
+      aria-pressed={!!active}
       disabled={disabled}
-      style={{
-        minHeight: 56, padding: '10px 14px', borderRadius: 999,
-        border: active ? '2px solid #111' : '1px solid rgba(0,0,0,0.15)',
-        background: disabled ? '#e5e7eb' : bg,
-        color: disabled ? '#6b7280' : text,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        fontWeight: 700, letterSpacing: .2,
-        display:'inline-flex', alignItems:'center', gap:10
-      }}
+      className="min-h-12 w-full rounded-full border px-3 py-2 text-left transition-[border-width,opacity] disabled:opacity-60"
+      style={{ background:bg, color:fg, borderColor:b, borderWidth }}
       title={`${team.abbreviation} — ${team.name}`}
     >
-      {team.logo && <img src={team.logo as string} alt="" width={20} height={20} style={{borderRadius:4}} />}
-      <span>{team.abbreviation} — {team.name}</span>
+      <span className="inline-flex items-center gap-2 font-semibold">
+        {logo && <Image src={logo} alt="" width={18} height={18} className="rounded" />}
+        <span>{team.abbreviation} — {team.name}</span>
+      </span>
     </button>
   )
 }
 
 export default function PicksPage() {
-  const sb = useMemo(()=>createClient(),[])
-  const prefersDark = usePrefersDark()
-
+  const dark = usePrefersDark()
   const [leagues, setLeagues] = useState<League[]>([])
   const [leagueId, setLeagueId] = useState('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
   const [week, setWeek] = useState<number>(1)
   const [games, setGames] = useState<Game[]>([])
-  const [myPicks, setMyPicks] = useState<{team_id:string, game_id:string}[]>([])
+  const [myPicks, setMyPicks] = useState<PickRow[]>([])
+  const [usedTeamIds, setUsedTeamIds] = useState<Set<string>>(new Set())
   const [log, setLog] = useState('')
 
-  useEffect(()=>{ // load leagues
+  const pickedIds = useMemo(()=> new Set(myPicks.map(p=>p.team_id)), [myPicks])
+  const picksLeft = Math.max(0, 2 - myPicks.length)
+  const isLocked = (utc: string) => new Date(utc).getTime() <= Date.now()
+
+  useEffect(()=>{
     fetch('/api/my-leagues').then(r=>r.json()).then(j=>{
-      setLeagues(j.leagues || [])
-      if (!leagueId && j.leagues?.[0]) setLeagueId(j.leagues[0].id)
+      const ls: League[] = j.leagues || []
+      setLeagues(ls)
+      if (!leagueId && ls[0]) { setLeagueId(ls[0].id); setSeason(ls[0].season) }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[])
 
-  function isLocked(gameUtc:string) {
-    return new Date(gameUtc) <= new Date()
-  }
-
-  async function loadWeek() {
+  useEffect(()=>{
+    if (!leagueId || !season || !week) return
     setLog('')
-    const g = await fetch(`/api/games-for-week?season=${season}&week=${week}`).then(r=>r.json())
-    if (g.error) { setLog(g.error); setGames([]); return }
-    const withLogos = (g.games || []).map((gm:Game) => {
-      const swap = (t:Team):Team => {
-        const img = prefersDark ? (t.logo_dark || t.logo) : (t.logo || t.logo_dark)
-        return { ...t, logo: img }
-      }
-      return { ...gm, home: swap(gm.home), away: swap(gm.away) }
-    })
-    setGames(withLogos)
-
-    if (leagueId) {
-      const p = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`).then(r=>r.json())
+    ;(async ()=>{
+      const [g,p,used] = await Promise.all([
+        fetch(`/api/games-for-week?season=${season}&week=${week}`).then(r=>r.json()),
+        fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`).then(r=>r.json()),
+        fetch(`/api/used-teams?leagueId=${leagueId}&season=${season}`).then(r=>r.json()),
+      ])
+      setGames((g.games||[]).map((x:any)=>({
+        id:x.id, game_utc:x.game_utc||x.start_time, week:x.week, status:x.status,
+        home:x.home, away:x.away,
+        home_score:x.home_score ?? x.home?.score ?? null,
+        away_score:x.away_score ?? x.away?.score ?? null,
+      })))
       setMyPicks(p.picks || [])
-    }
-  }
+      setUsedTeamIds(new Set(used.teams || []))
+    })()
+  }, [leagueId, season, week])
 
-  async function makePick(teamId:string, gameId:string) {
+  async function togglePick(team: Team, game: Game) {
     setLog('')
-    if (!leagueId) { setLog('Pick a league first'); return }
-    if ((myPicks?.length ?? 0) >= 2) { setLog('You already have 2 picks this week.'); return }
+    const alreadyPickedThisGame = myPicks.find(x=>x.game_id===game.id)
+    const pickingSame = alreadyPickedThisGame && alreadyPickedThisGame.team_id===team.id
+    const locked = isLocked(game.game_utc)
 
-    const res = await fetch('/api/picks', {
-      method:'POST',
-      headers:{'content-type':'application/json'},
-      body: JSON.stringify({ leagueId, season, week, teamId, gameId })
-    })
-    const j = await res.json()
-    if (!res.ok) { setLog(j.error || 'Error'); return }
-    const p = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`).then(r=>r.json())
-    setMyPicks(p.picks || [])
-    setLog(`Picked! ${JSON.stringify(j)}`)
+    if (locked) { setLog('Game locked.'); return }
+
+    if (pickingSame) {
+      // UNPICK
+      const res = await fetch('/api/picks', { method:'DELETE', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ leagueId, season, week, gameId: game.id, teamId: team.id }) })
+      const j = await res.json()
+      if (!res.ok) { setLog(j.error||'Error'); return }
+    } else {
+      if (picksLeft===0 && !alreadyPickedThisGame) { setLog('You already have 2 picks this week.'); return }
+      if (usedTeamIds.has(team.id)) { setLog('You already used this team this season.'); return }
+      const res = await fetch('/api/picks', { method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ leagueId, season, week, teamId: team.id, gameId: game.id }) })
+      const j = await res.json()
+      if (!res.ok) { setLog(j.error||'Error'); return }
+    }
+
+    // refresh both week picks + used set
+    const [p, used] = await Promise.all([
+      fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`).then(r=>r.json()),
+      fetch(`/api/used-teams?leagueId=${leagueId}&season=${season}`).then(r=>r.json())
+    ])
+    setMyPicks(p.picks||[])
+    setUsedTeamIds(new Set(used.teams||[]))
   }
-
-  const picksLeft = Math.max(0, 2 - (myPicks?.length ?? 0))
-  const pickedTeamIds = new Set(myPicks.map(p=>p.team_id))
 
   return (
-    <main style={{display:'grid', gap:16, padding:'16px 20px', maxWidth:900, margin:'0 auto'}}>
-      <h1 style={{fontSize:'1.5rem', fontWeight:800}}>Make Your Picks</h1>
+    <main className="mx-auto max-w-5xl px-4 py-6 space-y-4">
+      <h1 className="text-3xl font-extrabold tracking-tight">Make Your Picks</h1>
 
-      <section style={{display:'flex', flexWrap:'wrap', gap:8, alignItems:'center'}}>
-        <label>League&nbsp;
-          <select value={leagueId} onChange={e=>setLeagueId(e.target.value)} style={{border:'1px solid #ccc', padding:'6px 8px', minHeight:40}}>
+      <section className="flex flex-wrap items-center gap-2">
+        <label className="text-sm">League
+          <select className="ml-2 h-9 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
+            value={leagueId} onChange={e=>setLeagueId(e.target.value)}>
             <option value="" disabled>Choose…</option>
             {leagues.map(l=> <option key={l.id} value={l.id}>{l.name} · {l.season}</option>)}
           </select>
         </label>
-        <label>Season&nbsp;
-          <input type="number" value={season} onChange={e=>setSeason(+e.target.value)} style={{border:'1px solid #ccc', padding:'6px 8px', width:100, minHeight:40}}/>
+        <label className="text-sm">Season
+          <input type="number" className="ml-2 h-9 w-24 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
+            value={season} onChange={e=>setSeason(+e.target.value)} />
         </label>
-        <label>Week&nbsp;
-          <input type="number" value={week} onChange={e=>setWeek(+e.target.value)} style={{border:'1px solid #ccc', padding:'6px 8px', width:80, minHeight:40}}/>
+        <label className="text-sm">Week
+          <input type="number" className="ml-2 h-9 w-16 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
+            value={week} onChange={e=>setWeek(+e.target.value)} />
         </label>
-        <button onClick={loadWeek} style={{border:'1px solid #ccc', padding:'8px 12px', minHeight:40}}>Load</button>
-        <span style={{marginLeft:'auto', opacity:.75}}>Picks left this week: <b>{picksLeft}</b></span>
+        <span className="ml-auto text-sm text-neutral-600 dark:text-neutral-400">Picks left this week: <b>{Math.max(0,2-myPicks.length)}</b></span>
       </section>
 
-      <section style={{display:'grid', gap:12}}>
-        {games.length===0 && <div style={{opacity:.7}}>No games loaded yet. Click "Load".</div>}
+      <section className="space-y-4">
         {games.map(g=>{
           const locked = isLocked(g.game_utc)
-          const leftActive = pickedTeamIds.has(g.home.id)
-          const rightActive = pickedTeamIds.has(g.away.id)
+          const leftActive  = !!myPicks.find(p=>p.game_id===g.id && p.team_id===g.home.id)
+          const rightActive = !!myPicks.find(p=>p.game_id===g.id && p.team_id===g.away.id)
+          const leftDisabled  = locked || rightActive || usedTeamIds.has(g.home.id)
+          const rightDisabled = locked || leftActive  || usedTeamIds.has(g.away.id)
 
           return (
-            <div key={g.id} style={{ border:'1px solid #e5e7eb', borderRadius:16, padding:12, display:'grid', gap:8, background:'#fff' }}>
-              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8}}>
-                <div style={{fontWeight:700}}>
-                  {new Date(g.game_utc).toLocaleString()} • Week {g.week}
-                </div>
-                {locked && <span style={{fontSize:12, color:'#6b7280'}}>Locked</span>}
+            <div key={g.id} className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+              <div className="mb-2 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
+                <span>{new Date(g.game_utc).toLocaleString()} • Week {g.week}</span>
+                <span className="uppercase tracking-wide">{locked ? 'LOCKED' : (g.status||'UPCOMING')}</span>
               </div>
-              <div style={{display:'flex', gap:12, flexWrap:'wrap'}}>
-                <Pill team={g.home} disabled={locked || rightActive || picksLeft===0} active={leftActive} onClick={()=>makePick(g.home.id, g.id)} />
-                <Pill team={g.away} disabled={locked || leftActive || picksLeft===0} active={rightActive} onClick={()=>makePick(g.away.id, g.id)} />
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+                <TeamPill team={g.home} active={leftActive} disabled={leftDisabled} onClick={()=>togglePick(g.home, g)} />
+                <div className="hidden sm:block text-neutral-400 text-center">—</div>
+                <TeamPill team={g.away} active={rightActive} disabled={rightDisabled} onClick={()=>togglePick(g.away, g)} />
+              </div>
+
+              <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                {locked && <span className="mr-3">🔒 Locked</span>}
+                {usedTeamIds.has(g.home.id) && <span className="mr-3">🏷️ {g.home.abbreviation} used</span>}
+                {usedTeamIds.has(g.away.id) && <span className="mr-3">🏷️ {g.away.abbreviation} used</span>}
               </div>
             </div>
           )
         })}
       </section>
 
-      <pre style={{whiteSpace:'pre-wrap', fontSize:12, opacity:.7}}>{log}</pre>
-      <footer style={{fontSize:12, opacity:.6}}>
-        Text contrast targets WCAG AA (4.5:1 text / 3:1 UI). Tap targets ≥56px for mobile.
-      </footer>
+      <pre className="text-xs opacity-70 whitespace-pre-wrap">{log}</pre>
     </main>
   )
 }
+
