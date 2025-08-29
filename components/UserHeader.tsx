@@ -50,3 +50,9 @@ export default function UserHeader() {
     </header>
   )
 }
+
+// Add theme toggle
+import { ThemeToggle } from './ThemeToggle'
+
+{/* Place this where you want the toggle */}
+{/* <ThemeToggle /> */}
