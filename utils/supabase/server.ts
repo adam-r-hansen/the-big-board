@@ -1,8 +1,9 @@
+// utils/supabase/server.ts
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
 export async function createClient() {
-  // Mark createClient as async, and await the cookies() call
+  // In Next 15, cookies() should be awaited
   const cookieStore = await cookies()
 
   return createServerClient(
@@ -13,13 +14,18 @@ export async function createClient() {
         get(name: string) {
           return cookieStore.get(name)?.value
         },
-        set(name: string, value: string, options: any) {
+        set(
+          name: string,
+          value: string,
+          options: Parameters<typeof cookieStore.set>[0] extends object ? any : any
+        ) {
           cookieStore.set({ name, value, ...options })
         },
-        remove(name: string, options: any) {
+        remove(name: string, options?: Parameters<typeof cookieStore.set>[0]) {
           cookieStore.set({ name, value: '', ...options })
         },
       },
     }
   )
 }
+
