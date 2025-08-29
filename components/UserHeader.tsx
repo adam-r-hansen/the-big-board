@@ -1,52 +1,25 @@
 'use client'
-import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { createClient } from '@/utils/supabase/client'
+import { usePathname } from 'next/navigation'
+
+const link = 'opacity-80 hover:opacity-100 transition'
+const active = 'font-semibold opacity-100'
 
 export default function UserHeader() {
-  const [email, setEmail] = useState<string | null>(null)
-  const router = useRouter()
-  const supabase = createClient()
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null))
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      setEmail(session?.user?.email ?? null)
-    })
-    return () => { sub?.subscription?.unsubscribe?.() }
-  }, [supabase])
-
-  const signOut = async () => {
-    await supabase.auth.signOut()
-    setEmail(null)
-    router.replace('/login')
-  }
+  const pathname = usePathname()
+  const is = (p: string) => pathname === p
 
   return (
-    <header style={{
-      padding: '12px 16px',
-      borderBottom: '1px solid #e5e7eb',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      position: 'sticky',
-      top: 0,
-      background: '#fff',
-      zIndex: 10,
-      boxShadow: '0 1px 0 rgba(0,0,0,0.05)'
-    }}>
-      <Link href="/" style={{fontWeight: 800, textDecoration:'none', color:'#111'}}>Big Board Pick’em</Link>
-      {email ? (
-        <div style={{display:'flex', gap:10, alignItems:'center'}}>
-          <span style={{opacity:.8}}>Signed in: {email}</span>
-          <button onClick={signOut} style={{border:'1px solid #ccc', padding:'6px 10px', cursor:'pointer'}}>Sign out</button>
-        </div>
-      ) : (
-        <Link href="/login">
-          <button style={{border:'1px solid #ccc', padding:'6px 10px', cursor:'pointer'}}>Sign in</button>
-        </Link>
-      )}
+    <header className="sticky top-0 z-10 border-b border-neutral-200/80 dark:border-neutral-800/80 bg-white/70 dark:bg-neutral-950/70 backdrop-blur">
+      <div className="mx-auto max-w-6xl px-4 h-14 flex items-center justify-between gap-3">
+        <Link href="/" className="font-extrabold tracking-tight">Big Board</Link>
+        <nav className="flex items-center gap-4 text-sm">
+          <Link href="/picks" className={`${link} ${is('/picks') ? active : ''}`}>Picks</Link>
+          <Link href="/scoreboard" className={`${link} ${is('/scoreboard') ? active : ''}`}>NFL Scoreboard</Link>
+          <Link href="/standings" className={`${link} ${is('/standings') ? active : ''}`}>League Standings</Link>
+          <Link href="/admin" className={`${link} ${is('/admin') ? active : ''}`}>Admin</Link>
+        </nav>
+      </div>
     </header>
   )
 }
