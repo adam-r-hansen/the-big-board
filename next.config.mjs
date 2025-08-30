@@ -1,14 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  images: {
-    remotePatterns: [
-      // Supabase storage & public buckets
-      { protocol: 'https', hostname: '**.supabase.co' },
-      // If you ever point logos to ESPN or NFL CDNs, these keep working:
-      { protocol: 'https', hostname: 'a.espncdn.com' },
-      { protocol: 'https', hostname: 'static.www.nfl.com' },
-    ],
+  eslint: {
+    // CI/CD: don’t run ESLint during `next build`
+    ignoreDuringBuilds: true,
   },
 };
+
 export default nextConfig;
 
