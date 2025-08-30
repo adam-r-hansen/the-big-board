@@ -1,7 +1,5 @@
-// app/picks/page.tsx
 'use client'
 import { useEffect, useMemo, useState } from 'react'
-import Image from 'next/image'
 import TeamPill, { Team } from '@/components/TeamPill'
 
 type League = { id: string; name: string; season: number }
@@ -11,6 +9,11 @@ type Game = {
   home_score?: number|null; away_score?: number|null; status?: string|null;
 }
 type Pick = { id: string; team_id: string; game_id: string|null }
+
+function safeJson(res: Response) {
+  const ct = res.headers.get('content-type') || ''
+  return ct.includes('application/json') ? res.json() : Promise.resolve(null)
+}
 
 export default function PicksPage() {
   const [leagues, setLeagues] = useState<League[]>([])
@@ -72,26 +75,8 @@ export default function PicksPage() {
     return m
   }, [picks])
 
-  const isLocked = (gameUtc: string) => new Date(gameUtc) <= new Date()
-
-  async function refreshPicksAndUsage() {
-    const j = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`).then(r=>r.json())
-    setPicks((j.picks ?? []).map((r:any)=>({ id:r.id, team_id:r.team_id, game_id:r.game_id })))
-    const u = await fetch(`/api/used-teams`).then(r=>r.json())
-    setUsedTeamIds(new Set((u.used ?? []) as string[]))
-  }
-
-  async function unpickById(id: string) {
-    setLog('')
-    try {
-      const res = await fetch(`/api/picks?id=${encodeURIComponent(id)}`, { method:'DELETE' })
-      const contentType = res.headers.get('content-type') || ''
-      const body = contentType.includes('application/json') ? await res.json() : {}
-      if (!res.ok) throw new Error((body as any).error || 'Unpick failed')
-      await refreshPicksAndUsage()
-    } catch (e:any) {
-      setLog(e?.message || 'Unpick error')
-    }
+  function isLocked(gameUtc: string) {
+    return new Date(gameUtc) <= new Date()
   }
 
   async function togglePick(teamId: string, gameId: string) {
@@ -99,22 +84,31 @@ export default function PicksPage() {
     const existingPickId = pickByGame.get(gameId)
     try {
       if (existingPickId && picks.find(p => p.id === existingPickId)?.team_id === teamId) {
-        await unpickById(existingPickId) // same team in same game -> unpick
-        return
+        // unpick same team in same game
+        const del = await fetch(`/api/picks?id=${existingPickId}`, { method:'DELETE' })
+        const j = await safeJson(del)
+        if (!del.ok) throw new Error((j as any)?.error || 'Unpick failed')
+      } else {
+        if (existingPickId) {
+          const del = await fetch(`/api/picks?id=${existingPickId}`, { method:'DELETE' })
+          const j = await safeJson(del)
+          if (!del.ok) throw new Error((j as any)?.error || 'Unpick failed')
+        }
+        const res = await fetch('/api/picks', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ leagueId, season, week, teamId, gameId })
+        })
+        const j = await safeJson(res)
+        if (!res.ok) throw new Error((j as any)?.error || 'Pick failed')
       }
-      if (existingPickId) {
-        await unpickById(existingPickId) // swap within game
-      }
-      const res = await fetch('/api/picks', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ leagueId, season, week, teamId, gameId })
-      })
-      const j = await res.json()
-      if (!res.ok) throw new Error(j.error || 'Pick failed')
-      await refreshPicksAndUsage()
+      // refresh
+      const j = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`).then(r=>r.json())
+      setPicks((j.picks ?? []).map((r:any)=>({ id:r.id, team_id:r.team_id, game_id:r.game_id })))
+      const u = await fetch(`/api/used-teams`).then(r=>r.json())
+      setUsedTeamIds(new Set((u.used ?? []) as string[]))
     } catch (e:any) {
-      setLog(e?.message || 'Pick error')
+      setLog(e?.message || 'Error')
     }
   }
 
@@ -171,7 +165,7 @@ export default function PicksPage() {
                     team={home}
                     picked={pickedTeamIds.has(home?.id || '')}
                     disabled={locked || weeklyQuotaFull || homeUsed}
-                    onClick={()=>togglePick(home!.id, g.id)}
+                    onClick={()=>home && togglePick(home.id, g.id)}
                   />
                 </div>
                 <div className="text-neutral-400">—</div>
@@ -180,7 +174,7 @@ export default function PicksPage() {
                     team={away}
                     picked={pickedTeamIds.has(away?.id || '')}
                     disabled={locked || weeklyQuotaFull || awayUsed}
-                    onClick={()=>togglePick(away!.id, g.id)}
+                    onClick={()=>away && togglePick(away.id, g.id)}
                   />
                 </div>
               </div>
@@ -193,8 +187,8 @@ export default function PicksPage() {
         })}
       </section>
 
-      {/* RIGHT 1/3 — this week's picks */}
-      <aside className="lg:col-span-1 self-start sticky top-4">
+      {/* RIGHT 1/3 — weekly picks + season picks */}
+      <aside className="grid gap-4">
         <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
           <header className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold">My picks — Week {week}</h2>
@@ -205,18 +199,20 @@ export default function PicksPage() {
             <ul className="text-sm grid gap-2">
               {picks.map(p => {
                 const t = teams[p.team_id]
-                const kickoff = games.find(g=>g.id===p.game_id)?.game_utc
-                const locked = kickoff ? isLocked(kickoff) : false
+                const locked = p.game_id
+                  ? isLocked(games.find(g=>g.id===p.game_id)?.game_utc || '')
+                  : false
                 return (
                   <li key={p.id} className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2">
-                    <span className="flex items-center gap-2 min-w-0">
-                      {t?.logo && <Image src={(t.logo_dark||t.logo)!} alt="" width={16} height={16} className="rounded" />}
-                      <span className="font-medium truncate">{t ? `${t.abbreviation} — ${t.name}` : p.team_id}</span>
+                    <span className="font-medium flex items-center gap-2">
+                      {/* use img to avoid Next Image remote config */}
+                      {t?.logo && <img src={(t.logo_dark || t.logo) as string} alt="" width={16} height={16} className="rounded" />}
+                      {t ? `${t.abbreviation} — ${t.name}` : p.team_id}
                     </span>
                     <button
-                      className="text-xs underline disabled:opacity-50 ml-3 shrink-0"
+                      className="text-xs underline disabled:opacity-50"
                       disabled={locked}
-                      onClick={()=>unpickById(p.id)}
+                      onClick={()=>togglePick(p.team_id, p.game_id || '')}
                       title={locked ? 'Locked (kickoff passed)' : 'Unpick'}
                     >
                       {locked ? 'Locked' : 'Unpick'}
@@ -226,8 +222,28 @@ export default function PicksPage() {
               })}
             </ul>
           )}
+          {log && <p className="mt-3 text-xs text-red-600">{log}</p>}
         </section>
-        {log && <p className="mt-2 text-xs text-red-600">{log}</p>}
+
+        {/* Season picks so far */}
+        <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+          <h3 className="text-base font-semibold mb-3">Season picks so far</h3>
+          {usedTeamIds.size === 0 ? (
+            <div className="text-sm text-neutral-500">None yet.</div>
+          ) : (
+            <ul className="grid gap-2">
+              {[...usedTeamIds].map(id => {
+                const t = teams[id]
+                return (
+                  <li key={id} className="flex items-center gap-2 text-sm">
+                    {t?.logo && <img src={(t.logo_dark || t.logo) as string} alt="" width={16} height={16} className="rounded" />}
+                    <span>{t ? `${t.abbreviation} — ${t.name}` : id}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
       </aside>
     </main>
   )

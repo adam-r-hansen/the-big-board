@@ -1,4 +1,3 @@
-// app/api/picks/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
@@ -12,10 +11,9 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: uerr } = await sb.auth.getUser()
   if (uerr) return NextResponse.json({ error: uerr.message }, { status: 500 })
   if (!user) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
-
   const profileId = user.id
 
-  // must be league member
+  // Must be a league member
   const { data: lm, error: lmErr } = await sb
     .from('league_members')
     .select('role')
@@ -25,7 +23,7 @@ export async function POST(req: NextRequest) {
   if (lmErr) return NextResponse.json({ error: lmErr.message }, { status: 500 })
   if (!lm) return NextResponse.json({ error: 'not a league member' }, { status: 403 })
 
-  // two picks per week
+  // Two picks per week
   const { count: countWeek, error: cErr } = await sb
     .from('picks')
     .select('*', { count: 'exact', head: true })
@@ -33,7 +31,7 @@ export async function POST(req: NextRequest) {
   if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 })
   if ((countWeek ?? 0) >= 2) return NextResponse.json({ error: 'quota reached (2 picks/week)' }, { status: 400 })
 
-  // no team reuse in season
+  // No team reuse in season
   const { count: used, error: uErr } = await sb
     .from('picks')
     .select('*', { count: 'exact', head: true })
@@ -41,7 +39,7 @@ export async function POST(req: NextRequest) {
   if (uErr) return NextResponse.json({ error: uErr.message }, { status: 500 })
   if ((used ?? 0) > 0) return NextResponse.json({ error: 'team already used this season' }, { status: 400 })
 
-  // rolling lock by kickoff
+  // Rolling lock: prevent picks after kickoff
   let gId = gameId as string | undefined
   if (!gId) {
     const { data: g, error: gErr } = await sb
@@ -52,7 +50,7 @@ export async function POST(req: NextRequest) {
       .limit(1).maybeSingle()
     if (gErr) return NextResponse.json({ error: gErr.message }, { status: 500 })
     if (g) gId = g.id
-    if (g && g.game_utc && new Date(g.game_utc) <= new Date()) {
+    if (g && new Date(g.game_utc) <= new Date()) {
       return NextResponse.json({ error: 'game is locked (kickoff passed)' }, { status: 400 })
     }
   }
@@ -68,40 +66,47 @@ export async function POST(req: NextRequest) {
       game_id: gId || null
     })
     .select('id')
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    .single()
 
-  // Supabase can return array; normalize to single id
-  const id = Array.isArray(data) ? data[0]?.id : (data as any)?.id
-  return NextResponse.json({ id })
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ id: data.id })
 }
 
 export async function DELETE(req: NextRequest) {
-  const id = req.nextUrl.searchParams.get('id') || ''
-  if (!id) return NextResponse.json({ error: 'missing id' }, { status: 400 })
+  const url = new URL(req.url)
+  const id = url.searchParams.get('id') || (await req.json().catch(()=>null))?.id
+  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
   const sb = await createClient()
   const { data: { user }, error: uerr } = await sb.auth.getUser()
   if (uerr) return NextResponse.json({ error: uerr.message }, { status: 500 })
   if (!user) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
 
-  // We must ensure the pick belongs to the user and has not locked
+  // Get pick (no joins — keep it simple/stable)
   const { data: p, error: pErr } = await sb
     .from('picks')
-    .select('id, profile_id, game_id, games(id, game_utc)')
+    .select('id, profile_id, game_id')
     .eq('id', id)
     .maybeSingle()
   if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 })
-  if (!p) return NextResponse.json({ ok: true }) // already deleted
+  if (!p) return NextResponse.json({ ok: true }) // already deleted/doesn't exist
   if (p.profile_id !== user.id) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
-  const kickoffISO = (p as any).games?.game_utc as string | undefined
-  if (kickoffISO && new Date(kickoffISO) <= new Date()) {
-    return NextResponse.json({ error: 'game is locked (kickoff passed)' }, { status: 400 })
+  // If there is a game, ensure it hasn't started yet
+  if (p.game_id) {
+    const { data: g, error: gErr } = await sb
+      .from('games')
+      .select('id, game_utc')
+      .eq('id', p.game_id)
+      .maybeSingle()
+    if (gErr) return NextResponse.json({ error: gErr.message }, { status: 500 })
+    if (g && g.game_utc && new Date(g.game_utc) <= new Date()) {
+      return NextResponse.json({ error: 'game is locked (kickoff passed)' }, { status: 400 })
+    }
   }
 
   const { error: dErr } = await sb.from('picks').delete().eq('id', id)
   if (dErr) return NextResponse.json({ error: dErr.message }, { status: 500 })
-
   return NextResponse.json({ ok: true })
 }
 
