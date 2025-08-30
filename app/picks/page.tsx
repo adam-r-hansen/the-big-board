@@ -1,179 +1,127 @@
+// app/picks/page.tsx
 'use client'
 import { useEffect, useMemo, useState } from 'react'
-import Image from 'next/image'
+import TeamPill, { Team } from '@/components/TeamPill'
 
 type League = { id: string; name: string; season: number }
-type Team = {
-  id: string; name: string; abbreviation: string;
-  color_primary?: string|null; color_secondary?: string|null;
-  color_tertiary?: string|null; color_quaternary?: string|null;
-  color_pref_light?: 'primary'|'secondary'|'tertiary'|'quaternary'|null;
-  color_pref_dark?:  'primary'|'secondary'|'tertiary'|'quaternary'|null;
-  logo?: string|null; logo_dark?: string|null;
-}
 type Game = {
-  id: string; game_utc: string; week: number; status?: string;
-  home: Team; away: Team; home_score?: number|null; away_score?: number|null;
+  id: string; game_utc: string; week: number;
+  home: { id: string }; away: { id: string };
+  home_score?: number|null; away_score?: number|null; status?: string|null;
 }
-type PickRow = { team_id: string; game_id: string }
-
-function parseHex(hex?: string|null) {
-  if (!hex) return null
-  const s = hex.replace('#','').trim()
-  const v = s.length===3 ? s.split('').map(c=>c+c).join('') : s
-  if (v.length!==6) return null
-  const r=parseInt(v.slice(0,2),16), g=parseInt(v.slice(2,4),16), b=parseInt(v.slice(4,6),16)
-  return { r,g,b }
-}
-function relL({r,g,b}:{r:number;g:number;b:number}) {
-  const f=(c:number)=>{ c/=255; return c<=0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055,2.4) }
-  const R=f(r), G=f(g), B=f(b); return 0.2126*R+0.7152*G+0.0722*B
-}
-function contrast(bgHex:string, textHex:string) {
-  const bg=parseHex(bgHex), tx=parseHex(textHex); if(!bg||!tx) return 0
-  const L1=relL(bg)+0.05, L2=relL(tx)+0.05; return L1>L2 ? L1/L2 : L2/L1
-}
-function textOn(bg?:string|null) {
-  const c = contrast(bg||'#e5e7eb', '#000')
-  return c >= contrast(bg||'#e5e7eb', '#fff') ? '#000' : '#fff'
-}
-function tint(hex?:string|null, t=0.9) {
-  const c = parseHex(hex); if(!c) return '#eceff1'
-  const r=Math.round(c.r+(255-c.r)*t), g=Math.round(c.g+(255-c.g)*t), b=Math.round(c.b+(255-c.b)*t)
-  return `rgb(${r} ${g} ${b})`
-}
-function colorByKey(t?:Team, k?:string|null) {
-  if (!t) return null
-  return k==='primary'?t.color_primary
-    : k==='secondary'?t.color_secondary
-    : k==='tertiary'?t.color_tertiary
-    : k==='quaternary'?t.color_quaternary
-    : null
-}
-function baseColor(t?:Team, dark=false) {
-  const pref = dark ? t?.color_pref_dark : t?.color_pref_light
-  return colorByKey(t, pref) || t?.color_primary || t?.color_secondary || t?.color_tertiary || t?.color_quaternary || '#eceff1'
-}
-function usePrefersDark() {
-  const [dark, setDark] = useState(false)
-  useEffect(()=>{
-    const mq = window.matchMedia?.('(prefers-color-scheme: dark)')
-    const sync=()=>setDark(!!mq?.matches); sync()
-    mq?.addEventListener?.('change', sync); return ()=>mq?.removeEventListener?.('change', sync)
-  },[])
-  return dark
-}
-
-function TeamPill({
-  team, active, disabled, onClick,
-}:{
-  team: Team; active?: boolean; disabled?: boolean; onClick?: ()=>void
-}) {
-  const dark = usePrefersDark()
-  const b = baseColor(team, dark)
-  const bg = tint(b, 0.90)
-  const fg = textOn(bg)
-  const borderWidth = active ? 2 : 1
-  const logo = dark ? (team.logo_dark || team.logo) : (team.logo || team.logo_dark)
-
-  return (
-    <button
-      onClick={disabled?undefined:onClick}
-      aria-pressed={!!active}
-      disabled={disabled}
-      className="min-h-12 w-full rounded-full border px-3 py-2 text-left transition-[border-width,opacity] disabled:opacity-60"
-      style={{ background:bg, color:fg, borderColor:b, borderWidth }}
-      title={`${team.abbreviation} — ${team.name}`}
-    >
-      <span className="inline-flex items-center gap-2 font-semibold">
-        {logo && <Image src={logo} alt="" width={18} height={18} className="rounded" />}
-        <span>{team.abbreviation} — {team.name}</span>
-      </span>
-    </button>
-  )
-}
+type Pick = { id: string; team_id: string; game_id: string|null }
 
 export default function PicksPage() {
-  const dark = usePrefersDark()
   const [leagues, setLeagues] = useState<League[]>([])
   const [leagueId, setLeagueId] = useState('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
   const [week, setWeek] = useState<number>(1)
+
   const [games, setGames] = useState<Game[]>([])
-  const [myPicks, setMyPicks] = useState<PickRow[]>([])
+  const [picks, setPicks] = useState<Pick[]>([])
+  const [teams, setTeams] = useState<Record<string, Team>>({})
   const [usedTeamIds, setUsedTeamIds] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(false)
   const [log, setLog] = useState('')
 
-  const pickedIds = useMemo(()=> new Set(myPicks.map(p=>p.team_id)), [myPicks])
-  const picksLeft = Math.max(0, 2 - myPicks.length)
-  const isLocked = (utc: string) => new Date(utc).getTime() <= Date.now()
-
-  useEffect(()=>{
+  // initial data
+  useEffect(() => {
     fetch('/api/my-leagues').then(r=>r.json()).then(j=>{
       const ls: League[] = j.leagues || []
       setLeagues(ls)
       if (!leagueId && ls[0]) { setLeagueId(ls[0].id); setSeason(ls[0].season) }
     })
+    fetch('/api/team-map').then(r=>r.json()).then(j=> setTeams(j.teams || {}))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[])
+  }, [])
 
-  useEffect(()=>{
+  // load when inputs change
+  useEffect(() => {
     if (!leagueId || !season || !week) return
-    setLog('')
-    ;(async ()=>{
-      const [g,p,used] = await Promise.all([
-        fetch(`/api/games-for-week?season=${season}&week=${week}`).then(r=>r.json()),
-        fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`).then(r=>r.json()),
-        fetch(`/api/used-teams?leagueId=${leagueId}&season=${season}`).then(r=>r.json()),
-      ])
-      setGames((g.games||[]).map((x:any)=>({
-        id:x.id, game_utc:x.game_utc||x.start_time, week:x.week, status:x.status,
-        home:x.home, away:x.away,
-        home_score:x.home_score ?? x.home?.score ?? null,
-        away_score:x.away_score ?? x.away?.score ?? null,
-      })))
-      setMyPicks(p.picks || [])
-      setUsedTeamIds(new Set(used.teams || []))
+    ;(async () => {
+      setLoading(true); setLog('')
+      try {
+        const [g, p, u] = await Promise.all([
+          fetch(`/api/games-for-week?season=${season}&week=${week}`).then(r=>r.json()),
+          fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`).then(r=>r.json()),
+          fetch(`/api/used-teams`).then(r=>r.json()),
+        ])
+        setGames((g.games ?? []).map((x:any)=>({
+          id: x.id,
+          game_utc: x.game_utc || x.start_time,
+          week: x.week,
+          home: { id: x.home?.id || x.home_team },
+          away: { id: x.away?.id || x.away_team },
+          home_score: x.home_score ?? null,
+          away_score: x.away_score ?? null,
+          status: x.status ?? 'UPCOMING',
+        })))
+        setPicks((p.picks ?? []).map((r:any)=>({ id:r.id, team_id:r.team_id, game_id:r.game_id })))
+        setUsedTeamIds(new Set((u.used ?? []) as string[]))
+      } catch (e:any) {
+        setLog(e?.message || 'Load error')
+      } finally { setLoading(false) }
     })()
   }, [leagueId, season, week])
 
-  async function togglePick(team: Team, game: Game) {
+  const picksLeft = Math.max(0, 2 - (picks?.length ?? 0))
+  const pickedTeamIds = new Set(picks.map(x=>x.team_id))
+  const pickIdByGame = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const p of picks) if (p.game_id) m.set(p.game_id, p.id)
+    return m
+  }, [picks])
+
+  const isLocked = (gameUtc?: string) => !!gameUtc && new Date(gameUtc) <= new Date()
+
+  async function makePick(teamId: string, gameId: string) {
     setLog('')
-    const alreadyPickedThisGame = myPicks.find(x=>x.game_id===game.id)
-    const pickingSame = alreadyPickedThisGame && alreadyPickedThisGame.team_id===team.id
-    const locked = isLocked(game.game_utc)
+    try {
+      const existingId = pickIdByGame.get(gameId)
+      if (existingId) {
+        // delete the existing pick in that game to allow swap
+        const del = await fetch(`/api/picks?id=${existingId}`, { method:'DELETE' })
+        const jd = await del.json().catch(()=>({}))
+        if (!del.ok) throw new Error(jd.error || 'Unpick failed')
+      }
+      const res = await fetch('/api/picks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ leagueId, season, week, teamId, gameId }),
+      })
+      const j = await res.json().catch(()=>({}))
+      if (!res.ok) throw new Error(j.error || 'Pick failed')
 
-    if (locked) { setLog('Game locked.'); return }
-
-    if (pickingSame) {
-      // UNPICK
-      const res = await fetch('/api/picks', { method:'DELETE', headers:{'content-type':'application/json'},
-        body: JSON.stringify({ leagueId, season, week, gameId: game.id, teamId: team.id }) })
-      const j = await res.json()
-      if (!res.ok) { setLog(j.error||'Error'); return }
-    } else {
-      if (picksLeft===0 && !alreadyPickedThisGame) { setLog('You already have 2 picks this week.'); return }
-      if (usedTeamIds.has(team.id)) { setLog('You already used this team this season.'); return }
-      const res = await fetch('/api/picks', { method:'POST', headers:{'content-type':'application/json'},
-        body: JSON.stringify({ leagueId, season, week, teamId: team.id, gameId: game.id }) })
-      const j = await res.json()
-      if (!res.ok) { setLog(j.error||'Error'); return }
+      await refreshPicks()
+    } catch (e:any) {
+      setLog(e?.message || 'Error')
     }
+  }
 
-    // refresh both week picks + used set
-    const [p, used] = await Promise.all([
-      fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`).then(r=>r.json()),
-      fetch(`/api/used-teams?leagueId=${leagueId}&season=${season}`).then(r=>r.json())
-    ])
-    setMyPicks(p.picks||[])
-    setUsedTeamIds(new Set(used.teams||[]))
+  async function unpickById(pickId: string) {
+    setLog('')
+    try {
+      const res = await fetch(`/api/picks?id=${pickId}`, { method: 'DELETE' })
+      const j = await res.json().catch(()=>({}))
+      if (!res.ok) throw new Error(j.error || 'Unpick failed')
+      await refreshPicks()
+    } catch (e:any) {
+      setLog(e?.message || 'Error')
+    }
+  }
+
+  async function refreshPicks() {
+    const j = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`).then(r=>r.json())
+    setPicks((j.picks ?? []).map((r:any)=>({ id:r.id, team_id:r.team_id, game_id:r.game_id })))
+    const u = await fetch(`/api/used-teams`).then(r=>r.json())
+    setUsedTeamIds(new Set((u.used ?? []) as string[]))
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-6 space-y-4">
-      <h1 className="text-3xl font-extrabold tracking-tight">Make Your Picks</h1>
-
-      <section className="flex flex-wrap items-center gap-2">
+    <main className="mx-auto max-w-6xl px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Controls */}
+      <div className="lg:col-span-3 flex flex-wrap items-end gap-2">
+        <h1 className="text-3xl font-extrabold tracking-tight mr-auto">Make Your Picks</h1>
         <label className="text-sm">League
           <select className="ml-2 h-9 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
             value={leagueId} onChange={e=>setLeagueId(e.target.value)}>
@@ -182,48 +130,116 @@ export default function PicksPage() {
           </select>
         </label>
         <label className="text-sm">Season
-          <input type="number" className="ml-2 h-9 w-24 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
-            value={season} onChange={e=>setSeason(+e.target.value)} />
+          <input className="ml-2 h-9 w-24 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
+            type="number" value={season} onChange={e=>setSeason(+e.target.value)} />
         </label>
         <label className="text-sm">Week
-          <input type="number" className="ml-2 h-9 w-16 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
-            value={week} onChange={e=>setWeek(+e.target.value)} />
+          <input className="ml-2 h-9 w-16 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
+            type="number" value={week} onChange={e=>setWeek(+e.target.value)} />
         </label>
-        <span className="ml-auto text-sm text-neutral-600 dark:text-neutral-400">Picks left this week: <b>{Math.max(0,2-myPicks.length)}</b></span>
-      </section>
+        <span className="ml-auto text-sm text-neutral-600 dark:text-neutral-400">
+          Picks left this week: <b>{picksLeft}</b>
+        </span>
+      </div>
 
-      <section className="space-y-4">
-        {games.map(g=>{
+      {/* LEFT: games */}
+      <section className="lg:col-span-2 grid gap-4">
+        {loading && <div className="text-sm text-neutral-500">Loading…</div>}
+        {!loading && games.length===0 && <div className="text-sm text-neutral-500">No games.</div>}
+
+        {games.map(g => {
+          const home = teams[g.home.id]; const away = teams[g.away.id]
           const locked = isLocked(g.game_utc)
-          const leftActive  = !!myPicks.find(p=>p.game_id===g.id && p.team_id===g.home.id)
-          const rightActive = !!myPicks.find(p=>p.game_id===g.id && p.team_id===g.away.id)
-          const leftDisabled  = locked || rightActive || usedTeamIds.has(g.home.id)
-          const rightDisabled = locked || leftActive  || usedTeamIds.has(g.away.id)
+          const weeklyQuotaFull = picksLeft === 0 && !pickIdByGame.get(g.id)
+          const homeUsed = usedTeamIds.has(home?.id || '') && !pickedTeamIds.has(home?.id || '')
+          const awayUsed = usedTeamIds.has(away?.id || '') && !pickedTeamIds.has(away?.id || '')
 
           return (
-            <div key={g.id} className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+            <article key={g.id} className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
               <div className="mb-2 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
                 <span>{new Date(g.game_utc).toLocaleString()} • Week {g.week}</span>
-                <span className="uppercase tracking-wide">{locked ? 'LOCKED' : (g.status||'UPCOMING')}</span>
+                <span className="uppercase tracking-wide">{locked ? 'LOCKED' : (g.status || 'UPCOMING')}</span>
               </div>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                <TeamPill team={g.home} active={leftActive} disabled={leftDisabled} onClick={()=>togglePick(g.home, g)} />
-                <div className="hidden sm:block text-neutral-400 text-center">—</div>
-                <TeamPill team={g.away} active={rightActive} disabled={rightDisabled} onClick={()=>togglePick(g.away, g)} />
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <TeamPill
+                    team={home}
+                    picked={pickedTeamIds.has(home?.id || '')}
+                    disabled={locked || weeklyQuotaFull || homeUsed}
+                    onClick={()=>makePick(home!.id, g.id)}
+                  />
+                </div>
+                <div className="text-neutral-400">—</div>
+                <div className="flex-1">
+                  <TeamPill
+                    team={away}
+                    picked={pickedTeamIds.has(away?.id || '')}
+                    disabled={locked || weeklyQuotaFull || awayUsed}
+                    onClick={()=>makePick(away!.id, g.id)}
+                  />
+                </div>
               </div>
 
               <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-                {locked && <span className="mr-3">🔒 Locked</span>}
-                {usedTeamIds.has(g.home.id) && <span className="mr-3">🏷️ {g.home.abbreviation} used</span>}
-                {usedTeamIds.has(g.away.id) && <span className="mr-3">🏷️ {g.away.abbreviation} used</span>}
+                Score: {g.home_score!=null && g.away_score!=null ? `${g.home_score} — ${g.away_score}` : '— — —'}
               </div>
-            </div>
+            </article>
           )
         })}
       </section>
 
-      <pre className="text-xs opacity-70 whitespace-pre-wrap">{log}</pre>
+      {/* RIGHT: this week + season usage */}
+      <aside className="grid gap-4">
+        <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+          <header className="mb-3 flex items-center justify-between">
+            <h2 className="text-base font-semibold">My picks — Week {week}</h2>
+          </header>
+          {picks.length === 0 ? (
+            <div className="text-sm text-neutral-500">No picks yet.</div>
+          ) : (
+            <ul className="text-sm grid gap-2">
+              {picks.map(p => {
+                const t = teams[p.team_id]
+                const kickoff = p.game_id ? games.find(g=>g.id===p.game_id)?.game_utc : undefined
+                const locked = isLocked(kickoff)
+                return (
+                  <li key={p.id} className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <TeamPill team={t} />
+                    </div>
+                    <button
+                      className="text-xs underline disabled:opacity-50"
+                      disabled={locked}
+                      onClick={()=>unpickById(p.id)}
+                      title={locked ? 'Locked (kickoff passed)' : 'Unpick'}
+                    >
+                      {locked ? 'Locked' : 'Unpick'}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
+
+        <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+          <h3 className="text-base font-semibold mb-3">Season usage</h3>
+          {usedTeamIds.size === 0 ? (
+            <div className="text-sm text-neutral-500">You haven’t used any teams yet.</div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {[...usedTeamIds].map(id => (
+                <div key={id} className="shrink-0">
+                  <TeamPill team={teams[id]} />
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {log && <pre className="text-xs text-red-600 whitespace-pre-wrap">{log}</pre>}
+      </aside>
     </main>
   )
 }
