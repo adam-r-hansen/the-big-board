@@ -2,7 +2,8 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
-import TeamPill, { Team } from '@/components/TeamPill'
+import TeamPill from '@/components/TeamPill'
+import type { Team } from '@/types/domain'
 
 type League = { id: string; name: string; season: number }
 type Game = {
