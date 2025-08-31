@@ -1,7 +1,7 @@
 // app/picks/page.tsx
 'use client'
 import { useEffect, useMemo, useState } from 'react'
-import Image from 'next/image'
+import ImgWithFallback from '@/components/ImgWithFallback'
 import TeamPill from '@/components/TeamPill'
 import type { Team } from '@/types/domain'
 
@@ -205,7 +205,7 @@ export default function PicksPage() {
               <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
                 Score: {g.home_score!=null && g.away_score!=null ? `${g.home_score} — ${g.away_score}` : '— — —'}
               </div>
-            </article>
+            </Card>
           )
         })}
       </section>
@@ -228,7 +228,7 @@ export default function PicksPage() {
                 return (
                   <li key={p.id} className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2">
                     <span className="font-medium flex items-center gap-2">
-                      {t?.logo && <Image src={(t.logo_dark||t.logo)!} alt="" width={16} height={16} className="rounded" />}
+                      {t?.logo && <ImgWithFallback src={(t.logo_dark||t.logo)!} alt="" width={16} height={16} className="rounded" />}
                       {t ? `${t.abbreviation} — ${t.name}` : p.team_id}
                     </span>
                     <button
