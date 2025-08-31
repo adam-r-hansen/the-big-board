@@ -1,69 +1,71 @@
-import { NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
-import { createAdminClient } from '@/utils/supabase/admin'
+import { createClient } from '@supabase/supabase-js'
+import { cookies } from 'next/headers'
 
 export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
 export const revalidate = 0
+export const dynamic = 'force-dynamic'
 
 function json(data: any, init: ResponseInit = {}) {
-  return new Response(JSON.stringify(data, null, 2), {
-    ...init, headers: { 'content-type': 'application/json' }
-  })
+  const h = new Headers(init.headers)
+  h.set('cache-control','no-store, no-cache, must-revalidate, proxy-revalidate')
+  h.set('pragma','no-cache'); h.set('expires','0'); h.set('surrogate-control','no-store')
+  return new Response(JSON.stringify(data), { ...init, headers: h, status: init.status ?? 200 })
 }
 
-async function getUser(req: NextRequest) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
-  const cookies = {
-    get: (name: string) => req.cookies.get(name)?.value,
-    set: () => {}, remove: () => {}
-  }
-  const sb = createServerClient(url, anon, { cookies })
-  const { data } = await sb.auth.getUser()
-  return data.user || null
+function admin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  )
 }
 
-export async function POST(req: NextRequest, ctx: { params: { token: string }}) {
-  try {
-    const user = await getUser(req)
-    if (!user) return json({ error: 'auth required' }, { status: 401 })
+// Must be signed in; email must match invite.email
+export async function POST(req: Request, ctx: { params: Promise<{ token: string }> }) {
+  const { token } = await ctx.params
+  if (!token) return json({ error: 'token required' }, { status: 400 })
 
-    const admin = createAdminClient()
-    // Look up invite by token
-    const { data: inv, error: invErr } = await admin
-      .from('league_invites')
-      .select('*')
-      .eq('token', ctx.params.token)
-      .maybeSingle()
-    if (invErr || !inv) return json({ error: 'invalid invite' }, { status: 404 })
-    if (inv.used_at) return json({ error: 'invite already used' }, { status: 409 })
-    if (inv.expires_at && new Date(inv.expires_at) < new Date()) {
-      return json({ error: 'invite expired' }, { status: 410 })
-    }
-    if (inv.email && inv.email.toLowerCase() !== (user.email||'').toLowerCase()) {
-      return json({ error: 'invite is for a different email' }, { status: 403 })
-    }
+  // Get authed user (anon key + cookies)
+  const store = await cookies()
+  const sb = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    { cookies: { getAll: () => store.getAll(), setAll: () => {} } }
+  )
 
-    // Upsert membership
-    const { error: upErr } = await admin
-      .from('league_members')
-      .upsert({
-        league_id: inv.league_id,
-        profile_id: user.id,
-        role: inv.role
-      }, { onConflict: 'league_id,profile_id' })
+  const { data: userRes, error: userErr } = await sb.auth.getUser()
+  if (userErr) return json({ error: userErr.message }, { status: 500 })
+  const user = userRes?.user
+  if (!user?.email) return json({ error: 'sign in required' }, { status: 401 })
 
-    if (upErr) return json({ error: upErr.message }, { status: 500 })
+  const email = user.email.toLowerCase()
 
-    // Mark invite used
-    await admin
-      .from('league_invites')
-      .update({ used_by: user.id, used_at: new Date().toISOString() })
-      .eq('token', ctx.params.token)
+  // Look up invite
+  const a = admin()
+  const { data: invite, error: invErr } = await a
+    .from('league_invites')
+    .select('league_id,email,role,token')
+    .eq('token', token)
+    .single()
 
-    return json({ ok: true, leagueId: inv.league_id, role: inv.role })
-  } catch (e:any) {
-    return json({ error: e.message || 'error' }, { status: 400 })
+  if (invErr) return json({ error: invErr.message }, { status: 404 })
+  if (invite.email.toLowerCase() !== email) {
+    return json({ error: 'invite email does not match signed-in user' }, { status: 403 })
   }
+
+  // Add membership if not already present
+  const { error: insErr } = await a
+    .from('league_members')
+    .upsert(
+      [{ league_id: invite.league_id, profile_id: user.id, role: invite.role ?? 'member' }],
+      { onConflict: 'league_id,profile_id' }
+    )
+
+  if (insErr) return json({ error: insErr.message }, { status: 500 })
+
+  // Delete the invite
+  await a.from('league_invites').delete().eq('token', token)
+
+  return json({ ok: true })
 }

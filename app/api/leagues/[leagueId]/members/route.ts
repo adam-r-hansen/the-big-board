@@ -1,75 +1,164 @@
-import { NextRequest } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { cookies } from 'next/headers'
+import { createServerClient } from '@supabase/ssr'
+import { createClient } from '@supabase/supabase-js'
 
 export const runtime = 'nodejs'
 export const revalidate = 0
 export const dynamic = 'force-dynamic'
 
-function jsonNoStore(data: any, init: ResponseInit = {}) {
+function noStoreJson(data: any, init: ResponseInit = {}) {
   const h = new Headers(init.headers)
-  h.set('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate')
-  h.set('Pragma','no-cache'); h.set('Expires','0'); h.set('Surrogate-Control','no-store')
+  h.set('cache-control','no-store, no-cache, must-revalidate, proxy-revalidate')
+  h.set('pragma','no-cache'); h.set('expires','0'); h.set('surrogate-control','no-store')
   return new Response(JSON.stringify(data), { ...init, headers: h, status: init.status ?? 200 })
 }
-const isAdminRole = (r?: string) => r === 'admin' || r === 'owner'
 
-export async function GET(_: NextRequest, ctx: { params: Promise<{ leagueId: string }> }) {
-  const { leagueId } = await ctx.params
-  const sb = await createClient()
-  const { data: auth } = await sb.auth.getUser()
-  const u = auth?.user
-  if (!u) return jsonNoStore({ error: 'unauthenticated' }, { status: 401 })
-
-  const { data: me, error: meErr } = await sb
-    .from('league_members').select('role').eq('league_id', leagueId).eq('profile_id', u.id).maybeSingle()
-  if (meErr) return jsonNoStore({ error: meErr.message }, { status: 500 })
-  if (!isAdminRole(me?.role)) return jsonNoStore({ error: 'forbidden' }, { status: 403 })
-
-  const { data, error } = await sb
-    .from('league_members')
-    .select('profile_id, role, profiles(id, display_name, email)')
-    .eq('league_id', leagueId)
-    .order('role', { ascending: false })
-  if (error) return jsonNoStore({ error: error.message }, { status: 500 })
-
-  const members = (data ?? []).map((m: any) => ({
-    profile_id: m.profile_id,
-    role: m.role,
-    name: m.profiles?.display_name ?? m.profiles?.email ?? m.profile_id,
-    email: m.profiles?.email ?? null,
-  }))
-  return jsonNoStore({ members })
+async function userClient() {
+  const store = await cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    { cookies: { getAll: () => store.getAll(), setAll: () => {} } }
+  )
 }
 
-// POST { email, role? } -> add member by email (admin/member)
-export async function POST(req: NextRequest, ctx: { params: Promise<{ leagueId: string }> }) {
-  const { leagueId } = await ctx.params
-  const body = await req.json().catch(() => null) as { email?: string; role?: 'admin'|'member' } | null
-  if (!body?.email) return jsonNoStore({ error: 'email required' }, { status: 400 })
-  const role = (body.role === 'admin' ? 'admin' : 'member') as 'admin'|'member'
+function adminClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  )
+}
 
-  const sb = await createClient()
-  const { data: auth } = await sb.auth.getUser()
-  const u = auth?.user
-  if (!u) return jsonNoStore({ error: 'unauthenticated' }, { status: 401 })
+async function assertLeagueAdmin(leagueId: string) {
+  const sb = await userClient()
+  const { data: ures, error: uerr } = await sb.auth.getUser()
+  if (uerr) throw new Error(uerr.message)
+  const user = ures?.user
+  if (!user?.id) throw new Error('unauthorized')
 
-  const { data: me, error: meErr } = await sb
-    .from('league_members').select('role').eq('league_id', leagueId).eq('profile_id', u.id).maybeSingle()
-  if (meErr) return jsonNoStore({ error: meErr.message }, { status: 500 })
-  if (!isAdminRole(me?.role)) return jsonNoStore({ error: 'forbidden' }, { status: 403 })
-
-  const { data: prof, error: pErr } = await sb
-    .from('profiles')
-    .select('id, email, display_name')
-    .eq('email', body.email.toLowerCase())
-    .maybeSingle()
-  if (pErr) return jsonNoStore({ error: pErr.message }, { status: 500 })
-  if (!prof?.id) return jsonNoStore({ error: 'user not found (no profile with that email)' }, { status: 404 })
-
-  const { error: mErr } = await sb
+  const a = adminClient()
+  const { data, error } = await a
     .from('league_members')
-    .upsert({ league_id: leagueId, profile_id: prof.id, role }, { onConflict: 'league_id,profile_id' })
-  if (mErr) return jsonNoStore({ error: mErr.message }, { status: 500 })
+    .select('role')
+    .eq('league_id', leagueId)
+    .eq('profile_id', user.id)
+    .in('role', ['owner','admin'])
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  if (!data) throw new Error('forbidden')
 
-  return jsonNoStore({ ok: true })
+  return { userId: user.id }
+}
+
+// GET: list members for a league
+export async function GET(req: Request, ctx: { params: Promise<{ leagueId: string }> }) {
+  const { leagueId } = await ctx.params
+  try {
+    await assertLeagueAdmin(leagueId)
+    const a = adminClient()
+    const { data, error } = await a
+      .from('league_members')
+      .select('profile_id, role, profiles ( display_name, email )')
+      .eq('league_id', leagueId)
+      .order('role', { ascending: true })
+    if (error) return noStoreJson({ error: error.message }, { status: 500 })
+    return noStoreJson({ members: data ?? [] })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'error'
+    return noStoreJson({ error: msg }, { status: msg === 'unauthorized' ? 401 : 403 })
+  }
+}
+
+// POST: add member if profile exists, otherwise create/refresh invite for the email
+export async function POST(req: Request, ctx: { params: Promise<{ leagueId: string }> }) {
+  const { leagueId } = await ctx.params
+  const origin = req.headers.get('origin') || process.env.NEXT_PUBLIC_SITE_URL || ''
+  try {
+    await assertLeagueAdmin(leagueId)
+    const a = adminClient()
+    const body = await req.json().catch(() => ({} as any))
+    const email = String(body?.email ?? '').trim().toLowerCase()
+    const role = String(body?.role ?? 'member').trim().toLowerCase()
+
+    if (!email) return noStoreJson({ error: 'email required' }, { status: 400 })
+    if (!['owner','admin','member'].includes(role))
+      return noStoreJson({ error: 'invalid role' }, { status: 400 })
+
+    // Try to find an existing profile for this email
+    const { data: prof } = await a
+      .from('profiles')
+      .select('id,email')
+      .eq('email', email)
+      .maybeSingle()
+
+    if (prof?.id) {
+      // Add or update membership directly
+      const { error: merr } = await a
+        .from('league_members')
+        .upsert([{ league_id: leagueId, profile_id: prof.id, role }], { onConflict: 'league_id,profile_id' })
+      if (merr) return noStoreJson({ error: merr.message }, { status: 500 })
+      return noStoreJson({ ok: true, added: true })
+    }
+
+    // No profile -> create/update invite
+    const { data: inv, error: ierr } = await a
+      .from('league_invites')
+      .upsert([{ league_id: leagueId, email, role: role === 'owner' ? 'admin' : role }], { onConflict: 'league_id,email' })
+      .select('token,email,role')
+      .single()
+    if (ierr) return noStoreJson({ error: ierr.message }, { status: 500 })
+
+    const acceptUrl = `${origin.replace(/\/$/, '')}/invites/${inv.token}`
+    return noStoreJson({ ok: true, invited: true, acceptUrl, invite: inv })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'error'
+    const status = msg === 'unauthorized' ? 401 : (msg === 'forbidden' ? 403 : 500)
+    return noStoreJson({ error: msg }, { status })
+  }
+}
+
+// DELETE: remove a member by profileId or email, or revoke invite by email/token
+export async function DELETE(req: Request, ctx: { params: Promise<{ leagueId: string }> }) {
+  const { leagueId } = await ctx.params
+  try {
+    await assertLeagueAdmin(leagueId)
+    const a = adminClient()
+    const url = new URL(req.url)
+    const profileId = url.searchParams.get('profileId') || undefined
+    const email = url.searchParams.get('email')?.toLowerCase()
+    const token = url.searchParams.get('token') || undefined
+
+    if (!profileId && !email && !token)
+      return noStoreJson({ error: 'profileId, email, or token required' }, { status: 400 })
+
+    if (profileId) {
+      const { error } = await a.from('league_members')
+        .delete().eq('league_id', leagueId).eq('profile_id', profileId)
+      if (error) return noStoreJson({ error: error.message }, { status: 500 })
+      return noStoreJson({ ok: true })
+    }
+
+    if (email) {
+      // try invite first
+      await a.from('league_invites').delete().eq('league_id', leagueId).eq('email', email)
+      // then membership by joining profiles
+      const { data: prof } = await a.from('profiles').select('id').eq('email', email).maybeSingle()
+      if (prof?.id) {
+        await a.from('league_members').delete().eq('league_id', leagueId).eq('profile_id', prof.id)
+      }
+      return noStoreJson({ ok: true })
+    }
+
+    if (token) {
+      await a.from('league_invites').delete().eq('token', token)
+      return noStoreJson({ ok: true })
+    }
+
+    return noStoreJson({ ok: true })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'error'
+    const status = msg === 'unauthorized' ? 401 : (msg === 'forbidden' ? 403 : 500)
+    return noStoreJson({ error: msg }, { status })
+  }
 }
