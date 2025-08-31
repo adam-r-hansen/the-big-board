@@ -1,50 +1,129 @@
 'use client'
-import { useState } from 'react'
+
+import Link from 'next/link'
+import { useEffect, useState } from 'react'
+
+type League = { id: string; name: string; season: number }
 
 export default function AdminPage() {
+  const [isOwner, setIsOwner] = useState(false)
+  const [leagues, setLeagues] = useState<League[]>([])
+  const [name, setName] = useState('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
-  const [week, setWeek] = useState<number>(1)
-  const [log, setLog] = useState<string>('')
+  const [loading, setLoading] = useState(false)
+  const [msg, setMsg] = useState<string>('')
 
-  async function run(path: string) {
-    const res = await fetch(`/api/${path}?season=${season}&week=${week}`, { method: 'POST' })
-    const data = await res.json()
-    setLog(prev => prev + `\n${path}: ` + JSON.stringify(data))
+  async function loadIsOwner() {
+    try {
+      const res = await fetch('/api/admin/is-site-owner', { cache: 'no-store' })
+      const j = await res.json().catch(() => ({}))
+      setIsOwner(!!j?.isOwner)
+    } catch {
+      setIsOwner(false)
+    }
   }
 
+  async function loadLeagues() {
+    setMsg('')
+    try {
+      // Lists leagues you belong to (used elsewhere in the app)
+      const res = await fetch('/api/my-leagues', { cache: 'no-store' })
+      const j = await res.json().catch(() => ({}))
+      setLeagues(Array.isArray(j?.leagues) ? j.leagues : [])
+    } catch (e) {
+      setMsg('Failed to load leagues')
+    }
+  }
+
+  async function createLeague() {
+    setMsg('')
+    if (!name.trim()) { setMsg('Enter a league name'); return }
+    setLoading(true)
+    try {
+      const res = await fetch('/api/leagues', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), season })
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok || !j?.ok) {
+        setMsg(j?.error || 'Create failed')
+        return
+      }
+      setName('')
+      await loadLeagues()
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadIsOwner(); loadLeagues() }, [])
+
   return (
-    <main style={{display:'grid', gap:'1rem'}}>
-      <h1 style={{fontSize:'1.5rem', fontWeight:600}}>Admin</h1>
-      <div style={{display:'flex', gap:'.5rem'}}>
-        <input style={{border:'1px solid #ccc', padding:'.25rem .5rem'}} type="number" value={season} onChange={e => setSeason(+e.target.value)} />
-        <input style={{border:'1px solid #ccc', padding:'.25rem .5rem'}} type="number" value={week} onChange={e => setWeek(+e.target.value)} />
-      </div>
-      <div style={{display:'flex', gap:'.5rem', flexWrap:'wrap'}}>
-        <button style={{border:'1px solid #ccc', padding:'.25rem .5rem'}} onClick={() => run('import-teams')}>Import Teams</button>
-        <button style={{border:'1px solid #ccc', padding:'.25rem .5rem'}} onClick={() => run('import-week')}>Import Week Schedule</button>
-        <button style={{border:'1px solid #ccc', padding:'.25rem .5rem'}} onClick={() => run('refresh-scores')}>Refresh Scores</button>
-<button
-  style={{border:'1px solid #ccc', padding:'.25rem .5rem'}}
-  onClick={() => fetch('/api/enrich-team-colors', { method: 'POST' }).then(r => r.json()).then(j => setLog(prev => prev + `\nENRICH: ${JSON.stringify(j)}`))}
->
-  Enrich Team Colors
-</button>
-<button
-  style={{border:'1px solid #ccc', padding:'.25rem .5rem'}}
-  onClick={()=>{
-    const season = Number((document.querySelectorAll('input[type=number]')[0] as HTMLInputElement).value)
-    const week   = Number((document.querySelectorAll('input[type=number]')[1] as HTMLInputElement).value)
-    const leagueId = prompt('League ID to score?') || ''
-    fetch(`/api/score-week?leagueId=${leagueId}&season=${season}&week=${week}`, { method: 'POST' })
-      .then(r=>r.json())
-      .then(j=>setLog(prev => prev + `\nSCORE-WEEK: ` + JSON.stringify(j)))
-  }}
->
-  Score Week
-</button>
-     
- </div>
-      <pre style={{whiteSpace:'pre-wrap', border:'1px solid #eee', padding:'.5rem', fontSize:'.9rem', background:'#f9f9f9', color:'#111'}}>{log}</pre>
+    <main className="mx-auto max-w-5xl px-4 py-8 grid gap-6">
+      <h1 className="text-4xl font-extrabold tracking-tight">Admin</h1>
+
+      {isOwner && (
+        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 flex items-center justify-between bg-white dark:bg-neutral-900">
+          <div>
+            <div className="font-semibold">Global Schedule</div>
+            <div className="text-sm text-neutral-600 dark:text-neutral-400">
+              Sync regular-season games from ESPN across all leagues.
+            </div>
+          </div>
+          <Link
+            href="/admin/schedule"
+            className="px-3 py-1.5 rounded-md border hover:bg-neutral-50 dark:hover:bg-neutral-800"
+          >
+            Open
+          </Link>
+        </div>
+      )}
+
+      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 grid gap-4">
+        <h2 className="text-xl font-semibold">Create a League</h2>
+        {msg && <p className="text-sm text-red-600">{msg}</p>}
+        <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+          <input
+            className="flex-1 h-10 rounded-md border px-3"
+            placeholder="League name"
+            value={name}
+            onChange={e=>setName(e.target.value)}
+          />
+          <label className="text-sm">
+            Season
+            <input
+              className="ml-2 h-10 w-28 rounded-md border px-2"
+              type="number"
+              value={season}
+              onChange={e=>setSeason(+e.target.value)}
+            />
+          </label>
+          <button
+            className="h-10 px-4 rounded-md bg-black text-white disabled:opacity-60"
+            disabled={loading || !name.trim()}
+            onClick={createLeague}
+          >
+            {loading ? 'Creating…' : 'Create'}
+          </button>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 grid gap-4">
+        <h2 className="text-xl font-semibold">Your Leagues</h2>
+        {leagues.length === 0 ? (
+          <div className="text-sm text-neutral-600">No leagues yet.</div>
+        ) : (
+          <ul className="grid gap-2">
+            {leagues.map(l => (
+              <li key={l.id} className="flex items-center justify-between border rounded-lg px-3 py-2">
+                <span>{l.name} — {l.season}</span>
+                <Link href={`/admin/leagues/${l.id}`} className="text-sm underline">Manage</Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </main>
   )
 }

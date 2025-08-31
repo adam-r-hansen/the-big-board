@@ -1,0 +1,1 @@
+<the long file I gave in my last message that uses createAdminClient() and .upsert(...) with onConflict='season,week,home_team,away_team' and returns { ok, counts:{fetched,touched,unknownTeams}, unknown, upsertError }>
