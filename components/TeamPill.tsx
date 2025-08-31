@@ -1,17 +1,14 @@
 'use client'
 
-export type Team = {
-  id: string
-  name?: string | null
-  abbreviation?: string | null
-  color_primary?: string | null
-  color_secondary?: string | null
-  color_tertiary?: string | null
-  color_quaternary?: string | null
-  color_pref_light?: 'primary'|'secondary'|'tertiary'|'quaternary'|null
-  color_pref_dark?: 'primary'|'secondary'|'tertiary'|'quaternary'|null
-  logo?: string | null
-  logo_dark?: string | null
+import { toToken, pickColor } from '@/ui/theme/teams'
+import type { Team } from '@/types/domain'
+import { useEffect, useMemo, useState } from 'react'
+
+type Props = {
+  team?: Team | null
+  disabled?: boolean
+  picked?: boolean
+  onClick?: () => void
 }
 
 function hexToRgb(hex?: string | null) {
@@ -21,48 +18,19 @@ function hexToRgb(hex?: string | null) {
   const r = parseInt(v.slice(0,2),16), g = parseInt(v.slice(2,4),16), b = parseInt(v.slice(4,6),16)
   return { r, g, b }
 }
-function tint(hex?: string | null, amt = 0.9) {
-  const c = hexToRgb(hex); if (!c) return '#e5e7eb'
-  const r = Math.round(c.r + (255 - c.r) * amt)
-  const g = Math.round(c.g + (255 - c.g) * amt)
-  const b = Math.round(c.b + (255 - c.b) * amt)
-  return `rgb(${r}, ${g}, ${b})`
-}
-function pickBase(team?: Team) {
-  return (
-    (team?.color_pref_light === 'primary' && team?.color_primary) ||
-    (team?.color_pref_light === 'secondary' && team?.color_secondary) ||
-    (team?.color_pref_light === 'tertiary' && team?.color_tertiary) ||
-    (team?.color_pref_light === 'quaternary' && team?.color_quaternary) ||
-    team?.color_primary || team?.color_secondary || team?.color_tertiary || team?.color_quaternary || '#e5e7eb'
-  )
-}
-function textOn(bg: string) {
-  // super simple contrast choice
-  const c = hexToRgb(bg) || { r: 200, g: 200, b: 200 }
-  const luminance = ([c.r, c.g, c.b].reduce((a, x) => {
-    const v = x/255
-    const s = v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4)
-    return a + s
-  }, 0) / 3)
-  return luminance > 0.5 ? '#000' : '#fff'
+function textOn(bgHex?: string | null) {
+  const c = hexToRgb(bgHex); if (!c) return '#111'
+  const lum = (0.2126*c.r + 0.7152*c.g + 0.0722*c.b)/255
+  return lum > 0.6 ? '#111' : '#fff'
 }
 
-export default function TeamPill({
-  team,
-  picked,
-  disabled,
-  onClick,
-}: {
-  team?: Team
-  picked?: boolean
-  disabled?: boolean
-  onClick?: () => void
-}) {
-  const base = pickBase(team)
-  const bg = tint(base, 0.9)
+export default function TeamPill({ team, disabled, picked, onClick }: Props) {
+  const token = useMemo(() => toToken(team ?? null), [team])
+  const bg = pickColor(token, 'light') // if you support dark mode, swap based on theme
   const fg = textOn(bg)
-  const logo = team?.logo || team?.logo_dark
+
+  const [src, setSrc] = useState<string | null>(token.logoUrl)
+  useEffect(() => { setSrc(token.logoUrl) }, [token.logoUrl])
 
   const className = [
     'w-full rounded-full border px-3 py-2 text-left',
@@ -75,16 +43,30 @@ export default function TeamPill({
     <button
       type="button"
       disabled={disabled}
-      onClick={disabled ? undefined : onClick}
+      onClick={onClick}
       className={className}
-      style={{ background: bg, color: fg, borderColor: base || '#e5e7eb' }}
-      title={team?.name || ''}
+      style={{ backgroundColor: bg ?? undefined, color: fg }}
+      aria-pressed={picked ? 'true' : 'false'}
     >
-      {logo ? <img src={logo} alt="" width={18} height={18} className="rounded" /> : null}
-      <span className="font-semibold truncate">
-        {team?.abbreviation ? `${team.abbreviation} — ` : ''}{team?.name || '—'}
+      <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-white/70">
+        {src ? (
+          <img
+            src={src}
+            alt={team?.abbreviation ?? team?.name ?? 'Team'}
+            className="h-5 w-5 object-contain"
+            onError={() => setSrc('/team-placeholder.svg')}
+          />
+        ) : (
+          <img
+            src="/team-placeholder.svg"
+            alt="Team"
+            className="h-5 w-5 object-contain"
+          />
+        )}
+      </span>
+      <span className="truncate">
+        {team?.abbreviation ?? team?.name ?? '—'}
       </span>
     </button>
   )
 }
-
