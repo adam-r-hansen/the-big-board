@@ -1,97 +1,90 @@
 'use client'
-import { useMemo } from 'react'
+import clsx from 'clsx'
 
 export type Team = {
   id: string
-  name: string
-  abbreviation: string
-  logo?: string | null
-  logo_dark?: string | null
+  name?: string | null
+  abbreviation?: string | null
   color_primary?: string | null
   color_secondary?: string | null
   color_tertiary?: string | null
   color_quaternary?: string | null
   color_pref_light?: 'primary'|'secondary'|'tertiary'|'quaternary'|null
   color_pref_dark?: 'primary'|'secondary'|'tertiary'|'quaternary'|null
+  logo?: string | null
+  logo_dark?: string | null
 }
 
 function hexToRgb(hex?: string | null) {
   if (!hex) return null
-  const s = hex.replace('#','')
-  if (!(s.length === 3 || s.length === 6)) return null
+  const s = hex.replace('#', '')
   const v = s.length === 3 ? s.split('').map(c=>c+c).join('') : s
   const r = parseInt(v.slice(0,2),16), g = parseInt(v.slice(2,4),16), b = parseInt(v.slice(4,6),16)
   return { r, g, b }
 }
-function luminance({r,g,b}:{r:number;g:number;b:number}) {
-  const f=(c:number)=>{ c/=255; return c<=0.03928? c/12.92 : Math.pow((c+0.055)/1.055,2.4)}
-  const R=f(r), G=f(g), B=f(b); return 0.2126*R + 0.7152*G + 0.0722*B
-}
-function contrast(bg: string, tx: string) {
-  const b = hexToRgb(bg), t = hexToRgb(tx); if(!b||!t) return 0
-  const L1 = luminance(b) + 0.05, L2 = luminance(t) + 0.05
-  return L1 > L2 ? L1/L2 : L2/L1
-}
-function textOn(bg?: string | null) {
-  const base = bg || '#e5e7eb'
-  return contrast(base, '#000000') >= contrast(base, '#ffffff') ? '#000000' : '#ffffff'
-}
 function tint(hex?: string | null, amt = 0.9) {
   const c = hexToRgb(hex); if (!c) return '#e5e7eb'
-  const r=Math.round(c.r+(255-c.r)*amt), g=Math.round(c.g+(255-c.g)*amt), b=Math.round(c.b+(255-c.b)*amt)
+  const r = Math.round(c.r + (255 - c.r) * amt)
+  const g = Math.round(c.g + (255 - c.g) * amt)
+  const b = Math.round(c.b + (255 - c.b) * amt)
   return `rgb(${r}, ${g}, ${b})`
 }
-function pickColor(t?: Team, dark=false) {
-  const key = (dark ? t?.color_pref_dark : t?.color_pref_light) || null
-  const map: any = {
-    primary: t?.color_primary, secondary: t?.color_secondary,
-    tertiary: t?.color_tertiary, quaternary: t?.color_quaternary
+function textOn(bg: string) {
+  // simple contrast pick
+  const black = { r:0,g:0,b:0 }, white = { r:255,g:255,b:255 }
+  const toL = ({r,g,b}:{r:number,g:number,b:number})=>{
+    const f=(x:number)=>{x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)}
+    const c = hexToRgb(bg) || {r:200,g:200,b:200}
+    const R=f(c.r),G=f(c.g),B=f(c.b);return 0.2126*R+0.7152*G+0.0722*B
   }
-  return (key ? map[key] : null) || t?.color_primary || t?.color_secondary || t?.color_tertiary || t?.color_quaternary || '#e5e7eb'
+  const Lbg = toL(hexToRgb(bg) as any)
+  const Lb = (0.2126*0+0.7152*0+0.0722*0)+0.05
+  const Lw = (0.2126*1+0.7152*1+0.0722*1)+0.05
+  const blackRatio = (Math.max(Lbg+0.05, Lb)) / (Math.min(Lbg+0.05, Lb))
+  const whiteRatio = (Math.max(Lbg+0.05, Lw)) / (Math.min(Lbg+0.05, Lw))
+  return whiteRatio >= blackRatio ? '#fff' : '#000'
 }
 
-export type PillProps = {
+export default function TeamPill({
+  team,
+  picked,
+  disabled,
+  onClick,
+}: {
   team?: Team
   picked?: boolean
   disabled?: boolean
   onClick?: () => void
-  compact?: boolean
-}
-export default function TeamPill({ team, picked=false, disabled=false, onClick, compact=false }: PillProps) {
-  const prefersDark = typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)')?.matches
-  const base = pickColor(team, !!prefersDark)
-  const bg = tint(base, 0.90)
+}) {
+  const base =
+    (team?.color_pref_light === 'primary' && team?.color_primary) ||
+    (team?.color_pref_light === 'secondary' && team?.color_secondary) ||
+    (team?.color_pref_light === 'tertiary' && team?.color_tertiary) ||
+    (team?.color_pref_light === 'quaternary' && team?.color_quaternary) ||
+    team?.color_primary || team?.color_secondary || team?.color_tertiary || team?.color_quaternary || '#e5e7eb'
+
+  const bg = tint(base, 0.9)
   const fg = textOn(bg)
-  const logo = team ? (prefersDark ? (team.logo_dark || team.logo) : (team.logo || team.logo_dark)) : null
+  const logo = team?.logo || team?.logo_dark
 
   return (
     <button
       type="button"
-      onClick={disabled ? undefined : onClick}
       disabled={disabled}
-      className="w-full rounded-full border transition-[border-width] inline-flex items-center gap-2"
-      style={{
-        minHeight: compact ? 36 : 48,
-        padding: compact ? '6px 10px' : '10px 14px',
-        background: disabled ? '#e5e7eb' : bg,
-        color: disabled ? '#6b7280' : fg,
-        borderColor: base,
-        borderWidth: picked ? 2 : 1,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        fontWeight: 700, letterSpacing: 0.2,
-      }}
-      title={team ? `${team.abbreviation} — ${team.name}` : '—'}
-    >
-      {logo && (
-        <Image
-          src={logo}
-          alt=""
-          width={compact ? 16 : 20}
-          height={compact ? 16 : 20}
-          className="rounded"
-        />
+      onClick={disabled ? undefined : onClick}
+      className={clsx(
+        'w-full rounded-full border px-3 py-2 text-left',
+        'flex items-center gap-2',
+        disabled && 'opacity-60 cursor-not-allowed',
+        picked && 'ring-2 ring-offset-0'
       )}
-      <span>{team ? `${team.abbreviation} — ${team.name}` : '—'}</span>
+      style={{ background: bg, color: fg, borderColor: base || '#e5e7eb' }}
+      title={team?.name || ''}
+    >
+      {logo ? <img src={logo} alt="" width={18} height={18} className="rounded" /> : null}
+      <span className="font-semibold truncate">
+        {team?.abbreviation ? `${team.abbreviation} — ` : ''}{team?.name || '—'}
+      </span>
     </button>
   )
 }

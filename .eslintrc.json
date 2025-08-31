@@ -1,16 +1,16 @@
 {
-  "root": true,
-  "extends": ["next", "next/core-web-vitals", "plugin:@typescript-eslint/recommended"],
+  "extends": ["next/core-web-vitals", "eslint:recommended"],
   "rules": {
     "react/no-unescaped-entities": "off",
     "@next/next/no-img-element": "off"
   },
   "overrides": [
     {
-      "files": ["app/api/**/*.ts", "lib/**/*.ts"],
+      "files": ["app/api/**/*.{ts,tsx}"],
       "rules": {
         "@typescript-eslint/no-explicit-any": "off"
       }
     }
   ]
 }
+
