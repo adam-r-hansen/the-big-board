@@ -1,5 +1,7 @@
 {
-  "crons": [
-    { "path": "/api/cron/score-latest", "schedule": "0 12 * * *" }
-  ]
+  "functions": {
+    "api/**.func": {
+      "runtime": "nodejs20.x"
+    }
+  }
 }
