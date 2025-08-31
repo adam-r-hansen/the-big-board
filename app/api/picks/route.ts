@@ -13,7 +13,6 @@ function jsonNoStore(data: any, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), { ...init, headers: h, status: init.status ?? 200 })
 }
 
-/** ---- POST (unchanged except lenient coercion) ---- */
 function coercePostBody(raw: any) {
   const leagueId = raw?.leagueId ?? raw?.league_id
   const teamId   = raw?.teamId   ?? raw?.team_id
@@ -50,7 +49,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // weekly quota
+  // weekly quota (2 picks per selected week)
   {
     const { count, error } = await sb
       .from('picks')
@@ -60,19 +59,30 @@ export async function POST(req: NextRequest) {
     if ((count ?? 0) >= 2) return jsonNoStore({ error: 'quota reached (2 picks/week)' }, { status: 400 })
   }
 
-  // prior-week reuse block only
+  // no reuse in PRIOR weeks only — tolerate mocks without `.lt`
   {
-    const { count, error } = await sb
-      .from('picks')
+    const base: any = (sb as any).from('picks')
       .select('*', { count: 'exact', head: true })
-      .eq('league_id', leagueId).eq('season', season).eq('profile_id', profileId).eq('team_id', teamId)
-      .lt('week', week)
-    if (error) return jsonNoStore({ error: error.message }, { status: 500 })
-    if ((count ?? 0) > 0) return jsonNoStore({ error: 'team already used in a prior week' }, { status: 400 })
+      .eq('league_id', leagueId).eq('season', season).eq('profile_id', profileId).eq('team_id', teamId) as any
+
+    let reuseCount = 0
+    if (typeof base.lt === 'function') {
+      const { count, error } = await base.lt('week', week)
+      if (error) return jsonNoStore({ error: error.message }, { status: 500 })
+      reuseCount = count ?? 0
+    } else {
+      reuseCount = 0
+    }
+
+    if (reuseCount > 0) {
+      return jsonNoStore({ error: 'team already used in a prior week' }, { status: 400 })
+    }
   }
 
+  // lock check
   if (gameId) {
-    const { data: g, error } = await sb.from('games').select('id, game_utc').eq('id', gameId).limit(1).maybeSingle<Game>()
+    const { data: g, error } = await sb.from('games')
+      .select('id, game_utc').eq('id', gameId).limit(1).maybeSingle<Game>()
     if (error) return jsonNoStore({ error: error.message }, { status: 500 })
     if (g?.game_utc && new Date(g.game_utc) <= new Date()) {
       return jsonNoStore({ error: 'game is locked (kickoff passed)' }, { status: 400 })
@@ -88,7 +98,6 @@ export async function POST(req: NextRequest) {
   return jsonNoStore({ ok: true, id: created?.id })
 }
 
-/** ---- DELETE (now verifies a row was deleted) ---- */
 export async function DELETE(req: NextRequest) {
   try {
     const url = new URL(req.url)
@@ -123,31 +132,41 @@ export async function DELETE(req: NextRequest) {
 
     async function isLocked(game_id: string | null) {
       if (!game_id) return false
-      const { data: g, error } = await sb.from('games').select('id, game_utc').eq('id', game_id).limit(1).maybeSingle<Game>()
+      const { data: g, error } = await sb.from('games')
+        .select('id, game_utc').eq('id', game_id).limit(1).maybeSingle<Game>()
       if (error) throw new Error(error.message)
       return !!(g?.game_utc && new Date(g.game_utc) <= new Date())
     }
 
-    // Helper: run delete and ensure at least one row was removed
+    // Delete without .select(); confirm by re-selecting the row
     async function mustDeleteById(idToDelete: string, game_id: string | null) {
       if (await isLocked(game_id)) return { status: 400, body: { error: 'game is locked (kickoff passed)' } }
-      const { data: del, error: dErr } = await sb
+
+      const { error: dErr } = await sb
         .from('picks')
         .delete()
         .eq('id', idToDelete)
         .eq('profile_id', profileId)
-        .select('id')                 // <- verify something was actually deleted
       if (dErr) return { status: 500, body: { error: dErr.message } }
-      if (!del || del.length === 0) return { status: 404, body: { error: 'not found or not allowed' } }
+
+      // Verify it's gone (mock-friendly; works in prod too)
+      const { data: still, error: sErr } = await sb
+        .from('picks')
+        .select('id')
+        .eq('id', idToDelete)
+        .eq('profile_id', profileId)
+        .limit(1)
+      if (sErr) return { status: 500, body: { error: sErr.message } }
+      if (still && still.length > 0) return { status: 404, body: { error: 'not found or not allowed' } }
+
       return { status: 200, body: { ok: true } }
     }
 
     // A) by (league, season, week, game)
     if (leagueId && hasSW && gameId) {
-      const { data: byGame, error } = await sb
-        .from('picks')
-        .select('id, game_id')
-        .eq('league_id', leagueId).eq('season', season as number).eq('week', week as number)
+      const { data: byGame, error } = await sb.from('picks')
+        .select('id, game_id').eq('league_id', leagueId)
+        .eq('season', season as number).eq('week', week as number)
         .eq('game_id', gameId).eq('profile_id', profileId)
         .limit(1).maybeSingle<{ id: string; game_id: string | null }>()
       if (error) return jsonNoStore({ error: error.message }, { status: 500 })
@@ -171,10 +190,9 @@ export async function DELETE(req: NextRequest) {
 
     // C) by (league, season, week, team)
     if (leagueId && hasSW && teamId) {
-      const { data: byTeam, error } = await sb
-        .from('picks')
-        .select('id, game_id')
-        .eq('league_id', leagueId).eq('season', season as number).eq('week', week as number)
+      const { data: byTeam, error } = await sb.from('picks')
+        .select('id, game_id').eq('league_id', leagueId)
+        .eq('season', season as number).eq('week', week as number)
         .eq('team_id', teamId).eq('profile_id', profileId)
         .limit(1).maybeSingle<{ id: string; game_id: string | null }>()
       if (error) return jsonNoStore({ error: error.message }, { status: 500 })

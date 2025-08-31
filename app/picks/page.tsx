@@ -1,5 +1,6 @@
 // app/picks/page.tsx
 'use client'
+
 import { useEffect, useMemo, useState } from 'react'
 import TeamPill from '@/components/TeamPill'
 import type { Team } from '@/types/domain'
@@ -161,6 +162,12 @@ export default function PicksPage() {
     }
   }
 
+  // ***** derived data placed INSIDE the component, above return *****
+  const usedTeamsArr = useMemo(
+    () => Array.from(usedTeamIds).map(id => teams[id]).filter(Boolean) as Team[],
+    [usedTeamIds, teams]
+  )
+
   return (
     <main className="mx-auto max-w-6xl px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
       {/* Controls */}
@@ -187,7 +194,7 @@ export default function PicksPage() {
       </div>
 
       {/* Sidebar — top on mobile */}
-      <aside className="order-first lg:order-none max-w-[420px] grid gap-4">
+      <aside className="order-first lg:order-none lg:col-span-1 lg:sticky top-4 max-w-[420px] grid gap-4">
         <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
           <header className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold">My picks — Week {week}</h2>
@@ -221,6 +228,23 @@ export default function PicksPage() {
             </ul>
           )}
         </section>
+
+        {/* Season so far (prior weeks only) */}
+        <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+          <header className="mb-3"><h2 className="text-base font-semibold">Season so far</h2></header>
+          {usedTeamsArr.length === 0 ? (
+            <div className="text-sm text-neutral-500">No prior-week teams yet.</div>
+          ) : (
+            <ul className="grid gap-2">
+              {usedTeamsArr.map((t) => (
+                <li key={t.id} className="flex items-center">
+                  <TeamPill team={t} picked disabled />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
         {log && <div className="text-xs text-red-600 whitespace-pre-wrap">{log}</div>}
       </aside>
 
@@ -235,7 +259,7 @@ export default function PicksPage() {
           const gamePickId = pickByGame.get(g.id)
           const weeklyQuotaFull = picksLeft === 0 && !gamePickId
 
-          // “Used” = prior weeks only (visual only; server enforces)
+          // “Used” = prior weeks only (visual; server enforces real rules)
           const homeUsed = home?.id ? usedTeamIds.has(home.id) && !pickedTeamIds.has(home.id) : false
           const awayUsed = away?.id ? usedTeamIds.has(away.id) && !pickedTeamIds.has(away.id) : false
 
@@ -280,4 +304,3 @@ export default function PicksPage() {
     </main>
   )
 }
-
