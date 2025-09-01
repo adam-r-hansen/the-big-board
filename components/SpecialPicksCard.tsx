@@ -1,5 +1,3 @@
-# from repo root — overwrite the file
-cat > components/SpecialPicksCard.tsx <<'TSX'
 // components/SpecialPicksCard.tsx
 'use client'
 
@@ -12,12 +10,12 @@ type Props = {
   season: number
   week: number
   teams: Record<string, Team>
-  /** optional; accepted to keep caller happy, not used here */
+  // accepted to match caller; not used here
   isLocked?: (gameUtc: string) => boolean
 }
 
 type ActiveWrinkleResponse = {
-  wrinkles?: any[] // we delegate shape handling to WrinkleCard for now
+  wrinkles?: any[]
   error?: string
 }
 
@@ -36,7 +34,6 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
     fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' })
       .then(async (res) => {
         if (!res.ok) {
-          // try to read JSON error, else use status text
           try {
             const j = (await res.json()) as ActiveWrinkleResponse
             throw new Error(j?.error || `HTTP ${res.status}`)
@@ -60,9 +57,7 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
         setLoading(false)
       })
 
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [leagueId, season, week])
 
   return (
@@ -75,7 +70,7 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
 
       {!loading && error && (
         <div className="text-sm text-red-600">
-          load failed (500) — {error}
+          load failed — {error}
         </div>
       )}
 
@@ -84,12 +79,9 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
       )}
 
       {!loading && !error && wrinkle && (
-        // We intentionally let WrinkleCard own the rendering & behavior.
-        // The fetched shape matches what WrinkleCard expects.
+        {/* Cast for now; WrinkleCard owns rendering/behavior */}
         <WrinkleCard wrinkle={wrinkle as any} teams={teams} />
       )}
     </section>
   )
 }
-TSX
-
