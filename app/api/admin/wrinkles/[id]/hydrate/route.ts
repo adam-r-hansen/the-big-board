@@ -8,13 +8,20 @@ export const revalidate = 0
 function json(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'no-store',
+      pragma: 'no-cache',
+    },
   })
 }
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> } // Next 15 typed context is a Promise
+) {
   try {
-    const wrinkleId = params?.id
+    const { id: wrinkleId } = await context.params
     if (!wrinkleId) return json({ error: 'missing wrinkle id' }, 400)
 
     let body: any = null
@@ -24,31 +31,69 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return json({ error: 'missing or invalid JSON body' }, 400)
     }
 
-    const { gameIds = [], spreads = {} } = body ?? {}
-    if (!Array.isArray(gameIds) || gameIds.length === 0) {
+    const gameIds: string[] = Array.isArray(body?.gameIds) ? body.gameIds : []
+    const spreads: Record<string, number | null> = body?.spreads ?? {}
+
+    if (gameIds.length === 0) {
       return json({ error: 'gameIds must be a non-empty array' }, 400)
     }
 
     const sb = createAdminClient()
 
-    const rows = gameIds.map((g: string) => ({
-      wrinkle_id: wrinkleId,
-      game_id: g,
-      spread: spreads[g] ?? null,
-    }))
+    // Fetch required columns from games so we can satisfy NOT NULL on wrinkle_games.game_utc
+    const { data: games, error: gErr } = await sb
+      .from('games')
+      .select('id, game_utc')
+      .in('id', gameIds)
 
-    const { error, count } = await sb
-      .from('wrinkle_games')
-      .insert(rows)
-      .select('*', { count: 'exact' })
+    if (gErr) return json({ error: gErr.message, hint: 'select games failed' }, 500)
 
-    if (error) {
-      return json({ error: error.message, hint: 'insert wrinkle_games failed', rows }, 500)
+    const found = new Map<string, string>()
+    for (const g of games ?? []) {
+      if (g?.id && g?.game_utc) found.set(g.id as string, g.game_utc as string)
     }
 
-    return json({ ok: true, inserted: count ?? rows.length })
+    const missing = gameIds.filter(id => !found.has(id))
+    const rows = gameIds
+      .filter(id => found.has(id))
+      .map(id => ({
+        wrinkle_id: wrinkleId,
+        game_id: id,
+        game_utc: found.get(id)!,               // required by NOT NULL constraint
+        spread: spreads[id] ?? null,            // present for spread-type wrinkles
+      }))
+
+    if (rows.length === 0) {
+      return json({
+        error: 'no valid gameIds resolved from games table',
+        missing,
+      }, 400)
+    }
+
+    // Upsert is idempotent; requires UNIQUE(wrinkle_id, game_id) on wrinkle_games
+    const { data: upserted, error: uErr } = await sb
+      .from('wrinkle_games')
+      .upsert(rows, { onConflict: 'wrinkle_id,game_id' })
+      .select('id')
+
+    if (uErr) {
+      return json({
+        error: uErr.message,
+        hint: 'upsert into wrinkle_games failed',
+        attempted: rows.length,
+      }, 500)
+    }
+
+    return json({
+      ok: true,
+      counts: {
+        requested: gameIds.length,
+        upserted: upserted?.length ?? 0,
+        missing: missing.length,
+      },
+      missing,
+    })
   } catch (e: any) {
     return json({ error: e?.message ?? 'server error' }, 500)
   }
 }
-
