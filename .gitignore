@@ -45,3 +45,6 @@ app/api/_env/
 
 # local backups
 *.backup.*
+
+# local backups
+*.backup.*
