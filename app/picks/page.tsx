@@ -204,22 +204,13 @@ export default function PicksPage() {
 
       {/* LEFT 2/3 — games */}
       <section className="lg:col-span-2 grid gap-4">
-        {/* Special picks (wrinkles) */}
-        {wrinkles.length > 0 && (
-          <div className="grid gap-4">
-            <h2 className="text-base font-semibold">Wrinkle Pick</h2>
-            {wrinkles.map(w => (
-              <WrinkleCard
-                key={w.id}
-                wrinkle={w}
-                teams={teams}
-                myPick={myWrinklePicks[w.id] ?? null}
-                onChanged={refreshWrinklePicks}
-              />
-            ))}
-          </div>
-        )}
-
+         {/* Special (wrinkle) pick — single hero card that self-loads */}
++        <SpecialPicksCard
++          leagueId={leagueId}
++          season={season}
++          week={week}
++          teams={teams}
++        />
         {loading && <div className="text-sm text-neutral-500">Loading…</div>}
         {!loading && games.length===0 && <div className="text-sm text-neutral-500">No games.</div>}
 
@@ -270,7 +261,6 @@ export default function PicksPage() {
 
       {/* RIGHT 1/3 — this week's picks */}
       <aside className="grid gap-4">
-        <SpecialPicksCard leagueId={leagueId} season={season} week={week} teams={teams} />
         <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
           <header className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold">My picks — Week {week}</h2>
@@ -305,43 +295,7 @@ export default function PicksPage() {
           )}
         </section>
 
-        {/* My special pick(s) */}
-        {wrinkles.length > 0 && (
-          <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-            <header className="mb-3">
-              <h2 className="text-base font-semibold">My special picks</h2>
-            </header>
-            {Object.values(myWrinklePicks).filter(Boolean).length === 0 ? (
-              <div className="text-sm text-neutral-500">No special picks yet.</div>
-            ) : (
-              <ul className="text-sm grid gap-2">
-                {Object.entries(myWrinklePicks).map(([wid, p]) => {
-                  if (!p) return null
-                  const t = teams[p.team_id]
-                  const gm = games.find(g=>g.id===p.game_id)
-                  const locked = gm ? isLocked(gm.game_utc) : false
-                  return (
-                    <li key={p.id} className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2">
-                      <span className="font-medium">{t ? `${t.abbreviation} — ${t.name}` : p.team_id}</span>
-                      <button
-                        type="button"
-                        className="text-xs underline disabled:opacity-50"
-                        disabled={locked}
-                        onClick={async ()=> {
-                          await fetch(`/api/wrinkles/${wid}/picks?id=${p.id}`, { method: 'DELETE', cache: 'no-store' })
-                          await refreshWrinklePicks()
-                        }}
-                      >
-                        {locked ? 'Locked' : 'Unpick'}
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </section>
-        )}
-
+        {/* (sidebar wrinkle list intentionally removed) */}
         {log && <pre className="text-xs text-red-600 whitespace-pre-wrap">{log}</pre>}
       </aside>
     </main>

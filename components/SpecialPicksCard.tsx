@@ -23,11 +23,9 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
       setLoading(true)
       setError(null)
       try {
-        if (!leagueId || !season || !week) {
-          setWrinkle(null)
-          return
-        }
-        const url = `/api/wrinkles/active?leagueId=${encodeURIComponent(leagueId)}&season=${season}&week=${week}`
+        const url = `/api/wrinkles/active?leagueId=${encodeURIComponent(
+          leagueId,
+        )}&season=${season}&week=${week}`
         const res = await fetch(url, { cache: 'no-store' })
         const json = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`)
@@ -38,33 +36,36 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
         if (!cancelled) setLoading(false)
       }
     })()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [leagueId, season, week])
 
-  // temporary no-op until we wire refresh behavior
+  // No-op until we wire refresh; WrinkleCard requires these props.
   const handleChanged = () => {}
+  const myPick = null
 
   return (
-    <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+    <section className="rounded-xl border border-yellow-300 bg-yellow-50 p-4">
       <header className="mb-3 flex items-center justify-between">
-        <h2 className="text-base font-semibold">Wrinkle</h2>
+        <h2 className="text-base font-semibold">Wrinkle Pick</h2>
       </header>
 
       {loading ? (
-        <div className="text-sm text-neutral-500">Loading…</div>
+        <div className="text-sm text-neutral-600">Loading…</div>
       ) : error ? (
         <div className="text-sm text-red-600">load failed — {error}</div>
       ) : !wrinkle ? (
-        <div className="text-sm text-neutral-500">No active wrinkle this week.</div>
+        <div className="text-sm text-neutral-600">No active wrinkle this week.</div>
       ) : (
-        // Casts are intentional to satisfy WrinkleCard's current Props
         <WrinkleCard
           wrinkle={wrinkle as any}
           teams={teams}
-          myPick={null as any}
+          myPick={myPick as any}
           onChanged={handleChanged as any}
         />
       )}
     </section>
   )
 }
+
