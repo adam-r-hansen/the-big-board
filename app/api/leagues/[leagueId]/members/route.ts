@@ -13,21 +13,27 @@ function noStoreJson(data: any, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), { ...init, headers: h, status: init.status ?? 200 })
 }
 
-async function userClient() {
-  const store = await cookies()
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-    { cookies: { getAll: () => store.getAll(), setAll: () => {} } }
+function getAnonKey() {
+  return (
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY || ''
   )
 }
 
+async function userClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+  const key = getAnonKey()
+  if (!url || !key) throw new Error('Missing Supabase anon key or URL')
+  const store = await cookies()
+  return createServerClient(url, key, { cookies: { getAll: () => store.getAll(), setAll: () => {} } })
+}
+
 function adminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  )
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+  const svc = process.env.SUPABASE_SERVICE_ROLE || ''
+  if (!url || !svc) throw new Error('Missing service role or URL')
+  return createClient(url, svc, { auth: { autoRefreshToken: false, persistSession: false } })
 }
 
 async function assertLeagueAdmin(leagueId: string) {
@@ -47,11 +53,9 @@ async function assertLeagueAdmin(leagueId: string) {
     .maybeSingle()
   if (error) throw new Error(error.message)
   if (!data) throw new Error('forbidden')
-
   return { userId: user.id }
 }
 
-// GET: list members for a league
 export async function GET(req: Request, ctx: { params: Promise<{ leagueId: string }> }) {
   const { leagueId } = await ctx.params
   try {
@@ -70,7 +74,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ leagueId: strin
   }
 }
 
-// POST: add member if profile exists, otherwise create/refresh invite for the email
 export async function POST(req: Request, ctx: { params: Promise<{ leagueId: string }> }) {
   const { leagueId } = await ctx.params
   const origin = req.headers.get('origin') || process.env.NEXT_PUBLIC_SITE_URL || ''
@@ -80,20 +83,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ leagueId: stri
     const body = await req.json().catch(() => ({} as any))
     const email = String(body?.email ?? '').trim().toLowerCase()
     const role = String(body?.role ?? 'member').trim().toLowerCase()
-
     if (!email) return noStoreJson({ error: 'email required' }, { status: 400 })
-    if (!['owner','admin','member'].includes(role))
-      return noStoreJson({ error: 'invalid role' }, { status: 400 })
+    if (!['owner','admin','member'].includes(role)) return noStoreJson({ error: 'invalid role' }, { status: 400 })
 
-    // Try to find an existing profile for this email
-    const { data: prof } = await a
-      .from('profiles')
-      .select('id,email')
-      .eq('email', email)
-      .maybeSingle()
-
+    const { data: prof } = await a.from('profiles').select('id,email').eq('email', email).maybeSingle()
     if (prof?.id) {
-      // Add or update membership directly
       const { error: merr } = await a
         .from('league_members')
         .upsert([{ league_id: leagueId, profile_id: prof.id, role }], { onConflict: 'league_id,profile_id' })
@@ -101,7 +95,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ leagueId: stri
       return noStoreJson({ ok: true, added: true })
     }
 
-    // No profile -> create/update invite
     const { data: inv, error: ierr } = await a
       .from('league_invites')
       .upsert([{ league_id: leagueId, email, role: role === 'owner' ? 'admin' : role }], { onConflict: 'league_id,email' })
@@ -118,7 +111,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ leagueId: stri
   }
 }
 
-// DELETE: remove a member by profileId or email, or revoke invite by email/token
 export async function DELETE(req: Request, ctx: { params: Promise<{ leagueId: string }> }) {
   const { leagueId } = await ctx.params
   try {
@@ -133,20 +125,15 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ leagueId: st
       return noStoreJson({ error: 'profileId, email, or token required' }, { status: 400 })
 
     if (profileId) {
-      const { error } = await a.from('league_members')
-        .delete().eq('league_id', leagueId).eq('profile_id', profileId)
+      const { error } = await a.from('league_members').delete().eq('league_id', leagueId).eq('profile_id', profileId)
       if (error) return noStoreJson({ error: error.message }, { status: 500 })
       return noStoreJson({ ok: true })
     }
 
     if (email) {
-      // try invite first
       await a.from('league_invites').delete().eq('league_id', leagueId).eq('email', email)
-      // then membership by joining profiles
       const { data: prof } = await a.from('profiles').select('id').eq('email', email).maybeSingle()
-      if (prof?.id) {
-        await a.from('league_members').delete().eq('league_id', leagueId).eq('profile_id', prof.id)
-      }
+      if (prof?.id) await a.from('league_members').delete().eq('league_id', leagueId).eq('profile_id', prof.id)
       return noStoreJson({ ok: true })
     }
 

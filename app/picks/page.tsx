@@ -6,7 +6,6 @@ import TeamPill from '@/components/TeamPill'
 import SpecialPicksCard from "@/components/SpecialPicksCard"
 import WrinkleCard from '@/components/WrinkleCard'
 import type { Team } from '@/types/domain'
-import SpecialPicksCard from '@/components/SpecialPicksCard'
 
 type League = { id: string; name: string; season: number }
 type Game = {
@@ -208,7 +207,7 @@ export default function PicksPage() {
         {/* Special picks (wrinkles) */}
         {wrinkles.length > 0 && (
           <div className="grid gap-4">
-            <h2 className="text-base font-semibold">Special Picks</h2>
+            <h2 className="text-base font-semibold">Wrinkle Pick</h2>
             {wrinkles.map(w => (
               <WrinkleCard
                 key={w.id}

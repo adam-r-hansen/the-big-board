@@ -4,11 +4,11 @@ import { createServerClient as createSSRClient } from '@supabase/ssr'
 import { createClient } from '@supabase/supabase-js'
 
 /**
- * SSR client (uses anon key + Next cookies)
- * Usage: const sb = createServerClient()
+ * SSR client (uses anon key + Next cookies).
+ * NOTE: cookies() may be Promise-typed in Next 15, so we await it.
  */
-export function createServerClient(_opts: { req?: Request } = {}) {
-  const cookieStore = cookies()
+export async function createServerClient(_opts: { req?: Request } = {}) {
+  const cookieStore = await cookies()
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   return createSSRClient(url, anon, {
@@ -20,8 +20,7 @@ export function createServerClient(_opts: { req?: Request } = {}) {
 }
 
 /**
- * Admin client (uses service role — NEVER expose to browser)
- * Usage: const sbAdmin = createAdminClient()
+ * Admin client (service role). NEVER expose to the browser.
  */
 export function createAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
