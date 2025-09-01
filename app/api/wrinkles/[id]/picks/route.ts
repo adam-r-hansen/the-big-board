@@ -1,83 +1,136 @@
 // app/api/wrinkles/[id]/picks/route.ts
-import { NextRequest } from 'next/server'
-import { createServerClient } from '@/lib/clients'
-import { getTeamRecordUpTo } from '@/lib/wrinkles'
+import { NextRequest, NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
+import { createServerClient } from '@supabase/ssr'
 
 export const runtime = 'nodejs'
 export const revalidate = 0
 
-function jsonNoStore(data: any, init: ResponseInit = {}) {
-  const h = new Headers(init.headers)
-  h.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
-  h.set('Pragma', 'no-cache')
-  h.set('Expires', '0')
-  h.set('Surrogate-Control', 'no-store')
-  return new Response(JSON.stringify(data), {
-    ...init,
-    headers: h,
-    status: init.status ?? 200,
-  })
+function json(data: unknown, init?: number | ResponseInit) {
+  const status = typeof init === 'number' ? init : undefined
+  const initObj = typeof init === 'object' ? init : undefined
+  return NextResponse.json(data, { status, ...initObj, headers: { 'cache-control': 'no-store' } })
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id: wrinkleId } = await params
-  const { leagueId, season, week, teamId, gameId } = await req.json()
+function sbFromRequest(req: NextRequest) {
+  const store = cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() { return store.getAll() },
+        setAll(cs) { cs.forEach(c => store.set(c.name, c.value)) },
+      },
+    },
+  )
+}
 
-  if (!wrinkleId || !leagueId || !season || !week || !teamId || !gameId) {
-    return jsonNoStore({ error: 'missing params' }, { status: 400 })
-  }
+// GET /api/wrinkles/:id/picks → caller’s pick for that wrinkle (if any)
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const supabase = sbFromRequest(req)
+  const { data: auth } = await supabase.auth.getUser()
+  if (!auth?.user) return json({ error: 'unauthorized' }, 401)
 
-  const sb = await createServerClient()
-  const { data: { user } } = await sb.auth.getUser()
-  if (!user) return jsonNoStore({ error: 'not signed in' }, { status: 401 })
+  const { data, error } = await supabase
+    .from('wrinkle_picks')
+    .select('*')
+    .eq('wrinkle_id', params.id)
+    .eq('user_id', auth.user.id)
+    .limit(1)
 
-  // Load wrinkle (get kind)
-  const { data: wrArr, error: wErr } = await sb
+  if (error) return json({ error: error.message }, 500)
+  const pick = (data ?? [])[0] || null
+  return json({ pick })
+}
+
+// POST /api/wrinkles/:id/picks → make/update pick
+// Accepts minimal body: { teamId, gameId? }
+// We infer league/season/week/game (if only one) from the wrinkle+links.
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const supabase = sbFromRequest(req)
+  const { data: auth } = await supabase.auth.getUser()
+  if (!auth?.user) return json({ error: 'unauthorized' }, 401)
+
+  let body: any = {}
+  try { body = await req.json() } catch {}
+  const teamId: string | undefined = body?.teamId
+  let gameId: string | undefined = body?.gameId
+  if (!teamId) return json({ error: 'teamId required' }, 400)
+
+  // Load wrinkle and its linked games
+  const { data: w, error: wErr } = await supabase
     .from('wrinkles')
-    .select('id, league_id, season, week, status, kind, config')
-    .eq('id', wrinkleId)
-    .eq('league_id', leagueId)
-    .eq('season', season)
-    .eq('week', week)
+    .select('id, league_id, season, week')
+    .eq('id', params.id)
+    .single()
+  if (wErr || !w) return json({ error: wErr?.message ?? 'wrinkle not found' }, 404)
+
+  // Ensure requester is a member of the wrinkle’s league
+  const { data: mem, error: memErr } = await supabase
+    .from('league_members')
+    .select('profile_id')
+    .eq('league_id', w.league_id)
+    .eq('profile_id', auth.user.id)
     .limit(1)
-  if (wErr || !wrArr?.[0]) return jsonNoStore({ error: 'wrinkle not found' }, { status: 404 })
-  const wrinkle = wrArr[0]
-  const kind = String(wrinkle.kind ?? 'bonus_game').toLowerCase()
+  if (memErr) return json({ error: memErr.message }, 500)
+  if (!mem || mem.length === 0) return json({ error: 'forbidden' }, 403)
 
-  // Kickoff guard
-  const { data: gArr } = await sb.from('games').select('id, game_utc').eq('id', gameId).limit(1)
-  const kickoff = gArr?.[0]?.game_utc ? new Date(gArr[0].game_utc) : null
-  if (!kickoff) return jsonNoStore({ error: 'game not found' }, { status: 404 })
-  if (new Date() >= kickoff) return jsonNoStore({ error: 'locked (kickoff passed)' }, { status: 400 })
+  // Determine allowed games
+  const { data: wg, error: wgErr } = await supabase
+    .from('wrinkle_games')
+    .select('game_id, home_team, away_team')
+    .eq('wrinkle_id', params.id)
+  if (wgErr) return json({ error: wgErr.message }, 500)
+  const linked = wg ?? []
 
-  // OOF: team win% must be < .400 at pick time
-  if (kind === 'bonus_game_oof') {
-    const { wins, losses } = await getTeamRecordUpTo(sb, season, kickoff.toISOString(), teamId)
-    const total = wins + losses
-    const pct = total > 0 ? wins / total : 0
-    if (pct >= 0.4) {
-      return jsonNoStore({ error: 'team not eligible (>= .400)' }, { status: 400 })
-    }
+  if (!gameId) {
+    if (linked.length === 0) return json({ error: 'no games linked to wrinkle' }, 400)
+    if (linked.length > 1) return json({ error: 'gameId required when multiple games are linked' }, 400)
+    gameId = linked[0].game_id
   }
 
-  // Only one bonus pick per wrinkle per user
-  const profileId = user.id
-  const { data: existing, error: exErr } = await sb
-    .from('wrinkle_picks')
-    .select('id', { count: 'exact' })
-    .eq('wrinkle_id', wrinkleId)
-    .eq('profile_id', profileId)
-    .limit(1)
-  if (exErr) return jsonNoStore({ error: exErr.message }, { status: 500 })
-  if ((existing?.length ?? 0) > 0) return jsonNoStore({ error: 'already picked' }, { status: 400 })
+  // (Optionally) validate team appears in the linked game, when we can
+  const link = linked.find(g => g.game_id === gameId)
+  if (link && !(link.home_team === teamId || link.away_team === teamId)) {
+    return json({ error: 'team not in selected wrinkle game' }, 400)
+  }
 
-  const { error: insErr } = await sb
-    .from('wrinkle_picks')
-    .insert({ wrinkle_id: wrinkleId, profile_id: profileId, team_id: teamId, game_id: gameId })
-  if (insErr) return jsonNoStore({ error: insErr.message }, { status: 500 })
+  // Upsert pick: unique on (wrinkle_id, user_id)
+  const upsertRow = {
+    wrinkle_id: params.id,
+    user_id: auth.user.id,
+    game_id: gameId!,
+    team_id: teamId,
+  }
 
-  return jsonNoStore({ ok: true })
+  const { data: up, error: upErr } = await supabase
+    .from('wrinkle_picks')
+    .upsert(upsertRow, { onConflict: 'wrinkle_id,user_id' })
+    .select('*')
+    .single()
+
+  if (upErr) return json({ error: upErr.message }, 500)
+  return json({ pick: up })
 }
+
+// DELETE /api/wrinkles/:id/picks?id=<pickId>
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  const supabase = sbFromRequest(req)
+  const { data: auth } = await supabase.auth.getUser()
+  if (!auth?.user) return json({ error: 'unauthorized' }, 401)
+
+  const { searchParams } = new URL(req.url)
+  const pickId = searchParams.get('id')
+  if (!pickId) return json({ error: 'id required' }, 400)
+
+  const { error } = await supabase
+    .from('wrinkle_picks')
+    .delete()
+    .eq('id', pickId)
+    .eq('user_id', auth.user.id)
+
+  if (error) return json({ error: error.message }, 500)
+  return json({ ok: true })
+}
+
