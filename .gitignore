@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+# local only
+app/picks/page.backup.tsx
+app/api/_env/
