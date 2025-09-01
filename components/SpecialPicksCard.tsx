@@ -1,108 +1,95 @@
+# from repo root — overwrite the file
+cat > components/SpecialPicksCard.tsx <<'TSX'
+// components/SpecialPicksCard.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
 import WrinkleCard from '@/components/WrinkleCard'
-import type { Team as DomainTeam } from '@/types/domain'
+import type { Team } from '@/types/domain'
 
 type Props = {
   leagueId: string
   season: number
   week: number
-  teams: Record<string, DomainTeam>
+  teams: Record<string, Team>
+  /** optional; accepted to keep caller happy, not used here */
+  isLocked?: (gameUtc: string) => boolean
 }
 
-type APIWrinkleGame = {
-  id: string
-  game_id: string
-  home_team: string
-  away_team: string
-  game_utc: string
-  spread?: number | null
+type ActiveWrinkleResponse = {
+  wrinkles?: any[] // we delegate shape handling to WrinkleCard for now
+  error?: string
 }
 
-type APIWrinkle = {
-  id: string
-  name: string
-  kind: 'bonus' | 'spread' | 'oof' | 'winless_double'
-  status: 'active' | 'draft' | 'archived'
-  season: number
-  week: number
-  extraPicks?: number | null
-  games?: APIWrinkleGame[]
-}
-
-export default function SpecialPicksCard({
-  leagueId,
-  season,
-  week,
-  teams,
-}: Props) {
-  const [loading, setLoading] = useState(true)
+export default function SpecialPicksCard({ leagueId, season, week, teams }: Props) {
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [wrinkle, setWrinkle] = useState<APIWrinkle | null>(null)
+  const [wrinkle, setWrinkle] = useState<any | null>(null)
 
   useEffect(() => {
-    let abort = false
+    let cancelled = false
+    if (!leagueId) return
+
     setLoading(true)
     setError(null)
-    setWrinkle(null)
 
-    const url =
-      `/api/wrinkles/active?leagueId=${encodeURIComponent(leagueId)}&season=${season}&week=${week}`
-
-    fetch(url, { cache: 'no-store' })
+    fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' })
       .then(async (res) => {
         if (!res.ok) {
-          let msg = `${res.status}`
-          try { msg = await res.text() } catch {}
-          throw new Error(msg)
+          // try to read JSON error, else use status text
+          try {
+            const j = (await res.json()) as ActiveWrinkleResponse
+            throw new Error(j?.error || `HTTP ${res.status}`)
+          } catch {
+            throw new Error(`HTTP ${res.status}`)
+          }
         }
-        return res.json()
+        return (await res.json()) as ActiveWrinkleResponse
       })
-      .then((payload: APIWrinkle[] | { wrinkles?: APIWrinkle[] }) => {
-        if (abort) return
-        const list = Array.isArray(payload) ? payload : (payload?.wrinkles ?? [])
-        const chosen =
-          list.find((w) => w.kind === 'bonus') ??
-          list[0] ??
-          null
-        setWrinkle(chosen)
+      .then((j) => {
+        if (cancelled) return
+        const first = Array.isArray(j?.wrinkles) && j.wrinkles.length ? j.wrinkles[0] : null
+        setWrinkle(first)
       })
       .catch((e: any) => {
-        if (!abort) setError(String(e?.message ?? e))
+        if (cancelled) return
+        setError(e?.message || 'load error')
       })
       .finally(() => {
-        if (!abort) setLoading(false)
+        if (cancelled) return
+        setLoading(false)
       })
 
     return () => {
-      abort = true
+      cancelled = true
     }
   }, [leagueId, season, week])
 
-  // Prepare the cast outside of JSX to keep the parser happy.
-  const wrinkleForCard = (wrinkle ?? undefined) as unknown as any
-
   return (
     <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-      <header className="mb-3">
+      <header className="mb-3 flex items-center justify-between">
         <h2 className="text-base font-semibold">Wrinkles</h2>
       </header>
 
       {loading && <div className="text-sm text-neutral-500">Loading…</div>}
 
       {!loading && error && (
-        <div className="text-sm text-red-600">load failed — {error}</div>
+        <div className="text-sm text-red-600">
+          load failed (500) — {error}
+        </div>
       )}
 
       {!loading && !error && !wrinkle && (
-        <div className="text-sm text-neutral-500">No linked game.</div>
+        <div className="text-sm text-neutral-500">No active wrinkles this week.</div>
       )}
 
       {!loading && !error && wrinkle && (
-        <WrinkleCard wrinkle={wrinkleForCard} teams={teams} />
+        // We intentionally let WrinkleCard own the rendering & behavior.
+        // The fetched shape matches what WrinkleCard expects.
+        <WrinkleCard wrinkle={wrinkle as any} teams={teams} />
       )}
     </section>
   )
 }
+TSX
 
