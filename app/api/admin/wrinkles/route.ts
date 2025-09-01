@@ -1,6 +1,6 @@
 // app/api/admin/wrinkles/route.ts
 import { NextRequest } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createAdminClient } from '@/lib/supabase'
 
 export const runtime = 'nodejs'
 export const revalidate = 0
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     }
 
     // use service-role so RLS can’t block admin actions
-    const sb = supabaseAdmin()
+    const sb = createAdminClient()
 
     // Map to DB column names (adjust if your columns differ)
     const insertRow = {

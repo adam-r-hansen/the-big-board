@@ -1,6 +1,6 @@
 // app/api/admin/wrinkles/[id]/hydrate/route.ts
 import { NextRequest } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createAdminClient } from '@/lib/supabase'
 
 export const runtime = 'nodejs'
 export const revalidate = 0
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return json({ error: 'gameIds must be a non-empty array' }, 400)
     }
 
-    const sb = supabaseAdmin()
+    const sb = createAdminClient()
 
     const rows = gameIds.map((g: string) => ({
       wrinkle_id: wrinkleId,
