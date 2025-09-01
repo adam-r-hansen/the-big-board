@@ -41,6 +41,9 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
     return () => { cancelled = true }
   }, [leagueId, season, week])
 
+  // temporary no-op until we wire refresh behavior
+  const handleChanged = () => {}
+
   return (
     <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
       <header className="mb-3 flex items-center justify-between">
@@ -54,7 +57,13 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
       ) : !wrinkle ? (
         <div className="text-sm text-neutral-500">No active wrinkle this week.</div>
       ) : (
-        <WrinkleCard wrinkle={wrinkle as any} teams={teams} />
+        // Casts are intentional to satisfy WrinkleCard's current Props
+        <WrinkleCard
+          wrinkle={wrinkle as any}
+          teams={teams}
+          myPick={null as any}
+          onChanged={handleChanged as any}
+        />
       )}
     </section>
   )
