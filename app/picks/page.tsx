@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import TeamPill from '@/components/TeamPill'
+import SpecialPicksCard from "@/components/SpecialPicksCard"
 import WrinkleCard from '@/components/WrinkleCard'
 import type { Team } from '@/types/domain'
+import SpecialPicksCard from '@/components/SpecialPicksCard'
 
 type League = { id: string; name: string; season: number }
 type Game = {
@@ -269,6 +271,7 @@ export default function PicksPage() {
 
       {/* RIGHT 1/3 — this week's picks */}
       <aside className="grid gap-4">
+        <SpecialPicksCard leagueId={leagueId} season={season} week={week} teams={teams} isLocked={isLocked} />
         <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
           <header className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold">My picks — Week {week}</h2>
