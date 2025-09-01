@@ -1,8 +1,7 @@
 // app/api/wrinkles/[id]/picks/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies as nextCookies } from 'next/headers'
+import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
-import { supabaseServer } from '@/lib/supabase'
 
 export const runtime = 'nodejs'
 export const revalidate = 0
@@ -10,159 +9,130 @@ export const revalidate = 0
 function json(data: unknown, init?: number | ResponseInit) {
   const status = typeof init === 'number' ? init : undefined
   const initObj = typeof init === 'object' ? init : undefined
-  return NextResponse.json(data, { status, ...initObj, headers: { 'cache-control': 'no-store' } })
+  return NextResponse.json(data, {
+    status,
+    ...initObj,
+    headers: { 'cache-control': 'no-store' },
+  })
 }
 
-// Next 15 sometimes passes params as a Promise
-type ParamCtx = { params: Promise<{ id: string }> } | { params: { id: string } }
-async function getId(ctx: ParamCtx) {
-  const p: any = (ctx as any)?.params
-  return p && typeof p.then === 'function' ? (await p).id : p.id
-}
-
-// cookies() may be a Promise in edge/server contexts — normalize it
-async function sbFromRequest() {
-  const storeMaybe = (nextCookies as any)()
-  const store = storeMaybe && typeof storeMaybe.then === 'function' ? await storeMaybe : storeMaybe
+function sbFromRequest() {
+  const store = cookies()
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
         getAll() { return store.getAll() },
-        setAll(cs) { cs.forEach((c: any) => store.set(c.name, c.value)) },
+        setAll(cs) { cs.forEach(c => store.set(c.name, c.value)) },
       },
-    },
+    }
   )
 }
 
-// GET → caller’s wrinkle pick (if any)
-export async function GET(_req: NextRequest, context: ParamCtx) {
-  try {
-    const id = await getId(context)
-    const supabase = await sbFromRequest()
-    const { data: auth } = await supabase.auth.getUser()
-    if (!auth?.user) return json({ error: 'unauthorized' }, 401)
+// GET /api/wrinkles/:id/picks → caller’s pick for this wrinkle (if any)
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const sb = sbFromRequest()
+  const { data: auth } = await sb.auth.getUser()
+  if (!auth?.user) return json({ error: 'unauthorized' }, 401)
 
-    const { data, error } = await supabase
-      .from('wrinkle_picks')
-      .select('*')
-      .eq('wrinkle_id', id)
-      .eq('user_id', auth.user.id)
-      .limit(1)
+  const { data, error } = await sb
+    .from('wrinkle_picks')
+    .select('*')
+    .eq('wrinkle_id', params.id)
+    .eq('profile_id', auth.user.id)
+    .limit(1)
 
-    if (error) return json({ error: error.message }, 500)
-    return json({ pick: (data ?? [])[0] || null })
-  } catch (e: any) {
-    return json({ error: e?.message || 'server error' }, 500)
-  }
+  if (error) return json({ error: error.message }, 500)
+  return json({ pick: (data ?? [])[0] ?? null })
 }
 
-// POST → make/update pick (body: { teamId, gameId? })
-export async function POST(req: NextRequest, context: ParamCtx) {
-  try {
-    const id = await getId(context)
-    const supabase = await sbFromRequest()
-    const { data: auth } = await supabase.auth.getUser()
-    if (!auth?.user) return json({ error: 'unauthorized' }, 401)
+// POST /api/wrinkles/:id/picks
+// Body: { teamId: string, gameId?: string }
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const sb = sbFromRequest()
+  const { data: auth } = await sb.auth.getUser()
+  if (!auth?.user) return json({ error: 'unauthorized' }, 401)
 
-    let body: any = {}
-    try { body = await req.json() } catch {}
-    const teamId: string | undefined = body?.teamId
-    let gameId: string | undefined = body?.gameId
-    if (!teamId) return json({ error: 'teamId required' }, 400)
+  let body: any = {}
+  try { body = await req.json() } catch {}
+  const teamId: string | undefined = body?.teamId
+  let gameId: string | undefined = body?.gameId
+  if (!teamId) return json({ error: 'teamId required' }, 400)
 
-    // load wrinkle
-    const { data: w, error: wErr } = await supabase
-      .from('wrinkles')
-      .select('id, league_id, season, week')
-      .eq('id', id)
-      .single()
-    if (wErr || !w) return json({ error: wErr?.message ?? 'wrinkle not found' }, 404)
+  // Load wrinkle
+  const { data: w, error: wErr } = await sb
+    .from('wrinkles')
+    .select('id, league_id, season, week')
+    .eq('id', params.id)
+    .single()
+  if (wErr || !w) return json({ error: wErr?.message ?? 'wrinkle not found' }, 404)
 
-    // confirm league membership
-    const { data: mem, error: memErr } = await supabase
-      .from('league_members')
-      .select('profile_id')
-      .eq('league_id', w.league_id)
-      .eq('profile_id', auth.user.id)
-      .limit(1)
-    if (memErr) return json({ error: memErr.message }, 500)
-    if (!mem || mem.length === 0) return json({ error: 'forbidden' }, 403)
+  // Ensure requester is a member of the wrinkle's league
+  const { data: mem, error: memErr } = await sb
+    .from('league_members')
+    .select('profile_id')
+    .eq('league_id', w.league_id)
+    .eq('profile_id', auth.user.id)
+    .limit(1)
+  if (memErr) return json({ error: memErr.message }, 500)
+  if (!mem || mem.length === 0) return json({ error: 'forbidden' }, 403)
 
-    // linked games
-    const { data: wg, error: wgErr } = await supabase
-      .from('wrinkle_games')
-      .select('game_id, home_team, away_team')
-      .eq('wrinkle_id', id)
-    if (wgErr) return json({ error: wgErr.message }, 500)
-    const linked = wg ?? []
+  // Allowed games (linked to the wrinkle)
+  const { data: wg, error: wgErr } = await sb
+    .from('wrinkle_games')
+    .select('game_id, home_team, away_team')
+    .eq('wrinkle_id', params.id)
+  if (wgErr) return json({ error: wgErr.message }, 500)
+  const linked = wg ?? []
 
-    if (!gameId) {
-      if (linked.length === 0) return json({ error: 'no games linked to wrinkle' }, 400)
-      if (linked.length > 1) return json({ error: 'gameId required when multiple games are linked' }, 400)
-      gameId = linked[0].game_id
-    }
-
-    // team must be in the game (when we know both teams)
-    const link = linked.find(g => g.game_id === gameId)
-    if (link && !(link.home_team === teamId || link.away_team === teamId)) {
-      return json({ error: 'team not in selected wrinkle game' }, 400)
-    }
-
-    // write with service-role: delete-then-insert
-    const admin = supabaseServer()
-    const { error: delErr } = await admin
-      .from('wrinkle_picks')
-      .delete()
-      .eq('wrinkle_id', id)
-      .eq('user_id', auth.user.id)
-    if (delErr) return json({ error: delErr.message }, 500)
-
-    // keep insert minimal to avoid schema mismatches
-    const row = {
-      wrinkle_id: id,
-      user_id: auth.user.id,
-      game_id: gameId!,
-      team_id: teamId,
-    }
-
-    const { data: ins, error: insErr } = await admin
-      .from('wrinkle_picks')
-      .insert(row)
-      .select('*')
-      .single()
-
-    if (insErr) return json({ error: insErr.message }, 500)
-    return json({ pick: ins })
-  } catch (e: any) {
-    return json({ error: e?.message || 'server error' }, 500)
+  if (!gameId) {
+    if (linked.length === 0) return json({ error: 'no games linked to wrinkle' }, 400)
+    if (linked.length > 1) return json({ error: 'gameId required when multiple games are linked' }, 400)
+    gameId = linked[0].game_id
   }
+
+  // If we know the link, validate the team is in it
+  const link = linked.find(g => g.game_id === gameId)
+  if (link && !(link.home_team === teamId || link.away_team === teamId)) {
+    return json({ error: 'team not in selected wrinkle game' }, 400)
+  }
+
+  // Upsert pick (unique on wrinkle_id + profile_id)
+  const upsertRow = {
+    wrinkle_id: params.id,
+    profile_id: auth.user.id,
+    game_id: gameId!,
+    team_id: teamId,
+  }
+
+  const { data: up, error: upErr } = await sb
+    .from('wrinkle_picks')
+    .upsert(upsertRow, { onConflict: 'wrinkle_id,profile_id' })
+    .select('*')
+    .single()
+
+  if (upErr) return json({ error: upErr.message }, 500)
+  return json({ pick: up })
 }
 
-// DELETE → /api/wrinkles/:id/picks?id=<pickId>
-export async function DELETE(req: NextRequest, context: ParamCtx) {
-  try {
-    await getId(context) // keep signature uniform; id not required here
-    const supabase = await sbFromRequest()
-    const { data: auth } = await supabase.auth.getUser()
-    if (!auth?.user) return json({ error: 'unauthorized' }, 401)
+// DELETE /api/wrinkles/:id/picks?id=<pickId>
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  const sb = sbFromRequest()
+  const { data: auth } = await sb.auth.getUser()
+  if (!auth?.user) return json({ error: 'unauthorized' }, 401)
 
-    const { searchParams } = new URL(req.url)
-    const pickId = searchParams.get('id')
-    if (!pickId) return json({ error: 'id required' }, 400)
+  const { searchParams } = new URL(req.url)
+  const pickId = searchParams.get('id')
+  if (!pickId) return json({ error: 'id required' }, 400)
 
-    const admin = supabaseServer()
-    const { error } = await admin
-      .from('wrinkle_picks')
-      .delete()
-      .eq('id', pickId)
-      .eq('user_id', auth.user.id)
+  const { error } = await sb
+    .from('wrinkle_picks')
+    .delete()
+    .eq('id', pickId)
+    .eq('profile_id', auth.user.id)
 
-    if (error) return json({ error: error.message }, 500)
-    return json({ ok: true })
-  } catch (e: any) {
-    return json({ error: e?.message || 'server error' }, 500)
-  }
+  if (error) return json({ error: error.message }, 500)
+  return json({ ok: true })
 }
 
