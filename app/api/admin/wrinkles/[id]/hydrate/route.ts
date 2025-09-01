@@ -18,7 +18,7 @@ function json(data: any, status = 200) {
 
 export async function POST(
   req: NextRequest,
-  context: { params: Promise<{ id: string }> } // Next 15 typed context is a Promise
+  context: { params: Promise<{ id: string }> } // Next 15 passes params as a Promise
 ) {
   try {
     const { id: wrinkleId } = await context.params
@@ -40,37 +40,57 @@ export async function POST(
 
     const sb = createAdminClient()
 
-    // Fetch required columns from games so we can satisfy NOT NULL on wrinkle_games.game_utc
+    // Pull the fields required by wrinkle_games NOT NULL constraints
     const { data: games, error: gErr } = await sb
       .from('games')
-      .select('id, game_utc')
+      .select('id, game_utc, home_team, away_team')
       .in('id', gameIds)
 
-    if (gErr) return json({ error: gErr.message, hint: 'select games failed' }, 500)
-
-    const found = new Map<string, string>()
-    for (const g of games ?? []) {
-      if (g?.id && g?.game_utc) found.set(g.id as string, g.game_utc as string)
+    if (gErr) {
+      return json({ error: gErr.message, hint: 'select games failed' }, 500)
     }
 
-    const missing = gameIds.filter(id => !found.has(id))
-    const rows = gameIds
-      .filter(id => found.has(id))
-      .map(id => ({
+    // Build rows only when all required props are present
+    const found = new Map<string, { game_utc: string; home_team: string; away_team: string }>()
+    for (const g of games ?? []) {
+      if (g?.id && g?.game_utc && g?.home_team && g?.away_team) {
+        found.set(g.id as string, {
+          game_utc: g.game_utc as string,
+          home_team: g.home_team as string,
+          away_team: g.away_team as string,
+        })
+      }
+    }
+
+    const missing: string[] = []
+    const incomplete: string[] = []
+    const rows = gameIds.flatMap((id) => {
+      const info = found.get(id)
+      if (!info) {
+        // missing game or some required field is null
+        const raw = (games ?? []).find((x: any) => x?.id === id)
+        if (!raw) missing.push(id)
+        else incomplete.push(id)
+        return []
+      }
+      return [{
         wrinkle_id: wrinkleId,
         game_id: id,
-        game_utc: found.get(id)!,               // required by NOT NULL constraint
-        spread: spreads[id] ?? null,            // present for spread-type wrinkles
-      }))
+        game_utc: info.game_utc,
+        home_team: info.home_team,
+        away_team: info.away_team,
+        spread: spreads[id] ?? null,
+      }]
+    })
 
     if (rows.length === 0) {
       return json({
-        error: 'no valid gameIds resolved from games table',
-        missing,
+        error: 'no valid gameIds resolved with required fields (game_utc, home_team, away_team)',
+        missing, incomplete,
       }, 400)
     }
 
-    // Upsert is idempotent; requires UNIQUE(wrinkle_id, game_id) on wrinkle_games
+    // Requires UNIQUE(wrinkle_id, game_id) on wrinkle_games
     const { data: upserted, error: uErr } = await sb
       .from('wrinkle_games')
       .upsert(rows, { onConflict: 'wrinkle_id,game_id' })
@@ -90,10 +110,13 @@ export async function POST(
         requested: gameIds.length,
         upserted: upserted?.length ?? 0,
         missing: missing.length,
+        incomplete: incomplete.length,
       },
       missing,
+      incomplete,
     })
   } catch (e: any) {
     return json({ error: e?.message ?? 'server error' }, 500)
   }
 }
+
