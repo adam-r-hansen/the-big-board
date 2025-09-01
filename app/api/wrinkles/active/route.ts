@@ -1,6 +1,6 @@
 // app/api/wrinkles/active/route.ts
-import { NextRequest } from 'next/server'
-import { createServerClient } from '@/lib/supabase'
+import type { NextRequest } from 'next/server'
+import { supabaseServer } from '@/lib/supabase'
 
 export const runtime = 'nodejs'
 export const revalidate = 0
@@ -14,45 +14,34 @@ function jsonNoStore(data: any, init: ResponseInit = {}) {
 }
 
 export async function GET(req: NextRequest) {
-  const sb = createServerClient({ req })
-  const { searchParams } = new URL(req.url)
-  const leagueId = searchParams.get('leagueId') || ''
-  const season = Number(searchParams.get('season') || '0')
-  const week = Number(searchParams.get('week') || '0')
-
-  if (!leagueId || !season || !week) {
-    return jsonNoStore({ error: 'leagueId, season, week are required' }, { status: 400 })
-  }
-
-  const { data: wrinkles, error: wErr } = await sb
-    .from('wrinkles')
-    .select('id, league_id, season, week, name, status, extra_picks, created_at')
-    .eq('league_id', leagueId).eq('season', season).eq('week', week).eq('status','active')
-    .order('created_at', { ascending: true })
-  if (wErr) return jsonNoStore({ error: wErr.message }, { status: 500 })
-
-  const ids = (wrinkles ?? []).map(w => w.id)
-  let gamesByWrinkle: Record<string, any[]> = {}
-  let myPicks: any[] = []
-
-  if (ids.length) {
-    const { data: wg, error: gErr } = await sb
-      .from('wrinkle_games')
-      .select('id, wrinkle_id, game_utc, home_team, away_team, home_score, away_score, status')
-      .in('wrinkle_id', ids)
-    if (gErr) return jsonNoStore({ error: gErr.message }, { status: 500 })
-    for (const g of wg ?? []) {
-      if (!gamesByWrinkle[g.wrinkle_id]) gamesByWrinkle[g.wrinkle_id] = []
-      gamesByWrinkle[g.wrinkle_id].push(g)
+  try {
+    const url = new URL(req.url)
+    const leagueId = url.searchParams.get('leagueId') ?? ''
+    const season = Number(url.searchParams.get('season') ?? '')
+    const week = Number(url.searchParams.get('week') ?? '')
+    if (!leagueId || !season || !week) {
+      return jsonNoStore({ error: 'missing params (leagueId, season, week)' }, { status: 400 })
     }
 
-    const { data: picks, error: pErr } = await sb
-      .from('wrinkle_picks')
-      .select('id, wrinkle_id, game_id, team_id, created_at')
-      .in('wrinkle_id', ids)
-    if (pErr) return jsonNoStore({ error: pErr.message }, { status: 500 })
-    myPicks = picks ?? []
-  }
+    const sb = supabaseServer()
 
-  return jsonNoStore({ wrinkles: wrinkles ?? [], gamesByWrinkle, myPicks })
+    // Select ONLY columns we know exist. (No 'spread' or 'min_win_pct'.)
+    const { data, error } = await sb
+      .from('wrinkles')
+      .select(`
+        id, league_id, season, week, name, status,
+        wrinkle_games ( id, game_id, game_utc, home_team, away_team, status )
+      `)
+      .eq('league_id', leagueId)
+      .eq('season', season)
+      .eq('week', week)
+      .eq('status', 'active')
+
+    if (error) return jsonNoStore({ error: error.message }, { status: 500 })
+
+    return jsonNoStore({ wrinkles: data ?? [] })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'server error'
+    return jsonNoStore({ error: msg }, { status: 500 })
+  }
 }
