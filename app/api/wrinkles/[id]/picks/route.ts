@@ -26,20 +26,48 @@ async function unwrapParams(p: ParamShape | Promise<ParamShape>) {
 
 /**
  * Pull a Supabase access token from the incoming request:
- * - Cookie "sb-access-token"  (auth-helpers)
- * - Cookie "access_token"     (custom/legacy)
- * - Cookie "supabase-auth-token" (sometimes JSON we unpack)
- * - Authorization: Bearer <token> header (fallback)
+ * - Cookie "sb-<projectRef>-auth-token" (new, JSON: ["access","refresh"])
+ * - Cookie "sb-access-token"            (older)
+ * - Cookie "access_token"               (custom/legacy)
+ * - Cookie "supabase-auth-token"        (sometimes JSON; we unpack)
+ * - Authorization: Bearer <token>       (fallback)
  */
 function readAccessToken(req: NextRequest): string | null {
   const getCookie = (name: string) => req.cookies.get(name)?.value;
 
+  // 1) Project-scoped cookie(s): sb-<projectRef>-auth-token
+  for (const c of req.cookies.getAll()) {
+    const name = c.name ?? "";
+    if (name.startsWith("sb-") && name.endsWith("-auth-token")) {
+      const raw = c.value;
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          // Most common form is ["access_token", "refresh_token"]
+          if (Array.isArray(parsed) && typeof parsed[0] === "string" && parsed[0]) {
+            return parsed[0];
+          }
+          // Some helpers store { access_token } or { currentSession: { access_token } }
+          const direct = (parsed as any)?.access_token;
+          if (typeof direct === "string" && direct) return direct;
+          const nested = (parsed as any)?.currentSession?.access_token;
+          if (typeof nested === "string" && nested) return nested;
+        } catch {
+          // ignore JSON parse errors
+        }
+      }
+    }
+  }
+
+  // 2) sb-access-token (older)
   const sb = getCookie("sb-access-token");
   if (sb && sb.trim()) return sb;
 
+  // 3) access_token (custom legacy)
   const at = getCookie("access_token");
   if (at && at.trim()) return at;
 
+  // 4) supabase-auth-token — may be JSON we must unpack
   const satRaw = getCookie("supabase-auth-token");
   if (satRaw) {
     try {
@@ -49,11 +77,14 @@ function readAccessToken(req: NextRequest): string | null {
       }
       const maybe = (parsed as any)?.currentSession?.access_token;
       if (typeof maybe === "string" && maybe) return maybe;
+      const direct = (parsed as any)?.access_token;
+      if (typeof direct === "string" && direct) return direct;
     } catch {
-      /* ignore */
+      // ignore
     }
   }
 
+  // 5) Authorization: Bearer <token>
   const auth = req.headers.get("authorization") || req.headers.get("Authorization");
   if (auth && auth.toLowerCase().startsWith("bearer ")) {
     const token = auth.slice(7).trim();
@@ -66,11 +97,11 @@ function readAccessToken(req: NextRequest): string | null {
 async function requireUser(req: NextRequest): Promise<{ user: any | null; error: string | null }> {
   const accessToken = readAccessToken(req);
   if (!accessToken) {
-    return { user: null, error: "No access token cookie or header found." };
+    return { user: null, error: "No access token found in cookies or Authorization header." };
   }
   const { data, error } = await db.auth.getUser(accessToken);
   if (error || !data?.user) {
-    return { user: null, error: error?.message || "Invalid session token (not authenticated)." };
+    return { user: null, error: error?.message || "Invalid/expired session token." };
   }
   return { user: data.user, error: null };
 }
@@ -88,7 +119,7 @@ export async function POST(
       return j(401, { ok: false, error: { message: "Unauthorized", details: authErr } });
     }
 
-    // 2) Payload
+    // 2) Parse payload
     let body: PickBody = {};
     try {
       body = (await req.json()) as PickBody;
@@ -104,7 +135,7 @@ export async function POST(
       });
     }
 
-    // 3) Ensure wrinkle exists and (optionally) active
+    // 3) Ensure wrinkle exists and is active (optional rule)
     const { data: wr, error: werr } = await db
       .from("wrinkles")
       .select("id, kind, status")
@@ -118,7 +149,7 @@ export async function POST(
       return j(400, { ok: false, error: { message: "Wrinkle is not active." } });
     }
 
-    // 4) Delete previous pick for (user, wrinkle) then insert new one
+    // 4) Upsert pick for (user, wrinkle)
     const { error: delErr } = await db
       .from("wrinkle_picks")
       .delete()
