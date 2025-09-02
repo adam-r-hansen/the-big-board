@@ -1,18 +1,18 @@
 // app/api/wrinkles/[id]/picks/route.ts
-/* 
+/*
   Wrinkles Picks API
-  - Works with Next 14 & 15 param types (params may be a Promise)
-  - Uses await cookies() for auth token
+  - Compatible with Next 14 & 15 param types (params may be a Promise)
+  - Uses await cookies() for auth token retrieval
   - Uses Supabase service-role for delete+insert
-  - Consistent JSON error responses
+  - Consistent JSON success/error shapes
 */
 
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, User } from "@supabase/supabase-js";
 
-// ---------- RUNTIME & CORS (server only) ----------
-export const runtime = "nodejs"; // ensure Node.js runtime (no edge; service key stays server-only)
+// ---------- RUNTIME ----------
+export const runtime = "nodejs"; // ensure Node.js runtime (service key stays server-only)
 
 // ---------- TYPES ----------
 type ParamShape = { id: string };
@@ -21,6 +21,12 @@ type ParamShape = { id: string };
 type PostBody = {
   selection: string; // e.g., a teamId or pick value
   kind?: string;     // optional, if your schema uses a kind enum/column
+};
+
+// Result of auth helper
+type AuthResult = {
+  user: User | null;
+  error: string | null;
 };
 
 // ---------- UTIL: unwrap params (Next 14 object vs Next 15 Promise) ----------
@@ -66,7 +72,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 // Create an admin client (server-only)
 const supabaseAdmin = (() => {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    // We throw here so builds fail loudly if env is missing
+    // Fail fast if env is missing
     throw new Error(
       "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env var(s)."
     );
@@ -78,21 +84,22 @@ const supabaseAdmin = (() => {
 })();
 
 // ---------- AUTH: get current user from sb-access-token cookie ----------
-async function getAuthUser() {
+async function getAuthUser(): Promise<AuthResult> {
+  // Some adapters require awaiting cookies() to avoid edge/runtime warnings
   const c = await cookies();
-  // Supabase Auth helpers (Next) commonly set these; use access token if present
+
   const accessToken =
     c.get("sb-access-token")?.value ??
-    c.get("sb:token")?.value ?? // fallback if your project used a different cookie
+    c.get("sb:token")?.value ?? // fallback if your project used a different cookie name
     "";
 
   if (!accessToken) {
-    return { user: null as const, error: "No access token cookie found." };
+    return { user: null, error: "No access token cookie found." };
   }
 
   const { data, error } = await supabaseAdmin.auth.getUser(accessToken);
   if (error) {
-    return { user: null as const, error: error.message };
+    return { user: null, error: error.message };
   }
   return { user: data.user, error: null };
 }
@@ -154,8 +161,8 @@ export async function POST(
       return jsonErr("Unauthorized", { status: 401, code: "UNAUTHORIZED", details: authErr });
     }
 
-    // Ensure cookies() is awaited (we already do that in getAuthUser)
-    await cookies(); // no-op but satisfies your "await cookies()" requirement explicitly
+    // Ensure cookies() is awaited in this handler as well (explicit call)
+    await cookies();
 
     let body: PostBody;
     try {
