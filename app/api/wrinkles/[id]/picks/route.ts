@@ -32,18 +32,14 @@ async function unwrapParams(p: ParamShape | Promise<ParamShape>) {
  * - Authorization: Bearer <token> header (fallback)
  */
 function readAccessToken(req: NextRequest): string | null {
-  // Use req.cookies (sync) — works in Next 15 route handlers
   const getCookie = (name: string) => req.cookies.get(name)?.value;
 
-  // 1) sb-access-token (common)
   const sb = getCookie("sb-access-token");
   if (sb && sb.trim()) return sb;
 
-  // 2) access_token (older custom)
   const at = getCookie("access_token");
   if (at && at.trim()) return at;
 
-  // 3) supabase-auth-token — may be JSON
   const satRaw = getCookie("supabase-auth-token");
   if (satRaw) {
     try {
@@ -54,11 +50,10 @@ function readAccessToken(req: NextRequest): string | null {
       const maybe = (parsed as any)?.currentSession?.access_token;
       if (typeof maybe === "string" && maybe) return maybe;
     } catch {
-      // ignore JSON parse errors
+      /* ignore */
     }
   }
 
-  // 4) Authorization: Bearer <token>
   const auth = req.headers.get("authorization") || req.headers.get("Authorization");
   if (auth && auth.toLowerCase().startsWith("bearer ")) {
     const token = auth.slice(7).trim();
@@ -68,19 +63,16 @@ function readAccessToken(req: NextRequest): string | null {
   return null;
 }
 
-async function requireUser(req: NextRequest) {
+async function requireUser(req: NextRequest): Promise<{ user: any | null; error: string | null }> {
   const accessToken = readAccessToken(req);
   if (!accessToken) {
-    return { user: null as const, error: "No access token cookie or header found." };
+    return { user: null, error: "No access token cookie or header found." };
   }
   const { data, error } = await db.auth.getUser(accessToken);
   if (error || !data?.user) {
-    return {
-      user: null as const,
-      error: error?.message || "Invalid session token (not authenticated).",
-    };
+    return { user: null, error: error?.message || "Invalid session token (not authenticated)." };
   }
-  return { user: data.user, error: null as const };
+  return { user: data.user, error: null };
 }
 
 export async function POST(
@@ -101,7 +93,7 @@ export async function POST(
     try {
       body = (await req.json()) as PickBody;
     } catch {
-      // ignore; validate below
+      /* ignore; we'll validate below */
     }
 
     const teamId = (body?.selection ?? body?.teamId ?? "").toString().trim() || null;
@@ -118,7 +110,9 @@ export async function POST(
       .select("id, kind, status")
       .eq("id", wrinkleId)
       .maybeSingle();
-    if (werr) return j(500, { ok: false, error: { message: "Failed to load wrinkle.", details: werr.message } });
+    if (werr) {
+      return j(500, { ok: false, error: { message: "Failed to load wrinkle.", details: werr.message } });
+    }
     if (!wr) return j(404, { ok: false, error: { message: "Wrinkle not found." } });
     if (wr.status && wr.status !== "active") {
       return j(400, { ok: false, error: { message: "Wrinkle is not active." } });
