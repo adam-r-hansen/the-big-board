@@ -69,9 +69,16 @@ function resolveTeamLabel(id: string | null | undefined, teams?: Record<string, 
 }
 
 async function readApiError(res: Response) {
+  // Try to extract the useful server message, even on 500s.
   try {
-    const j = await res.json();
-    return j?.error?.message || `HTTP ${res.status}`;
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text);
+      return j?.error?.message || j?.error || j?.message || `HTTP ${res.status}`;
+    } catch {
+      // not JSON
+      return text || `HTTP ${res.status}`;
+    }
   } catch {
     return `HTTP ${res.status}`;
   }
@@ -163,6 +170,19 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
 
   async function savePick(teamId: string | null) {
     if (!game?.id || !teamId) return;
+
+    // Validate required payload before POST (prevents 500s from missing data)
+    const missing: string[] = [];
+    if (!leagueId) missing.push('leagueId');
+    if (!(season ?? '').toString().trim()) missing.push('season');
+    if (!(week ?? '').toString().trim()) missing.push('week');
+    if (!game.id) missing.push('gameId');
+    if (!teamId) missing.push('teamId');
+    if (missing.length) {
+      alert(`Missing fields: ${missing.join(', ')}`);
+      return;
+    }
+
     setState((s) => ({ ...s, saving: true, lastPickTeamId: teamId }));
     try {
       const res = await postWeeklyPick(
@@ -177,13 +197,16 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
       );
 
       if (!res.ok) {
-        alert(await readApiError(res));
+        const msg = await readApiError(res);
+        console.error('Wrinkle pick failed:', { status: res.status, msg });
+        alert(msg);
         setState((s) => ({ ...s, saving: false }));
         return;
       }
       alert("Wrinkle pick saved!");
       setState((s) => ({ ...s, saving: false }));
     } catch (e: any) {
+      console.error('Wrinkle pick network error:', e);
       alert(e?.message ?? "Network error");
       setState((s) => ({ ...s, saving: false }));
     }
