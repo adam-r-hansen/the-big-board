@@ -12,76 +12,71 @@ const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   global: { headers: { "X-Client-Info": "wrinkles-active-route" } },
 });
 
-function err(message: string, status = 400, details?: unknown) {
+function jsonErr(message: string, status = 400, details?: unknown) {
   return NextResponse.json(
     { ok: false, error: { message, details: details ?? null } },
     { status }
   );
 }
 
+function jsonOk(data: unknown, status = 200) {
+  return NextResponse.json({ ok: true, data }, { status });
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const seasonStr = searchParams.get("season");
-    const weekStr = searchParams.get("week");
-    const leagueId = (searchParams.get("leagueId") ?? "").trim(); // may be ""
+    const seasonStr = (searchParams.get("season") || "").trim();
+    const weekStr = (searchParams.get("week") || "").trim();
+    const leagueId = (searchParams.get("leagueId") || "").trim(); // may be ""
 
     const season = Number(seasonStr);
     const week = Number(weekStr);
-    if (!season || !week) {
-      return err("Query params 'season' and 'week' are required (numbers).");
+    if (!Number.isFinite(season) || !Number.isFinite(week) || !season || !week) {
+      return jsonErr("Query params 'season' and 'week' are required numbers.", 400, {
+        season: seasonStr,
+        week: weekStr,
+      });
     }
 
-    // Base query for this season/week
-    let q = db
-      .from("wrinkles")
-      .select("*")
-      .eq("season", season)
-      .eq("week", week);
-
-    // If leagueId is provided, we want either the league-specific row OR a global row (league_id IS NULL)
-    // Supabase '.or' takes a string expression.
+    // 1) If a leagueId is provided, try that exact wrinkle first.
     if (leagueId) {
-      // prefer league match by ordering later, but include global fallback in filter
-      q = q.or(`league_id.eq.${leagueId},league_id.is.null`);
-    }
-
-    // Prefer league-specific over global; if ties, prefer most recently created/updated.
-    // Adjust column names if your schema uses different timestamp fields.
-    const { data, error } = await q
-      .order("league_id", { ascending: false, nullsFirst: false }) // non-null (specific) first
-      .order("updated_at", { ascending: false, nullsFirst: true })
-      .order("created_at", { ascending: false, nullsFirst: true })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      return err("Failed to fetch active wrinkle.", 500, error.message);
-    }
-
-    // If nothing matched and a leagueId was given, do a last-resort global search (no league filter at all)
-    let row = data ?? null;
-    if (!row && leagueId) {
-      const { data: globalOnly, error: e2 } = await db
+      const { data: leagueRow, error: leagueErr } = await db
         .from("wrinkles")
         .select("*")
         .eq("season", season)
         .eq("week", week)
-        .is("league_id", null)
-        .order("updated_at", { ascending: false, nullsFirst: true })
-        .order("created_at", { ascending: false, nullsFirst: true })
+        .eq("league_id", leagueId)
         .limit(1)
         .maybeSingle();
-      if (e2) {
-        return err("Failed to fetch global fallback wrinkle.", 500, e2.message);
+
+      if (leagueErr) {
+        return jsonErr("Failed to fetch league-specific wrinkle.", 500, leagueErr.message);
       }
-      row = globalOnly ?? null;
+      if (leagueRow) {
+        return jsonOk(leagueRow, 200);
+      }
+      // Fall through to global if none found.
     }
 
-    // Return explicit null when there is no configured wrinkle
-    return NextResponse.json({ ok: true, data: row }, { status: 200 });
+    // 2) Global fallback (league_id IS NULL) or the only available for that week.
+    const { data: globalRow, error: globalErr } = await db
+      .from("wrinkles")
+      .select("*")
+      .eq("season", season)
+      .eq("week", week)
+      .is("league_id", null)
+      .limit(1)
+      .maybeSingle();
+
+    if (globalErr) {
+      return jsonErr("Failed to fetch global wrinkle.", 500, globalErr.message);
+    }
+
+    // Explicitly return null when nothing exists for this week.
+    return jsonOk(globalRow ?? null, 200);
   } catch (e: any) {
-    return err("Unexpected server error.", 500, e?.message ?? String(e));
+    return jsonErr("Unexpected server error.", 500, e?.message ?? String(e));
   }
 }
 
