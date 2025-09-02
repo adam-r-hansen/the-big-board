@@ -12,71 +12,65 @@ const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   global: { headers: { "X-Client-Info": "wrinkles-active-route" } },
 });
 
-function jsonErr(message: string, status = 400, details?: unknown) {
-  return NextResponse.json(
-    { ok: false, error: { message, details: details ?? null } },
-    { status }
-  );
+function jErr(message: string, status = 400, details?: unknown) {
+  return NextResponse.json({ ok: false, error: { message, details: details ?? null } }, { status });
 }
-
-function jsonOk(data: unknown, status = 200) {
+function jOk(data: unknown, status = 200) {
   return NextResponse.json({ ok: true, data }, { status });
 }
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const seasonStr = (searchParams.get("season") || "").trim();
-    const weekStr = (searchParams.get("week") || "").trim();
-    const leagueId = (searchParams.get("leagueId") || "").trim(); // may be ""
+    // Use the *raw strings* to avoid numeric casting issues if your columns are text
+    const seasonParam = (searchParams.get("season") ?? "").trim();
+    const weekParam = (searchParams.get("week") ?? "").trim();
+    const leagueId = (searchParams.get("leagueId") ?? "").trim(); // may be ""
 
-    const season = Number(seasonStr);
-    const week = Number(weekStr);
-    if (!Number.isFinite(season) || !Number.isFinite(week) || !season || !week) {
-      return jsonErr("Query params 'season' and 'week' are required numbers.", 400, {
-        season: seasonStr,
-        week: weekStr,
+    if (!seasonParam || !weekParam) {
+      return jErr("Query params 'season' and 'week' are required.", 400, {
+        season: seasonParam,
+        week: weekParam,
       });
     }
 
-    // 1) If a leagueId is provided, try that exact wrinkle first.
+    // 1) Try league-specific (if provided)
     if (leagueId) {
-      const { data: leagueRow, error: leagueErr } = await db
+      const { data, error } = await db
         .from("wrinkles")
         .select("*")
-        .eq("season", season)
-        .eq("week", week)
+        .eq("season", seasonParam) // compare as strings to avoid type mismatch
+        .eq("week", weekParam)
         .eq("league_id", leagueId)
         .limit(1)
         .maybeSingle();
 
-      if (leagueErr) {
-        return jsonErr("Failed to fetch league-specific wrinkle.", 500, leagueErr.message);
+      if (error) {
+        // Return structured error so we can see it in Network tab
+        return jErr("Failed to fetch league-specific wrinkle.", 500, error.message);
       }
-      if (leagueRow) {
-        return jsonOk(leagueRow, 200);
-      }
-      // Fall through to global if none found.
+      if (data) return jOk(data, 200);
+      // fall through to global check
     }
 
-    // 2) Global fallback (league_id IS NULL) or the only available for that week.
-    const { data: globalRow, error: globalErr } = await db
+    // 2) Global (league_id IS NULL)
+    const { data: globalRow, error: gErr } = await db
       .from("wrinkles")
       .select("*")
-      .eq("season", season)
-      .eq("week", week)
+      .eq("season", seasonParam)
+      .eq("week", weekParam)
       .is("league_id", null)
       .limit(1)
       .maybeSingle();
 
-    if (globalErr) {
-      return jsonErr("Failed to fetch global wrinkle.", 500, globalErr.message);
+    if (gErr) {
+      return jErr("Failed to fetch global wrinkle.", 500, gErr.message);
     }
 
-    // Explicitly return null when nothing exists for this week.
-    return jsonOk(globalRow ?? null, 200);
+    // Explicitly return null if nothing configured
+    return jOk(globalRow ?? null, 200);
   } catch (e: any) {
-    return jsonErr("Unexpected server error.", 500, e?.message ?? String(e));
+    return jErr("Unexpected server error.", 500, e?.message ?? String(e));
   }
 }
 

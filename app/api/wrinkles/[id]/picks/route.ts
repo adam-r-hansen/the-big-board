@@ -1,8 +1,13 @@
 // app/api/wrinkles/[id]/picks/route.ts
 /*
   Wrinkles Picks API
-  - Compatible with Next 14 & 15 param types (params may be a Promise)
-  - Uses await cookies() for auth token retrieval
+  - Next 14/15 compatible (params may be a Promise)
+  - Robust Supabase auth token extraction:
+      * Authorization: Bearer <token>
+      * sb-access-token
+      * sb:token
+      * supabase-auth-token (legacy)
+      * sb-<project-ref>-auth-token (JSON cookie)
   - Uses Supabase service-role for delete+insert
   - Consistent JSON success/error shapes
 */
@@ -17,13 +22,11 @@ export const runtime = "nodejs"; // ensure Node.js runtime (service key stays se
 // ---------- TYPES ----------
 type ParamShape = { id: string };
 
-// Body for POST
 type PostBody = {
-  selection: string; // e.g., a teamId or pick value
-  kind?: string;     // optional, if your schema uses a kind enum/column
+  selection: string; // e.g., teamId
+  kind?: string;     // optional if your schema uses it
 };
 
-// Result of auth helper
 type AuthResult = {
   user: User | null;
   error: string | null;
@@ -69,10 +72,8 @@ function jsonErr(
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Create an admin client (server-only)
 const supabaseAdmin = (() => {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    // Fail fast if env is missing
     throw new Error(
       "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env var(s)."
     );
@@ -83,41 +84,67 @@ const supabaseAdmin = (() => {
   });
 })();
 
-// ---------- AUTH: get current user from sb-access-token cookie ----------
-async function getAuthUser(): Promise<AuthResult> {
-  // Some adapters require awaiting cookies() to avoid edge/runtime warnings
+// ---------- AUTH: extract token from header/cookies & get user ----------
+async function extractAccessToken(req: NextRequest): Promise<string | null> {
+  // 1) Authorization header
+  const authHeader = req.headers.get("authorization") || req.headers.get("Authorization");
+  if (authHeader?.toLowerCase().startsWith("bearer ")) {
+    const token = authHeader.slice(7).trim();
+    if (token) return token;
+  }
+
+  // 2) Cookies
   const c = await cookies();
 
-  const accessToken =
+  // Common cookie names
+  const direct =
     c.get("sb-access-token")?.value ??
-    c.get("sb:token")?.value ?? // fallback if your project used a different cookie name
-    "";
+    c.get("sb:token")?.value ??
+    c.get("supabase-auth-token")?.value; // older setups
+  if (direct && typeof direct === "string" && direct.length > 10) return direct;
 
-  if (!accessToken) {
-    return { user: null, error: "No access token cookie found." };
+  // 3) JSON cookie (sb-<project-ref>-auth-token)
+  //    Value looks like: {"currentSession":{...,"access_token":"..."},"expiresAt":...}
+  for (const cookie of c.getAll()) {
+    if (/^sb-[a-z0-9]+-[a-z0-9]+-auth-token$/i.test(cookie.name)) {
+      try {
+        const parsed = JSON.parse(cookie.value);
+        const token =
+          parsed?.access_token ??
+          parsed?.currentSession?.access_token ??
+          parsed?.session?.access_token;
+        if (typeof token === "string" && token.length > 10) return token;
+      } catch {
+        // ignore JSON parse errors
+      }
+    }
   }
 
-  const { data, error } = await supabaseAdmin.auth.getUser(accessToken);
-  if (error) {
-    return { user: null, error: error.message };
-  }
+  return null;
+}
+
+async function getAuthUser(req: NextRequest): Promise<AuthResult> {
+  const token = await extractAccessToken(req);
+  if (!token) return { user: null, error: "No Supabase access token found." };
+
+  const { data, error } = await supabaseAdmin.auth.getUser(token);
+  if (error) return { user: null, error: error.message };
   return { user: data.user, error: null };
 }
 
-// ---------- TABLE NAMES & COLUMNS (adjust to your schema) ----------
+// ---------- TABLE / COLUMNS ----------
 const PICKS_TABLE = "picks";
-// Columns assumed: user_id, wrinkle_id, selection, kind?, created_at?
-// If your column names differ, update the queries below.
+// Columns assumed: user_id, wrinkle_id, selection, kind?
 
 // ===================== GET =====================
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   context: { params: ParamShape | Promise<ParamShape> }
 ) {
   try {
     const { id: wrinkleId } = await unwrapParams(context.params);
 
-    const { user, error: authErr } = await getAuthUser();
+    const { user, error: authErr } = await getAuthUser(req);
     if (!user) {
       return jsonErr("Unauthorized", { status: 401, code: "UNAUTHORIZED", details: authErr });
     }
@@ -148,7 +175,7 @@ export async function GET(
 }
 
 // ===================== POST =====================
-// Idempotent style: delete existing pick for (user, wrinkle) then insert new one
+// Idempotent: delete existing (user, wrinkle) then insert
 export async function POST(
   req: NextRequest,
   context: { params: ParamShape | Promise<ParamShape> }
@@ -156,12 +183,12 @@ export async function POST(
   try {
     const { id: wrinkleId } = await unwrapParams(context.params);
 
-    const { user, error: authErr } = await getAuthUser();
+    const { user, error: authErr } = await getAuthUser(req);
     if (!user) {
       return jsonErr("Unauthorized", { status: 401, code: "UNAUTHORIZED", details: authErr });
     }
 
-    // Ensure cookies() is awaited in this handler as well (explicit call)
+    // Some adapters prefer explicitly awaiting cookies() once per request
     await cookies();
 
     let body: PostBody;
@@ -178,7 +205,6 @@ export async function POST(
       });
     }
 
-    // 1) Delete existing
     const { error: delErr } = await supabaseAdmin
       .from(PICKS_TABLE)
       .delete()
@@ -193,7 +219,6 @@ export async function POST(
       });
     }
 
-    // 2) Insert new
     const payload: Record<string, any> = {
       user_id: user.id,
       wrinkle_id: wrinkleId,
@@ -227,13 +252,13 @@ export async function POST(
 
 // ===================== DELETE =====================
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   context: { params: ParamShape | Promise<ParamShape> }
 ) {
   try {
     const { id: wrinkleId } = await unwrapParams(context.params);
 
-    const { user, error: authErr } = await getAuthUser();
+    const { user, error: authErr } = await getAuthUser(req);
     if (!user) {
       return jsonErr("Unauthorized", { status: 401, code: "UNAUTHORIZED", details: authErr });
     }
