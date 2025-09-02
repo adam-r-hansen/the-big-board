@@ -2,45 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-/** Try to pull the Supabase access token from localStorage (client-side). */
-function getSupabaseAccessTokenFromLocalStorage(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i) || "";
-      // Supabase auth key pattern: sb-<projectRef>-auth-token
-      if (key.startsWith("sb-") && key.endsWith("-auth-token")) {
-        const raw = localStorage.getItem(key);
-        if (!raw) continue;
-        // Values are usually JSON: ["access","refresh"] OR { currentSession:{access_token}, access_token:..., ... }
-        try {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed) && typeof parsed[0] === "string" && parsed[0]) return parsed[0];
-          const direct = (parsed as any)?.access_token;
-          if (typeof direct === "string" && direct) return direct;
-          const nested = (parsed as any)?.currentSession?.access_token;
-          if (typeof nested === "string" && nested) return nested;
-        } catch {
-          // Some setups might store raw token string (rare)
-          if (raw && raw.length > 100) return raw; // heuristic: JWT length
-        }
-      }
-    }
-  } catch {
-    // localStorage unavailable
-  }
-  return null;
-}
-
-async function readApiError(res: Response) {
-  try {
-    const j = await res.json();
-    return j?.error?.message || `HTTP ${res.status}`;
-  } catch {
-    return `HTTP ${res.status}`;
-  }
-}
-
 /** Normalizes every possible server shape into one object the UI can use. */
 function extractWrinkleAndGame(payload: any) {
   const wrinkle =
@@ -80,8 +41,7 @@ function extractWrinkleAndGame(payload: any) {
     null;
 
   const kickoff =
-    pick(g.gameUtc, g.game_utc, g.startUtc, g.start_utc) ??
-    null;
+    pick(g.gameUtc, g.game_utc, g.startUtc, g.start_utc) ?? null;
 
   const status = pick(g.status, g.game_status) ?? null;
   const season = pick(g.season) ?? null;
@@ -96,27 +56,60 @@ function extractWrinkleAndGame(payload: any) {
 
 type TeamLike = {
   id?: string | null;
-  abbr?: string | null;   // e.g., PHI
-  short?: string | null;  // e.g., Eagles
-  name?: string | null;   // e.g., Philadelphia Eagles
+  abbr?: string | null;   // PHI
+  short?: string | null;  // Eagles
+  name?: string | null;   // Philadelphia Eagles
 };
 
-function resolveTeamLabel(
-  teamId: string | null | undefined,
-  teams?: Record<string, TeamLike>
-): string {
-  if (!teamId) return "TBD";
-  const t = teams?.[teamId];
+function resolveTeamLabel(id: string | null | undefined, teams?: Record<string, TeamLike>): string {
+  if (!id) return "TBD";
+  const t = teams?.[id];
   const val = t?.abbr ?? t?.short ?? t?.name ?? null;
-  if (val && typeof val === "string" && val.trim().length > 0) return val;
-  return teamId.slice(0, 6).toUpperCase();
+  return val && val.trim() ? val : id.slice(0, 6).toUpperCase();
+}
+
+async function readApiError(res: Response) {
+  try {
+    const j = await res.json();
+    return j?.error?.message || `HTTP ${res.status}`;
+  } catch {
+    return `HTTP ${res.status}`;
+  }
+}
+
+/**
+ * Try the common weekly-pick endpoints your app might already expose.
+ * We POST the same payload the weekly card uses, and return the first non-404 response.
+ */
+async function postWeeklyPick(gameId: string, body: any): Promise<Response> {
+  const candidates = [
+    `/api/games/${gameId}/picks`,
+    `/api/picks/games/${gameId}`,
+    `/api/picks/${gameId}`,
+    `/api/games/${gameId}/pick`,
+  ];
+
+  for (const url of candidates) {
+    const res = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.status !== 404) return res; // success or a real error we should show
+  }
+
+  // If we got here, every candidate was 404.
+  return new Response(JSON.stringify({ error: { message: "Weekly pick endpoint not found (404)." } }), {
+    status: 404,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 type Props = {
   leagueId?: string | null;
   season: number | string;
   week: number | string;
-  /** Optional map of teamId -> { abbr/short/name }, nullables allowed */
   teams?: Record<string, TeamLike>;
 };
 
@@ -125,15 +118,7 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
     loading: boolean;
     error: string | null;
     wrinkle: any | null;
-    game: {
-      id: string | null;
-      home: string | null;
-      away: string | null;
-      kickoff: string | null;
-      status: string | null;
-      season: any;
-      week: any;
-    } | null;
+    game: { id: string | null; home: string | null; away: string | null; kickoff: string | null; status: string | null; season: any; week: any } | null;
     saving: boolean;
     lastPickTeamId: string | null;
   }>({
@@ -166,27 +151,13 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
           return;
         }
         const { wrinkle, game } = extractWrinkleAndGame(json);
-        setState((s) => ({
-          ...s,
-          loading: false,
-          error: null,
-          wrinkle: wrinkle ?? null,
-          game: game ?? null,
-        }));
+        setState((s) => ({ ...s, loading: false, wrinkle: wrinkle ?? null, game: game ?? null, error: null }));
       })
       .catch((e) => {
         if (!alive) return;
-        setState((s) => ({
-          ...s,
-          loading: false,
-          error: e?.message ?? "Network error",
-          wrinkle: null,
-          game: null,
-        }));
+        setState((s) => ({ ...s, loading: false, error: e?.message ?? "Network error", wrinkle: null, game: null }));
       });
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [qs]);
 
   const { wrinkle, game, loading, error, saving, lastPickTeamId } = state;
@@ -195,21 +166,14 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
   const awayLabel = resolveTeamLabel(game?.away, teams);
 
   async function savePick(teamId: string | null) {
-    if (!wrinkle?.id || !teamId) return;
+    if (!game?.id || !teamId) return;
     setState((s) => ({ ...s, saving: true, lastPickTeamId: teamId }));
-
-    // Get a bearer token explicitly (works even when server can’t read cookies)
-    const bearer = getSupabaseAccessTokenFromLocalStorage();
-
     try {
-      const res = await fetch(`/api/wrinkles/${wrinkle.id}/picks`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "content-type": "application/json",
-          ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
-        },
-        body: JSON.stringify({ selection: teamId, teamId }),
+      // Reuse weekly flow: post to the first weekly endpoint that exists.
+      const res = await postWeeklyPick(game.id, {
+        teamId,
+        selection: teamId,
+        wrinkleId: wrinkle?.id ?? null, // harmless if weekly endpoint ignores it
       });
 
       if (!res.ok) {
@@ -217,7 +181,6 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
         setState((s) => ({ ...s, saving: false }));
         return;
       }
-
       alert("Wrinkle pick saved!");
       setState((s) => ({ ...s, saving: false }));
     } catch (e: any) {
@@ -246,7 +209,7 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
           {loading && <span>Loading linked game…</span>}
           {!loading && error && <span className="text-red-700">Error: {error}</span>}
 
-          {/* Game summary */}
+          {/* Summary */}
           {!loading && !error && game && (
             <div className="mt-2 rounded-lg bg-white p-3 shadow-sm">
               <div className="text-sm text-neutral-700">
@@ -265,10 +228,9 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
             </div>
           )}
 
-          {/* No linked game */}
           {!loading && !error && !game && <span>No linked game.</span>}
 
-          {/* Pick buttons */}
+          {/* Pick buttons -> call same backend the weekly cards use */}
           {!loading && !error && game && (
             <div className="mt-4 flex gap-3">
               <button
