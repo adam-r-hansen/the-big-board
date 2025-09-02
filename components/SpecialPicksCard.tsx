@@ -55,13 +55,29 @@ function extractWrinkleAndGame(payload: any) {
   };
 }
 
+type TeamLike = {
+  id?: string;
+  abbr?: string;   // e.g., PHI
+  short?: string;  // e.g., Eagles
+  name?: string;   // e.g., Philadelphia Eagles
+};
+
+function resolveTeamLabel(teamId: string | null | undefined, teams?: Record<string, TeamLike>): string {
+  if (!teamId) return "TBD";
+  const t = teams?.[teamId];
+  if (!t) return teamId.slice(0, 6).toUpperCase(); // safe fallback
+  return t.abbr || t.short || t.name || teamId.slice(0, 6).toUpperCase();
+}
+
 type Props = {
   leagueId?: string | null;
   season: number | string;
   week: number | string;
+  /** Optional map of teamId -> { abbr/short/name } */
+  teams?: Record<string, TeamLike>;
 };
 
-export default function SpecialPicksCard({ leagueId, season, week }: Props) {
+export default function SpecialPicksCard({ leagueId, season, week, teams }: Props) {
   const [state, setState] = useState<{
     loading: boolean;
     error: string | null;
@@ -126,6 +142,9 @@ export default function SpecialPicksCard({ leagueId, season, week }: Props) {
 
   const { wrinkle, game, loading, error } = state;
 
+  const homeLabel = resolveTeamLabel(game?.home, teams);
+  const awayLabel = resolveTeamLabel(game?.away, teams);
+
   return (
     <div className="rounded-2xl border border-amber-300 bg-amber-50/50 p-6">
       <h2 className="text-2xl font-semibold">Wrinkle Pick</h2>
@@ -150,7 +169,7 @@ export default function SpecialPicksCard({ leagueId, season, week }: Props) {
             <div className="mt-2 rounded-lg bg-white p-3 shadow-sm">
               <div className="text-sm text-neutral-700">
                 <div className="font-medium">
-                  {game.away ?? "TBD"} @ {game.home ?? "TBD"}
+                  {awayLabel} @ {homeLabel}
                 </div>
                 {game.kickoff && (
                   <div className="text-xs text-neutral-500">
