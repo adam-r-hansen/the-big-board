@@ -1,7 +1,45 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { readApiError } from "@/lib/http";
+
+/** Try to pull the Supabase access token from localStorage (client-side). */
+function getSupabaseAccessTokenFromLocalStorage(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i) || "";
+      // Supabase auth key pattern: sb-<projectRef>-auth-token
+      if (key.startsWith("sb-") && key.endsWith("-auth-token")) {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        // Values are usually JSON: ["access","refresh"] OR { currentSession:{access_token}, access_token:..., ... }
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && typeof parsed[0] === "string" && parsed[0]) return parsed[0];
+          const direct = (parsed as any)?.access_token;
+          if (typeof direct === "string" && direct) return direct;
+          const nested = (parsed as any)?.currentSession?.access_token;
+          if (typeof nested === "string" && nested) return nested;
+        } catch {
+          // Some setups might store raw token string (rare)
+          if (raw && raw.length > 100) return raw; // heuristic: JWT length
+        }
+      }
+    }
+  } catch {
+    // localStorage unavailable
+  }
+  return null;
+}
+
+async function readApiError(res: Response) {
+  try {
+    const j = await res.json();
+    return j?.error?.message || `HTTP ${res.status}`;
+  } catch {
+    return `HTTP ${res.status}`;
+  }
+}
 
 /** Normalizes every possible server shape into one object the UI can use. */
 function extractWrinkleAndGame(payload: any) {
@@ -159,20 +197,27 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
   async function savePick(teamId: string | null) {
     if (!wrinkle?.id || !teamId) return;
     setState((s) => ({ ...s, saving: true, lastPickTeamId: teamId }));
+
+    // Get a bearer token explicitly (works even when server can’t read cookies)
+    const bearer = getSupabaseAccessTokenFromLocalStorage();
+
     try {
       const res = await fetch(`/api/wrinkles/${wrinkle.id}/picks`, {
         method: "POST",
         credentials: "include",
-        headers: { "content-type": "application/json" },
-        // send both common shapes so the API accepts at least one
+        headers: {
+          "content-type": "application/json",
+          ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+        },
         body: JSON.stringify({ selection: teamId, teamId }),
       });
+
       if (!res.ok) {
         alert(await readApiError(res));
         setState((s) => ({ ...s, saving: false }));
         return;
       }
-      // success UX – super simple for now
+
       alert("Wrinkle pick saved!");
       setState((s) => ({ ...s, saving: false }));
     } catch (e: any) {
