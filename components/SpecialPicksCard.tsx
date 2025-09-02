@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { readApiError } from "@/lib/http";
 
 /** Normalizes every possible server shape into one object the UI can use. */
 function extractWrinkleAndGame(payload: any) {
@@ -68,16 +69,8 @@ function resolveTeamLabel(
 ): string {
   if (!teamId) return "TBD";
   const t = teams?.[teamId];
-  const val =
-    t?.abbr ??
-    t?.short ??
-    t?.name ??
-    null;
-
-  if (val && typeof val === "string" && val.trim().length > 0) {
-    return val;
-  }
-  // safe fallback if we don't have a label
+  const val = t?.abbr ?? t?.short ?? t?.name ?? null;
+  if (val && typeof val === "string" && val.trim().length > 0) return val;
   return teamId.slice(0, 6).toUpperCase();
 }
 
@@ -103,11 +96,15 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
       season: any;
       week: any;
     } | null;
+    saving: boolean;
+    lastPickTeamId: string | null;
   }>({
     loading: true,
     error: null,
     wrinkle: null,
     game: null,
+    saving: false,
+    lastPickTeamId: null,
   });
 
   const qs = useMemo(() => {
@@ -127,35 +124,62 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
         if (!alive) return;
         if (!res.ok || json?.ok === false) {
           const msg = json?.error?.message || `HTTP ${res.status}`;
-          setState({ loading: false, error: msg, wrinkle: null, game: null });
+          setState((s) => ({ ...s, loading: false, error: msg, wrinkle: null, game: null }));
           return;
         }
         const { wrinkle, game } = extractWrinkleAndGame(json);
-        setState({
+        setState((s) => ({
+          ...s,
           loading: false,
           error: null,
           wrinkle: wrinkle ?? null,
           game: game ?? null,
-        });
+        }));
       })
       .catch((e) => {
         if (!alive) return;
-        setState({
+        setState((s) => ({
+          ...s,
           loading: false,
           error: e?.message ?? "Network error",
           wrinkle: null,
           game: null,
-        });
+        }));
       });
     return () => {
       alive = false;
     };
   }, [qs]);
 
-  const { wrinkle, game, loading, error } = state;
+  const { wrinkle, game, loading, error, saving, lastPickTeamId } = state;
 
   const homeLabel = resolveTeamLabel(game?.home, teams);
   const awayLabel = resolveTeamLabel(game?.away, teams);
+
+  async function savePick(teamId: string | null) {
+    if (!wrinkle?.id || !teamId) return;
+    setState((s) => ({ ...s, saving: true, lastPickTeamId: teamId }));
+    try {
+      const res = await fetch(`/api/wrinkles/${wrinkle.id}/picks`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        // send both common shapes so the API accepts at least one
+        body: JSON.stringify({ selection: teamId, teamId }),
+      });
+      if (!res.ok) {
+        alert(await readApiError(res));
+        setState((s) => ({ ...s, saving: false }));
+        return;
+      }
+      // success UX – super simple for now
+      alert("Wrinkle pick saved!");
+      setState((s) => ({ ...s, saving: false }));
+    } catch (e: any) {
+      alert(e?.message ?? "Network error");
+      setState((s) => ({ ...s, saving: false }));
+    }
+  }
 
   return (
     <div className="rounded-2xl border border-amber-300 bg-amber-50/50 p-6">
@@ -176,7 +200,8 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
         <div className="mt-3 text-neutral-600">
           {loading && <span>Loading linked game…</span>}
           {!loading && error && <span className="text-red-700">Error: {error}</span>}
-          {!loading && !error && !game && <span>No linked game.</span>}
+
+          {/* Game summary */}
           {!loading && !error && game && (
             <div className="mt-2 rounded-lg bg-white p-3 shadow-sm">
               <div className="text-sm text-neutral-700">
@@ -192,6 +217,31 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
                   <div className="text-xs text-neutral-500">Status: {game.status}</div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* No linked game */}
+          {!loading && !error && !game && <span>No linked game.</span>}
+
+          {/* Pick buttons */}
+          {!loading && !error && game && (
+            <div className="mt-4 flex gap-3">
+              <button
+                onClick={() => savePick(game.away)}
+                disabled={saving || !game.away}
+                className="rounded-md border px-4 py-2 text-sm shadow-sm disabled:opacity-50"
+                title={game.away ?? undefined}
+              >
+                {saving && lastPickTeamId === game.away ? "Saving…" : `Pick ${awayLabel}`}
+              </button>
+              <button
+                onClick={() => savePick(game.home)}
+                disabled={saving || !game.home}
+                className="rounded-md border px-4 py-2 text-sm shadow-sm disabled:opacity-50"
+                title={game.home ?? undefined}
+              >
+                {saving && lastPickTeamId === game.home ? "Saving…" : `Pick ${homeLabel}`}
+              </button>
             </div>
           )}
         </div>
