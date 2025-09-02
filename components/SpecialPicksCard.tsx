@@ -78,31 +78,27 @@ async function readApiError(res: Response) {
 }
 
 /**
- * Try the common weekly-pick endpoints your app might already expose.
- * We POST the same payload the weekly card uses, and return the first non-404 response.
+ * Weekly flow posts to /api/picks with:
+ * { leagueId, season, week, teamId, gameId }
  */
-async function postWeeklyPick(gameId: string, body: any): Promise<Response> {
-  const candidates = [
-    `/api/games/${gameId}/picks`,
-    `/api/picks/games/${gameId}`,
-    `/api/picks/${gameId}`,
-    `/api/games/${gameId}/pick`,
-  ];
-
-  for (const url of candidates) {
-    const res = await fetch(url, {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (res.status !== 404) return res; // success or a real error we should show
-  }
-
-  // If we got here, every candidate was 404.
-  return new Response(JSON.stringify({ error: { message: "Weekly pick endpoint not found (404)." } }), {
-    status: 404,
-    headers: { "content-type": "application/json" },
+async function postWeeklyPick(
+  gameId: string,
+  body: { teamId: string; leagueId?: string | null; season?: number | string; week?: number | string; wrinkleId?: string | null }
+): Promise<Response> {
+  const payload = {
+    leagueId: body.leagueId ?? null,
+    season: body.season ?? null,
+    week: body.week ?? null,
+    teamId: body.teamId,
+    gameId,
+    // harmless extra (ignored by backend if unknown):
+    wrinkleId: body.wrinkleId ?? null,
+  };
+  return fetch('/api/picks', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
   });
 }
 
@@ -169,12 +165,16 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
     if (!game?.id || !teamId) return;
     setState((s) => ({ ...s, saving: true, lastPickTeamId: teamId }));
     try {
-      // Reuse weekly flow: post to the first weekly endpoint that exists.
-      const res = await postWeeklyPick(game.id, {
-        teamId,
-        selection: teamId,
-        wrinkleId: wrinkle?.id ?? null, // harmless if weekly endpoint ignores it
-      });
+      const res = await postWeeklyPick(
+        game.id,
+        {
+          teamId,
+          leagueId,
+          season,
+          week,
+          wrinkleId: wrinkle?.id ?? null,
+        }
+      );
 
       if (!res.ok) {
         alert(await readApiError(res));
