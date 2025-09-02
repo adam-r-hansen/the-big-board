@@ -1,54 +1,35 @@
-// app/api/wrinkles/active/route.ts
-import { NextRequest } from 'next/server'
-import { supabaseServer } from '@/lib/supabase'
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
-export const runtime = 'nodejs'
-export const revalidate = 0
-
-function json(body: unknown, init?: ResponseInit) {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-    ...init,
-  })
-}
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url)
-  const leagueId = url.searchParams.get('leagueId') ?? ''
-  const season = Number(url.searchParams.get('season') ?? '0')
-  const week = Number(url.searchParams.get('week') ?? '0')
+  const { searchParams } = new URL(req.url);
+  const leagueId = searchParams.get("leagueId")?.trim();
+  const season = Number(searchParams.get("season"));
+  const week = Number(searchParams.get("week"));
 
-  if (!leagueId || !season || !week) {
-    return json({ error: 'leagueId, season, week are required' }, { status: 400 })
+  if (!season || !week) {
+    return NextResponse.json(
+      { ok: false, error: { message: "season and week are required" } },
+      { status: 400 }
+    );
   }
 
-  const sb = supabaseServer()
+  let q = db.from("wrinkles").select("*").eq("season", season).eq("week", week);
+  if (leagueId) q = q.eq("league_id", leagueId);
 
-  // Get the active wrinkle for the week
-  const { data: wrks, error: wErr } = await sb
-    .from('wrinkles')
-    .select('id, league_id, season, week, name, status, kind, extra_picks')
-    .eq('league_id', leagueId)
-    .eq('season', season)
-    .eq('week', week)
-    .eq('status', 'active')
-    .limit(1)
-
-  if (wErr) return json({ error: wErr.message }, { status: 500 })
-
-  const base = wrks?.[0]
-  if (!base) return json({ wrinkle: null })
-
-  // Pull any linked games (what the hero needs to show / pick)
-  const { data: games, error: gErr } = await sb
-    .from('wrinkle_games')
-    .select('id, wrinkle_id, game_id, home_team, away_team, game_utc, status')
-    .eq('wrinkle_id', base.id)
-    .order('game_utc', { ascending: true })
-
-  if (gErr) return json({ error: gErr.message }, { status: 500 })
-
-  return json({ wrinkle: { ...base, games: games ?? [] } })
+  const { data, error } = await q;
+  if (error) {
+    return NextResponse.json(
+      { ok: false, error: { message: "Failed to fetch wrinkles", details: error.message } },
+      { status: 500 }
+    );
+  }
+  return NextResponse.json({ ok: true, data }, { status: 200 });
 }
 
