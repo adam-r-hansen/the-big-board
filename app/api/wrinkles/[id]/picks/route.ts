@@ -1,181 +1,90 @@
 // app/api/wrinkles/[id]/picks/route.ts
-/*
-  Wrinkles Picks API
-  - Next 14/15 compatible (params may be a Promise)
-  - Robust Supabase auth token extraction:
-      * Authorization: Bearer <token>
-      * sb-access-token
-      * sb:token
-      * supabase-auth-token (legacy)
-      * sb-<project-ref>-auth-token (JSON cookie)
-  - Uses Supabase service-role for delete+insert
-  - Consistent JSON success/error shapes
-*/
-
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createClient, User } from "@supabase/supabase-js";
+import { cookies as nextCookies } from "next/headers";
+import { createClient } from "@supabase/supabase-js";
 
-// ---------- RUNTIME ----------
-export const runtime = "nodejs"; // ensure Node.js runtime (service key stays server-only)
+export const runtime = "nodejs";
 
-// ---------- TYPES ----------
 type ParamShape = { id: string };
+type PickBody = { selection?: string | null; teamId?: string | null };
 
-type PostBody = {
-  selection: string; // e.g., teamId
-  kind?: string;     // optional if your schema uses it
-};
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-type AuthResult = {
-  user: User | null;
-  error: string | null;
-};
+const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { headers: { "X-Client-Info": "wrinkles-picks-route" } },
+});
 
-// ---------- UTIL: unwrap params (Next 14 object vs Next 15 Promise) ----------
-async function unwrapParams(
-  paramsOrPromise: ParamShape | Promise<ParamShape>
-): Promise<ParamShape> {
-  const maybe: any = paramsOrPromise as any;
-  return typeof maybe?.then === "function"
-    ? await (paramsOrPromise as Promise<ParamShape>)
-    : (paramsOrPromise as ParamShape);
+function j(status: number, payload: any) {
+  return NextResponse.json(payload, { status });
 }
 
-// ---------- UTIL: uniform JSON success/error ----------
-function jsonOk(data: unknown, init?: number | ResponseInit) {
-  const status = typeof init === "number" ? init : undefined;
-  const initObj: ResponseInit | undefined =
-    typeof init === "object" ? init : status ? { status } : undefined;
-  return NextResponse.json({ ok: true, data }, initObj);
+async function unwrapParams(p: ParamShape | Promise<ParamShape>) {
+  const maybe: any = p as any;
+  return typeof maybe?.then === "function" ? await (p as Promise<ParamShape>) : (p as ParamShape);
 }
 
-function jsonErr(
-  message: string,
-  opts?: { status?: number; code?: string; details?: unknown }
-) {
-  const status = opts?.status ?? 400;
-  return NextResponse.json(
-    {
-      ok: false,
-      error: {
-        message,
-        code: opts?.code ?? "BAD_REQUEST",
-        details: opts?.details ?? null,
-      },
-    },
-    { status }
-  );
-}
+/**
+ * Pull a Supabase access token from:
+ * - Cookie "sb-access-token"  (auth-helpers)
+ * - Cookie "access_token"     (custom)
+ * - Cookie "supabase-auth-token" (sometimes a JSON array, we unpack)
+ * - Authorization: Bearer <token> header (fallback)
+ */
+function readAccessToken(req: NextRequest): string | null {
+  const c = nextCookies();
 
-// ---------- SUPABASE (service-role) ----------
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // 1) sb-access-token (common)
+  const sb = c.get("sb-access-token")?.value;
+  if (sb && sb.trim()) return sb;
 
-const supabaseAdmin = (() => {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error(
-      "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env var(s)."
-    );
-  }
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { "X-Client-Info": "wrinkles-picks-route" } },
-  });
-})();
+  // 2) access_token (older custom)
+  const at = c.get("access_token")?.value;
+  if (at && at.trim()) return at;
 
-// ---------- AUTH: extract token from header/cookies & get user ----------
-async function extractAccessToken(req: NextRequest): Promise<string | null> {
-  // 1) Authorization header
-  const authHeader = req.headers.get("authorization") || req.headers.get("Authorization");
-  if (authHeader?.toLowerCase().startsWith("bearer ")) {
-    const token = authHeader.slice(7).trim();
-    if (token) return token;
-  }
-
-  // 2) Cookies
-  const c = await cookies();
-
-  // Common cookie names
-  const direct =
-    c.get("sb-access-token")?.value ??
-    c.get("sb:token")?.value ??
-    c.get("supabase-auth-token")?.value; // older setups
-  if (direct && typeof direct === "string" && direct.length > 10) return direct;
-
-  // 3) JSON cookie (sb-<project-ref>-auth-token)
-  //    Value looks like: {"currentSession":{...,"access_token":"..."},"expiresAt":...}
-  for (const cookie of c.getAll()) {
-    if (/^sb-[a-z0-9]+-[a-z0-9]+-auth-token$/i.test(cookie.name)) {
-      try {
-        const parsed = JSON.parse(cookie.value);
-        const token =
-          parsed?.access_token ??
-          parsed?.currentSession?.access_token ??
-          parsed?.session?.access_token;
-        if (typeof token === "string" && token.length > 10) return token;
-      } catch {
-        // ignore JSON parse errors
+  // 3) supabase-auth-token — may be JSON (array or object)
+  const satRaw = c.get("supabase-auth-token")?.value;
+  if (satRaw) {
+    try {
+      const parsed = JSON.parse(satRaw);
+      // Newer helpers sometimes store as ["access","refresh"]
+      if (Array.isArray(parsed) && typeof parsed[0] === "string" && parsed[0]) {
+        return parsed[0];
       }
+      // Or as { currentSession: { access_token: "..." } }
+      const maybe = (parsed as any)?.currentSession?.access_token;
+      if (typeof maybe === "string" && maybe) return maybe;
+    } catch {
+      // ignore JSON parse errors
     }
+  }
+
+  // 4) Authorization: Bearer <token>
+  const auth = req.headers.get("authorization") || req.headers.get("Authorization");
+  if (auth && auth.toLowerCase().startsWith("bearer ")) {
+    const token = auth.slice(7).trim();
+    if (token) return token;
   }
 
   return null;
 }
 
-async function getAuthUser(req: NextRequest): Promise<AuthResult> {
-  const token = await extractAccessToken(req);
-  if (!token) return { user: null, error: "No Supabase access token found." };
-
-  const { data, error } = await supabaseAdmin.auth.getUser(token);
-  if (error) return { user: null, error: error.message };
-  return { user: data.user, error: null };
-}
-
-// ---------- TABLE / COLUMNS ----------
-const PICKS_TABLE = "picks";
-// Columns assumed: user_id, wrinkle_id, selection, kind?
-
-// ===================== GET =====================
-export async function GET(
-  req: NextRequest,
-  context: { params: ParamShape | Promise<ParamShape> }
-) {
-  try {
-    const { id: wrinkleId } = await unwrapParams(context.params);
-
-    const { user, error: authErr } = await getAuthUser(req);
-    if (!user) {
-      return jsonErr("Unauthorized", { status: 401, code: "UNAUTHORIZED", details: authErr });
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from(PICKS_TABLE)
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("wrinkle_id", wrinkleId)
-      .maybeSingle();
-
-    if (error) {
-      return jsonErr("Failed to fetch pick.", {
-        status: 500,
-        code: "DB_SELECT_ERROR",
-        details: error.message,
-      });
-    }
-
-    return jsonOk({ pick: data ?? null }, 200);
-  } catch (err: any) {
-    return jsonErr("Unexpected server error.", {
-      status: 500,
-      code: "UNHANDLED",
-      details: err?.message ?? String(err),
-    });
+async function requireUser(req: NextRequest) {
+  const accessToken = readAccessToken(req);
+  if (!accessToken) {
+    return { user: null as const, error: "No access token cookie or header found." };
   }
+  const { data, error } = await db.auth.getUser(accessToken);
+  if (error || !data?.user) {
+    return {
+      user: null as const,
+      error: error?.message || "Invalid session token (not authenticated).",
+    };
+  }
+  return { user: data.user, error: null as const };
 }
 
-// ===================== POST =====================
-// Idempotent: delete existing (user, wrinkle) then insert
 export async function POST(
   req: NextRequest,
   context: { params: ParamShape | Promise<ParamShape> }
@@ -183,106 +92,82 @@ export async function POST(
   try {
     const { id: wrinkleId } = await unwrapParams(context.params);
 
-    const { user, error: authErr } = await getAuthUser(req);
+    // 1) Auth gate
+    const { user, error: authErr } = await requireUser(req);
     if (!user) {
-      return jsonErr("Unauthorized", { status: 401, code: "UNAUTHORIZED", details: authErr });
+      return j(401, { ok: false, error: { message: "Unauthorized", details: authErr } });
     }
 
-    // Some adapters prefer explicitly awaiting cookies() once per request
-    await cookies();
-
-    let body: PostBody;
+    // 2) Payload
+    let body: PickBody = {};
     try {
-      body = (await req.json()) as PostBody;
+      body = (await req.json()) as PickBody;
     } catch {
-      return jsonErr("Invalid JSON body.", { status: 400, code: "BAD_JSON" });
+      // ignore; we'll validate below
     }
 
-    if (!body?.selection || typeof body.selection !== "string") {
-      return jsonErr('Missing or invalid "selection".', {
-        status: 400,
-        code: "VALIDATION_ERROR",
+    const teamId =
+      (body?.selection ?? body?.teamId ?? "").toString().trim() || null;
+
+    if (!teamId) {
+      return j(400, {
+        ok: false,
+        error: { message: "Missing team selection.", details: "Provide { selection: <teamId> }." },
       });
     }
 
-    const { error: delErr } = await supabaseAdmin
-      .from(PICKS_TABLE)
+    // 3) Make sure the wrinkle exists (defensive) and is for this season/week (optional)
+    const { data: wr, error: werr } = await db
+      .from("wrinkles")
+      .select("id, kind, status")
+      .eq("id", wrinkleId)
+      .maybeSingle();
+    if (werr) return j(500, { ok: false, error: { message: "Failed to load wrinkle.", details: werr.message } });
+    if (!wr) return j(404, { ok: false, error: { message: "Wrinkle not found." } });
+    if (wr.status && wr.status !== "active") {
+      // optional rule: you can remove this check if not needed
+      return j(400, { ok: false, error: { message: "Wrinkle is not active." } });
+    }
+
+    // 4) Write the pick:
+    // Strategy: delete any prior pick for (user_id, wrinkle_id), then insert fresh pick.
+    // Table is assumed to be "wrinkle_picks" with columns:
+    //   user_id (uuid), wrinkle_id (uuid), team_id (uuid or string), created_at timestamptz default now()
+    const { error: delErr } = await db
+      .from("wrinkle_picks")
       .delete()
       .eq("user_id", user.id)
       .eq("wrinkle_id", wrinkleId);
 
     if (delErr) {
-      return jsonErr("Failed to clear previous pick.", {
-        status: 500,
-        code: "DB_DELETE_ERROR",
-        details: delErr.message,
+      return j(500, {
+        ok: false,
+        error: { message: "Failed to clear previous pick.", details: delErr.message },
       });
     }
 
-    const payload: Record<string, any> = {
-      user_id: user.id,
-      wrinkle_id: wrinkleId,
-      selection: body.selection,
-    };
-    if (body.kind) payload.kind = body.kind;
-
-    const { data, error: insErr } = await supabaseAdmin
-      .from(PICKS_TABLE)
-      .insert(payload)
+    const { data: ins, error: insErr } = await db
+      .from("wrinkle_picks")
+      .insert({
+        user_id: user.id,
+        wrinkle_id: wrinkleId,
+        team_id: teamId,
+      })
       .select("*")
-      .single();
+      .maybeSingle();
 
     if (insErr) {
-      return jsonErr("Failed to insert pick.", {
-        status: 500,
-        code: "DB_INSERT_ERROR",
-        details: insErr.message,
+      return j(500, {
+        ok: false,
+        error: { message: "Failed to save pick.", details: insErr.message },
       });
     }
 
-    return jsonOk({ pick: data }, 201);
-  } catch (err: any) {
-    return jsonErr("Unexpected server error.", {
-      status: 500,
-      code: "UNHANDLED",
-      details: err?.message ?? String(err),
-    });
-  }
-}
-
-// ===================== DELETE =====================
-export async function DELETE(
-  req: NextRequest,
-  context: { params: ParamShape | Promise<ParamShape> }
-) {
-  try {
-    const { id: wrinkleId } = await unwrapParams(context.params);
-
-    const { user, error: authErr } = await getAuthUser(req);
-    if (!user) {
-      return jsonErr("Unauthorized", { status: 401, code: "UNAUTHORIZED", details: authErr });
-    }
-
-    const { error: delErr, count } = await supabaseAdmin
-      .from(PICKS_TABLE)
-      .delete({ count: "exact" })
-      .eq("user_id", user.id)
-      .eq("wrinkle_id", wrinkleId);
-
-    if (delErr) {
-      return jsonErr("Failed to delete pick.", {
-        status: 500,
-        code: "DB_DELETE_ERROR",
-        details: delErr.message,
-      });
-    }
-
-    return jsonOk({ deleted: count ?? 0 }, 200);
-  } catch (err: any) {
-    return jsonErr("Unexpected server error.", {
-      status: 500,
-      code: "UNHANDLED",
-      details: err?.message ?? String(err),
+    return j(200, { ok: true, data: ins });
+  } catch (e: any) {
+    return j(500, {
+      ok: false,
+      error: { message: "Unexpected server error.", details: e?.message ?? String(e) },
     });
   }
 }
