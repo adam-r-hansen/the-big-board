@@ -56,24 +56,36 @@ function extractWrinkleAndGame(payload: any) {
 }
 
 type TeamLike = {
-  id?: string;
-  abbr?: string;   // e.g., PHI
-  short?: string;  // e.g., Eagles
-  name?: string;   // e.g., Philadelphia Eagles
+  id?: string | null;
+  abbr?: string | null;   // e.g., PHI
+  short?: string | null;  // e.g., Eagles
+  name?: string | null;   // e.g., Philadelphia Eagles
 };
 
-function resolveTeamLabel(teamId: string | null | undefined, teams?: Record<string, TeamLike>): string {
+function resolveTeamLabel(
+  teamId: string | null | undefined,
+  teams?: Record<string, TeamLike>
+): string {
   if (!teamId) return "TBD";
   const t = teams?.[teamId];
-  if (!t) return teamId.slice(0, 6).toUpperCase(); // safe fallback
-  return t.abbr || t.short || t.name || teamId.slice(0, 6).toUpperCase();
+  const val =
+    t?.abbr ??
+    t?.short ??
+    t?.name ??
+    null;
+
+  if (val && typeof val === "string" && val.trim().length > 0) {
+    return val;
+  }
+  // safe fallback if we don't have a label
+  return teamId.slice(0, 6).toUpperCase();
 }
 
 type Props = {
   leagueId?: string | null;
   season: number | string;
   week: number | string;
-  /** Optional map of teamId -> { abbr/short/name } */
+  /** Optional map of teamId -> { abbr/short/name }, nullables allowed */
   teams?: Record<string, TeamLike>;
 };
 
