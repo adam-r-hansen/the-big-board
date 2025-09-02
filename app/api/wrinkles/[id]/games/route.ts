@@ -21,6 +21,48 @@ function jErr(message: string, status = 400, details?: unknown) {
   return NextResponse.json({ ok: false, error: { message, details: details ?? null } }, { status });
 }
 
+/** Normalize a game shape with all common aliases the UI might expect. */
+function normalizeGame(wg: any): any {
+  // Prefer the joined game row; fall back to columns on wrinkle_games
+  const g = wg?.game ?? {};
+  const pick = <T>(...vals: T[]) => vals.find((v) => v !== undefined && v !== null);
+
+  const id = pick(g.id, wg.game_id);
+  const home = pick(g.home_team, wg.home_team, g.homeTeamId, wg.homeTeamId);
+  const away = pick(g.away_team, wg.away_team, g.awayTeamId, wg.awayTeamId);
+  const gameUtc = pick(g.game_utc, wg.game_utc, g.gameUtc, wg.gameUtc, g.start_utc, wg.start_utc);
+
+  return {
+    // core
+    id,
+    status: pick(g.status, wg.status),
+    season: pick(g.season, wg.season),
+    week: pick(g.week, wg.week),
+    espn_id: pick(g.espn_id, wg.espn_id, g.espnId, wg.espnId),
+
+    // time aliases
+    game_utc: gameUtc ?? null,
+    gameUtc: gameUtc ?? null,
+    start_utc: gameUtc ?? null,
+    startUtc: gameUtc ?? null,
+
+    // team ids (multiple naming styles)
+    home_team: home ?? null,
+    away_team: away ?? null,
+    home_team_id: home ?? null,
+    away_team_id: away ?? null,
+    homeTeamId: home ?? null,
+    awayTeamId: away ?? null,
+
+    // scores if present
+    home_score: pick(g.home_score, wg.home_score, g.homeScore, wg.homeScore) ?? null,
+    away_score: pick(g.away_score, wg.away_score, g.awayScore, wg.awayScore) ?? null,
+
+    // spread if present
+    spread: pick(g.spread, wg.spread) ?? null,
+  };
+}
+
 export async function GET(
   _req: NextRequest,
   ctx: { params: ParamShape | Promise<ParamShape> }
@@ -28,27 +70,47 @@ export async function GET(
   try {
     const { id: wrinkleId } = await unwrapParams(ctx.params);
 
-    // Fetch wrinkle_games AND join to the games table
-    // Requires a foreign key: wrinkle_games.game_id -> games.id
+    // Join games so wg.game is populated
     const { data, error } = await db
       .from("wrinkle_games")
-      .select("*, game:games(*)") // join games as nested "game"
+      .select("*, game:games(*)")
       .eq("wrinkle_id", wrinkleId);
 
     if (error) {
-      return jErr("Failed to fetch wrinkle_games with game join.", 500, error.message);
+      return jErr("Failed to fetch wrinkle_games with joined game.", 500, error.message);
     }
 
-    // Backward compatible shapes
+    const combined = (data ?? []).map((wg: any) => ({
+      wrinkle_game: wg,
+      game: wg?.game ?? null,
+      normalized: normalizeGame(wg),
+    }));
+
+    // Convenience singletons
+    const first = combined[0] ?? null;
+    const firstNorm = first?.normalized ?? null;
+
+    // Return MANY shapes so the UI can latch onto *something*
     return NextResponse.json(
       {
         ok: true,
-        data,       // array of { id, wrinkle_id, game_id, ..., game: { ... } }
-        rows: data,
-        count: data?.length ?? 0,
-        row: data?.[0] ?? null,
-        wrinkle_game: data?.[0] ?? null,
-        game: data?.[0]?.game ?? null,
+
+        // preferred combined rows
+        data: combined,
+        rows: combined,
+        count: combined.length,
+
+        // single row helpers
+        row: first,
+        wrinkle_game: first?.wrinkle_game ?? null,
+
+        // direct game helpers
+        game: first?.game ?? null,
+        games: combined.map((x: any) => x.game).filter(Boolean),
+
+        // normalized helpers (aliases for client convenience)
+        linkedGame: firstNorm,       // <— best single object to consume
+        linkedGames: combined.map((x: any) => x.normalized),
       },
       { status: 200 }
     );
