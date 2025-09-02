@@ -1,6 +1,5 @@
 // app/api/wrinkles/[id]/picks/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { cookies as nextCookies } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -26,33 +25,32 @@ async function unwrapParams(p: ParamShape | Promise<ParamShape>) {
 }
 
 /**
- * Pull a Supabase access token from:
+ * Pull a Supabase access token from the incoming request:
  * - Cookie "sb-access-token"  (auth-helpers)
- * - Cookie "access_token"     (custom)
- * - Cookie "supabase-auth-token" (sometimes a JSON array, we unpack)
+ * - Cookie "access_token"     (custom/legacy)
+ * - Cookie "supabase-auth-token" (sometimes JSON we unpack)
  * - Authorization: Bearer <token> header (fallback)
  */
 function readAccessToken(req: NextRequest): string | null {
-  const c = nextCookies();
+  // Use req.cookies (sync) — works in Next 15 route handlers
+  const getCookie = (name: string) => req.cookies.get(name)?.value;
 
   // 1) sb-access-token (common)
-  const sb = c.get("sb-access-token")?.value;
+  const sb = getCookie("sb-access-token");
   if (sb && sb.trim()) return sb;
 
   // 2) access_token (older custom)
-  const at = c.get("access_token")?.value;
+  const at = getCookie("access_token");
   if (at && at.trim()) return at;
 
-  // 3) supabase-auth-token — may be JSON (array or object)
-  const satRaw = c.get("supabase-auth-token")?.value;
+  // 3) supabase-auth-token — may be JSON
+  const satRaw = getCookie("supabase-auth-token");
   if (satRaw) {
     try {
       const parsed = JSON.parse(satRaw);
-      // Newer helpers sometimes store as ["access","refresh"]
       if (Array.isArray(parsed) && typeof parsed[0] === "string" && parsed[0]) {
         return parsed[0];
       }
-      // Or as { currentSession: { access_token: "..." } }
       const maybe = (parsed as any)?.currentSession?.access_token;
       if (typeof maybe === "string" && maybe) return maybe;
     } catch {
@@ -103,12 +101,10 @@ export async function POST(
     try {
       body = (await req.json()) as PickBody;
     } catch {
-      // ignore; we'll validate below
+      // ignore; validate below
     }
 
-    const teamId =
-      (body?.selection ?? body?.teamId ?? "").toString().trim() || null;
-
+    const teamId = (body?.selection ?? body?.teamId ?? "").toString().trim() || null;
     if (!teamId) {
       return j(400, {
         ok: false,
@@ -116,7 +112,7 @@ export async function POST(
       });
     }
 
-    // 3) Make sure the wrinkle exists (defensive) and is for this season/week (optional)
+    // 3) Ensure wrinkle exists and (optionally) active
     const { data: wr, error: werr } = await db
       .from("wrinkles")
       .select("id, kind, status")
@@ -125,25 +121,17 @@ export async function POST(
     if (werr) return j(500, { ok: false, error: { message: "Failed to load wrinkle.", details: werr.message } });
     if (!wr) return j(404, { ok: false, error: { message: "Wrinkle not found." } });
     if (wr.status && wr.status !== "active") {
-      // optional rule: you can remove this check if not needed
       return j(400, { ok: false, error: { message: "Wrinkle is not active." } });
     }
 
-    // 4) Write the pick:
-    // Strategy: delete any prior pick for (user_id, wrinkle_id), then insert fresh pick.
-    // Table is assumed to be "wrinkle_picks" with columns:
-    //   user_id (uuid), wrinkle_id (uuid), team_id (uuid or string), created_at timestamptz default now()
+    // 4) Delete previous pick for (user, wrinkle) then insert new one
     const { error: delErr } = await db
       .from("wrinkle_picks")
       .delete()
       .eq("user_id", user.id)
       .eq("wrinkle_id", wrinkleId);
-
     if (delErr) {
-      return j(500, {
-        ok: false,
-        error: { message: "Failed to clear previous pick.", details: delErr.message },
-      });
+      return j(500, { ok: false, error: { message: "Failed to clear previous pick.", details: delErr.message } });
     }
 
     const { data: ins, error: insErr } = await db
@@ -155,20 +143,13 @@ export async function POST(
       })
       .select("*")
       .maybeSingle();
-
     if (insErr) {
-      return j(500, {
-        ok: false,
-        error: { message: "Failed to save pick.", details: insErr.message },
-      });
+      return j(500, { ok: false, error: { message: "Failed to save pick.", details: insErr.message } });
     }
 
     return j(200, { ok: true, data: ins });
   } catch (e: any) {
-    return j(500, {
-      ok: false,
-      error: { message: "Unexpected server error.", details: e?.message ?? String(e) },
-    });
+    return j(500, { ok: false, error: { message: "Unexpected server error.", details: e?.message ?? String(e) } });
   }
 }
 
