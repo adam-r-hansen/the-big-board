@@ -10,15 +10,14 @@ export default function AdminPage() {
   const [msg, setMsg] = useState<string>('')
   const [busy, setBusy] = useState(false)
   const [leagues, setLeagues] = useState<League[]>([])
+  const [copyMsg, setCopyMsg] = useState<string>('')
 
   async function loadLeagues() {
     try {
-      // Prefer my-leagues if you want only joined; this lists owned/global
       const j = await fetch('/api/my-leagues', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}))
       setLeagues(j?.leagues || [])
-    } catch { /* ignore */ }
+    } catch {}
   }
-
   useEffect(() => { loadLeagues() }, [])
 
   async function createLeague(e: React.FormEvent) {
@@ -40,6 +39,23 @@ export default function AdminPage() {
       setMsg(err?.message || 'Failed to create league')
     } finally {
       setBusy(false)
+    }
+  }
+
+  function inviteLink(id: string) {
+    if (typeof window === 'undefined') return ''
+    return `${window.location.origin}/join?leagueId=${id}`
+  }
+
+  async function copyLink(id: string) {
+    try {
+      const link = inviteLink(id)
+      await navigator.clipboard.writeText(link)
+      setCopyMsg('Invite link copied!')
+      setTimeout(() => setCopyMsg(''), 1500)
+    } catch {
+      setCopyMsg('Copy failed')
+      setTimeout(() => setCopyMsg(''), 2000)
     }
   }
 
@@ -74,11 +90,16 @@ export default function AdminPage() {
             {leagues.map(l => (
               <li key={l.id} className="flex items-center justify-between border rounded-lg px-3 py-2">
                 <span>{l.name} • {l.season}</span>
-                <a className="text-sm underline" href="/picks">Go to picks</a>
+                <div className="flex items-center gap-3">
+                  <a className="underline text-sm" href="/picks">Picks</a>
+                  <a className="underline text-sm" href="/standings">Standings</a>
+                  <button className="text-sm underline" onClick={() => copyLink(l.id)}>Copy invite link</button>
+                </div>
               </li>
             ))}
           </ul>
         )}
+        {copyMsg && <div className="text-xs mt-2">{copyMsg}</div>}
       </section>
     </main>
   )
