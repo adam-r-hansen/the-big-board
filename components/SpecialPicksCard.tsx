@@ -24,11 +24,13 @@ type Props = {
   leagueId: string
   season: number
   week: number
-  // IMPORTANT: this is the merged index keyed by uuid AND abbr (uppercased)
+  // IMPORTANT: pass the merged index keyed by UUID AND ABBR (uppercased)
   teams: Record<string, TeamLike>
 }
 
-function TeamButton({ team, disabled, picked, onClick }: { team?: TeamLike; disabled?: boolean; picked?: boolean; onClick?: () => void }) {
+function TeamButton({ team, disabled, picked, onClick }: {
+  team?: TeamLike; disabled?: boolean; picked?: boolean; onClick?: () => void
+}) {
   const abbr = team?.abbreviation ?? '—'
   const primary = team?.color_primary ?? '#6b7280'
   const secondary = team?.color_secondary ?? '#374151'
@@ -61,68 +63,83 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
   const [wGame, setWGame] = useState<WrinkleGame | null>(null)
   const [myPick, setMyPick] = useState<{ id: string; team_id: string; game_id: string | null } | null>(null)
 
+  // Resolve by UUID or ABBR (uppercased)
   const resolveTeam = (key?: string | null): TeamLike | undefined => {
     if (!key) return undefined
-    return teams[key] || teams[key.toUpperCase()] // uuid or ABBR
+    return teams[key] || teams[key.toUpperCase()]
   }
   const resolveTeamId = (key?: string | null): string | undefined => {
     const t = resolveTeam(key)
     return t?.id ?? undefined
   }
 
+  // Resilient loader: swallow 401/404s from wrinkle endpoints so weekly picks stay interactive
   useEffect(() => {
     if (!leagueId || !season || !week) return
     ;(async () => {
-      setLoading(true); setErr(null)
+      setLoading(true)
+      setErr(null)
       try {
-        const res = await fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' })
-        const j = await res.json().catch(() => ({}))
-        const w: Wrinkle | undefined = Array.isArray(j?.wrinkles) ? j.wrinkles[0] : j?.wrinkle
-        setWrinkle(w ?? null)
+        // active wrinkle
+        let w: Wrinkle | null = null
+        try {
+          const res = await fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' })
+          const j = await res.json().catch(() => ({}))
+          w = (Array.isArray(j?.wrinkles) ? j.wrinkles[0] : j?.wrinkle) ?? null
+          setWrinkle(w)
+        } catch { /* ignore */ }
 
+        // wrinkle game row
         let row: WrinkleGame | null = null
         if (w?.id) {
-          const gRes = await fetch(`/api/wrinkles/${w.id}/games`, { cache: 'no-store' })
-          const gj = await gRes.json().catch(() => ({}))
-          const first =
-            (Array.isArray(gj?.rows) && gj.rows[0]) ||
-            gj?.row ||
-            (Array.isArray(gj?.games) && gj.games[0]) ||
-            gj?.game ||
-            null
-          if (first) {
-            row = {
-              id: first.id ?? first.game_id ?? '',
-              game_id: first.game_id ?? first.gameId ?? null,
-              home_team: first.home_team ?? first.home_team_id ?? first.home ?? null,
-              away_team: first.away_team ?? first.away_team_id ?? first.away ?? null,
-              game_utc: first.game_utc ?? first.start_utc ?? first.start_time ?? null,
-              status: first.status ?? null,
+          try {
+            const gRes = await fetch(`/api/wrinkles/${w.id}/games`, { cache: 'no-store' })
+            const gj = await gRes.json().catch(() => ({}))
+            const first =
+              (Array.isArray(gj?.rows) && gj.rows[0]) ||
+              gj?.row ||
+              (Array.isArray(gj?.games) && gj.games[0]) ||
+              gj?.game ||
+              null
+            if (first) {
+              row = {
+                id: first.id ?? first.game_id ?? '',
+                game_id: first.game_id ?? first.gameId ?? null,
+                home_team: first.home_team ?? first.home_team_id ?? first.home ?? null,
+                away_team: first.away_team ?? first.away_team_id ?? first.away ?? null,
+                game_utc: first.game_utc ?? first.start_utc ?? first.start_time ?? null,
+                status: first.status ?? null,
+              }
             }
-          }
+          } catch { /* ignore */ }
         }
 
-        // Hydrate from weekly schedule when only game_id is present
+        // hydrate via weekly schedule if only game_id present
         if (row?.game_id && (!row.home_team || !row.away_team)) {
-          const wk = await fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({}))
-          const match = (wk.games ?? []).find((g: any) => g.id === row!.game_id)
-          if (match) {
-            row = {
-              ...row,
-              home_team: match.home?.id ?? match.home_team ?? match.home?.abbreviation ?? row.home_team ?? null,
-              away_team: match.away?.id ?? match.away_team ?? match.away?.abbreviation ?? row.away_team ?? null,
-              game_utc: row.game_utc ?? match.game_utc ?? match.start_time ?? null,
-              status: row.status ?? match.status ?? null,
+          try {
+            const wk = await fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json())
+            const match = (wk.games ?? []).find((g: any) => g.id === row!.game_id)
+            if (match) {
+              row = {
+                ...row,
+                home_team: match.home?.id ?? match.home_team ?? match.home?.abbreviation ?? row.home_team ?? null,
+                away_team: match.away?.id ?? match.away_team ?? match.away?.abbreviation ?? row.away_team ?? null,
+                game_utc: row.game_utc ?? match.game_utc ?? match.start_time ?? null,
+                status: row.status ?? match.status ?? null,
+              }
             }
-          }
+          } catch { /* ignore */ }
         }
 
         setWGame(row ?? null)
 
+        // my wrinkle pick (ignore if route missing/unauth)
         if (w?.id) {
-          const pr = await fetch(`/api/wrinkles/${w.id}/picks`, { cache: 'no-store' })
-          const pj = await pr.json().catch(() => ({}))
-          setMyPick((Array.isArray(pj?.picks) ? pj.picks[0] : pj?.pick ?? null) as any)
+          try {
+            const pr = await fetch(`/api/wrinkles/${w.id}/picks`, { cache: 'no-store' })
+            const pj = await pr.json().catch(() => ({}))
+            setMyPick((Array.isArray(pj?.picks) ? pj.picks[0] : pj?.pick ?? null) as any)
+          } catch { /* ignore */ }
         }
       } catch (e: any) {
         setErr(e?.message || 'Failed to load wrinkle')
