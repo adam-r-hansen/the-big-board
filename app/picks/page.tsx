@@ -32,9 +32,8 @@ type Game = {
   week: number
   game_utc: string
   status?: string
-  // we may only get ids; we may also get abbreviations depending on backend
-  home: { id?: string; abbr?: string }
-  away: { id?: string; abbr?: string }
+  home: { id?: string; abbr?: string | null }
+  away: { id?: string; abbr?: string | null }
 }
 
 type Pick = { id: string; team_id: string; game_id: string | null }
@@ -51,8 +50,8 @@ function TeamButton({
   onClick?: () => void
 }) {
   const abbr = team?.abbreviation ?? '—'
-  const primary = team?.color_primary ?? '#6b7280' // neutral-500
-  const secondary = team?.color_secondary ?? '#374151' // neutral-700
+  const primary = team?.color_primary ?? '#6b7280'
+  const secondary = team?.color_secondary ?? '#374151'
   return (
     <button
       type="button"
@@ -75,15 +74,7 @@ function TeamButton({
   )
 }
 
-function SectionCard({
-  children,
-  title,
-  right,
-}: {
-  children: React.ReactNode
-  title: string
-  right?: React.ReactNode
-}) {
+function SectionCard({ children, title, right }: { children: React.ReactNode; title: string; right?: React.ReactNode }) {
   return (
     <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
       <header className="mb-3 flex items-center justify-between">
@@ -103,11 +94,11 @@ export default function PicksPage() {
 
   const [games, setGames] = useState<Game[]>([])
   const [picks, setPicks] = useState<Pick[]>([])
-  const [teams, setTeams] = useState<Record<string, Team>>({})
+  const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
   const [loading, setLoading] = useState(false)
-  const [log, setLog] = useState('')
+  const [msg, setMsg] = useState<string>('')
 
-  // --- load leagues + team map once
+  // --- 1) Load leagues + team map
   useEffect(() => {
     fetch('/api/my-leagues')
       .then((r) => r.json())
@@ -119,18 +110,17 @@ export default function PicksPage() {
           setSeason(ls[0].season)
         }
       })
-
     fetch('/api/team-map')
       .then((r) => r.json())
-      .then((j) => setTeams(j.teams || {}))
+      .then((j) => setTeamMap(j.teams || {}))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // quick lookup by abbreviation too (PHI, DAL, etc.)
-  const teamsByAbbr: Record<string, TeamLike> = useMemo(() => {
-    const m: Record<string, TeamLike> = {}
-    for (const t of Object.values(teams)) {
-      if (t.abbreviation) m[t.abbreviation.toUpperCase()] = {
+  // --- Build ONE index keyed by BOTH uuid and abbr (fixes wrinkle + first-game)
+  const teamIndex: Record<string, TeamLike> = useMemo(() => {
+    const idx: Record<string, TeamLike> = {}
+    for (const t of Object.values(teamMap)) {
+      const tLike: TeamLike = {
         id: t.id,
         abbreviation: t.abbreviation ?? undefined,
         name: t.name ?? undefined,
@@ -139,33 +129,20 @@ export default function PicksPage() {
         logo: t.logo ?? undefined,
         logo_dark: t.logo_dark ?? undefined,
       }
+      // key by uuid
+      if (t.id) idx[t.id] = tLike
+      // key by ABBR (uppercased)
+      if (t.abbreviation) idx[t.abbreviation.toUpperCase()] = tLike
     }
-    return m
-  }, [teams])
+    return idx
+  }, [teamMap])
 
-  // normalize to TeamLike (null → undefined)
-  const teamsLike: Record<string, TeamLike> = useMemo(() => {
-    const out: Record<string, TeamLike> = {}
-    for (const [k, t] of Object.entries(teams)) {
-      out[k] = {
-        id: t.id,
-        abbreviation: t.abbreviation ?? undefined,
-        name: t.name ?? undefined,
-        color_primary: t.color_primary ?? undefined,
-        color_secondary: t.color_secondary ?? undefined,
-        logo: t.logo ?? undefined,
-        logo_dark: t.logo_dark ?? undefined,
-      }
-    }
-    return out
-  }, [teams])
-
-  // --- load per-week data
+  // --- 2) Load per-week data
   useEffect(() => {
     if (!leagueId || !season || !week) return
     ;(async () => {
       setLoading(true)
-      setLog('')
+      setMsg('')
       try {
         const [g, p] = await Promise.all([
           fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then((r) => r.json()),
@@ -174,7 +151,6 @@ export default function PicksPage() {
           ),
         ])
 
-        // tolerate multiple shapes, plus capture abbreviations if present
         setGames(
           (g.games ?? []).map((x: any) => ({
             id: x.id,
@@ -184,18 +160,17 @@ export default function PicksPage() {
             week: x.week,
             home: {
               id: x.home?.id ?? x.home_team ?? x.homeTeamId ?? x.home_team_id,
-              abbr: x.home?.abbreviation ?? x.home_abbr ?? x.homeAbbr ?? null,
+              abbr: x.home?.abbreviation ?? x.home_abbr ?? x.homeAbbr ?? x.home?.abbr ?? null,
             },
             away: {
               id: x.away?.id ?? x.away_team ?? x.awayTeamId ?? x.away_team_id,
-              abbr: x.away?.abbreviation ?? x.away_abbr ?? x.awayAbbr ?? null,
+              abbr: x.away?.abbreviation ?? x.away_abbr ?? x.awayAbbr ?? x.away?.abbr ?? null,
             },
           })),
         )
-
         setPicks((p.picks ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
       } catch (e: any) {
-        setLog(e?.message || 'Load error')
+        setMsg(e?.message || 'Load error')
       } finally {
         setLoading(false)
       }
@@ -203,7 +178,6 @@ export default function PicksPage() {
   }, [leagueId, season, week])
 
   const picksLeft = Math.max(0, 2 - (picks?.length ?? 0))
-  const pickedTeamIds = new Set(picks.map((x) => x.team_id))
   const pickByGame = useMemo(() => {
     const m = new Map<string, Pick>()
     for (const p of picks) if (p.game_id) m.set(p.game_id, p)
@@ -212,21 +186,10 @@ export default function PicksPage() {
 
   const isLocked = (utc?: string) => (utc ? new Date(utc) <= new Date() : false)
 
-  async function safeParseJson(res: Response) {
+  async function safeJson(res: Response) {
     const ct = res.headers.get('content-type') || ''
-    if (ct.includes('application/json')) {
-      try {
-        return await res.json()
-      } catch {
-        return null
-      }
-    }
+    if (ct.includes('application/json')) { try { return await res.json() } catch { return null } }
     return null
-  }
-
-  async function deletePick(pickId: string) {
-    const res = await fetch(`/api/picks?id=${pickId}`, { method: 'DELETE', cache: 'no-store' })
-    if (!res.ok) throw new Error((await safeParseJson(res))?.error || 'Unpick failed')
   }
 
   async function refreshMyPicks() {
@@ -234,11 +197,25 @@ export default function PicksPage() {
     setPicks((j.picks ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
   }
 
+  async function deletePickById(pickId: string) {
+    const res = await fetch(`/api/picks?id=${pickId}`, { method: 'DELETE', cache: 'no-store' })
+    if (!res.ok) throw new Error((await safeJson(res))?.error || 'Unpick failed')
+  }
+
+  // Resolve a side (id or abbr) to full teamLike + canonical teamId
+  function resolveTeamAndId(side: { id?: string; abbr?: string | null }): { team?: TeamLike; teamId?: string } {
+    const abbrKey = side?.abbr ? String(side.abbr).toUpperCase() : undefined
+    const byId = side?.id ? teamIndex[side.id] : undefined
+    const byAbbr = abbrKey ? teamIndex[abbrKey] : undefined
+    const chosen = byId || byAbbr
+    return { team: chosen, teamId: chosen?.id }
+  }
+
   async function togglePick(teamId: string, gameId: string) {
     try {
       const existing = pickByGame.get(gameId)
       if (existing) {
-        await deletePick(existing.id)
+        await deletePickById(existing.id)
       }
       const res = await fetch('/api/picks', {
         method: 'POST',
@@ -246,24 +223,13 @@ export default function PicksPage() {
         body: JSON.stringify({ leagueId, season, week, teamId, gameId }),
         cache: 'no-store',
       })
-      if (!res.ok) throw new Error((await safeParseJson(res))?.error || 'Pick failed')
-
+      if (!res.ok) throw new Error((await safeJson(res))?.error || 'Pick failed')
       await refreshMyPicks()
+      setMsg('')
     } catch (e: any) {
-      setLog(e?.message || 'Error')
+      setMsg(e?.message || 'Pick error')
+      console.error('togglePick error', e)
     }
-  }
-
-  // resolve a team from a game side (by id first, then by abbreviation)
-  function resolveTeam(side: { id?: string; abbr?: string }): TeamLike | undefined {
-    if (side?.id && teamsLike[side.id]) return teamsLike[side.id]
-    if (side?.abbr && teamsByAbbr[side.abbr.toUpperCase()]) return teamsByAbbr[side.abbr.toUpperCase()]
-    return undefined
-  }
-  function resolveTeamId(side: { id?: string; abbr?: string }): string | undefined {
-    if (side?.id && teamsLike[side.id]?.id) return teamsLike[side.id]!.id
-    if (side?.abbr && teamsByAbbr[side.abbr.toUpperCase()]?.id) return teamsByAbbr[side.abbr.toUpperCase()]!.id
-    return undefined
   }
 
   return (
@@ -277,29 +243,19 @@ export default function PicksPage() {
         <div className="ml-auto flex items-center gap-2">
           <select className="border rounded px-2 py-1 bg-transparent" value={leagueId} onChange={(e) => setLeagueId(e.target.value)}>
             {leagues.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
+              <option key={l.id} value={l.id}>{l.name}</option>
             ))}
           </select>
           <select className="border rounded px-2 py-1 bg-transparent" value={season} onChange={(e) => setSeason(Number(e.target.value))}>
             {Array.from({ length: 3 }).map((_, i) => {
               const yr = new Date().getFullYear() - 1 + i
-              return (
-                <option key={yr} value={yr}>
-                  {yr}
-                </option>
-              )
+              return <option key={yr} value={yr}>{yr}</option>
             })}
           </select>
           <select className="border rounded px-2 py-1 bg-transparent" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
             {Array.from({ length: 18 }).map((_, i) => {
               const wk = i + 1
-              return (
-                <option key={wk} value={wk}>
-                  Week {wk}
-                </option>
-              )
+              return <option key={wk} value={wk}>Week {wk}</option>
             })}
           </select>
         </div>
@@ -307,27 +263,23 @@ export default function PicksPage() {
 
       {/* 2/3 + 1/3 layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* LEFT column (2/3) — wrinkle + weekly picks */}
+        {/* LEFT 2/3 — Wrinkle + Weekly */}
         <div className="lg:col-span-8 grid gap-6">
-          {/* Wrinkle */}
-          <SpecialPicksCard leagueId={leagueId} season={season} week={week} teams={teamsLike} />
+          <SpecialPicksCard leagueId={leagueId} season={season} week={week} teams={teamIndex} />
 
-          {/* Weekly */}
-          <SectionCard title={`Week ${week} — ${picksLeft} of 2 picks left`} right={<span className="text-xs text-neutral-500">{log}</span>}>
+          <SectionCard title={`Week ${week} — ${picksLeft} of 2 picks left`} right={<span className="text-xs text-neutral-500">{msg}</span>}>
             {loading && <div className="text-sm text-neutral-500">Loading…</div>}
             {!loading && games.length === 0 && <div className="text-sm text-neutral-500">No games.</div>}
 
             {games.map((g, idx) => {
-              const homeTeam = resolveTeam(g.home)
-              const awayTeam = resolveTeam(g.away)
-              const homeId = resolveTeamId(g.home)
-              const awayId = resolveTeamId(g.away)
+              const { team: homeTeam, teamId: homeId } = resolveTeamAndId(g.home)
+              const { team: awayTeam, teamId: awayId } = resolveTeamAndId(g.away)
 
               const locked = isLocked(g.game_utc)
               const existing = pickByGame.get(g.id)
               const weeklyQuotaFull = (picks?.length ?? 0) >= 2 && !existing
 
-              // First game debug
+              // First-game debug
               if (idx === 0) {
                 console.debug('Top game flags', {
                   gameId: g.id,
@@ -340,14 +292,9 @@ export default function PicksPage() {
               }
 
               return (
-                <article
-                  key={g.id}
-                  className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5"
-                >
+                <article key={g.id} className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
                   <div className="mb-2 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
-                    <span>
-                      {new Date(g.game_utc).toLocaleString()} • Week {g.week}
-                    </span>
+                    <span>{new Date(g.game_utc).toLocaleString()} • Week {g.week}</span>
                     <span className="uppercase tracking-wide">{locked ? 'LOCKED' : g.status || 'UPCOMING'}</span>
                   </div>
 
@@ -355,7 +302,7 @@ export default function PicksPage() {
                     <div className="flex-1">
                       <TeamButton
                         team={homeTeam}
-                        picked={homeId ? pickedTeamIds.has(homeId) : false}
+                        picked={homeId ? picks.some((p) => p.team_id === homeId) : false}
                         disabled={locked || weeklyQuotaFull || !homeId}
                         onClick={() => homeId && togglePick(homeId, g.id)}
                       />
@@ -364,7 +311,7 @@ export default function PicksPage() {
                     <div className="flex-1">
                       <TeamButton
                         team={awayTeam}
-                        picked={awayId ? pickedTeamIds.has(awayId) : false}
+                        picked={awayId ? picks.some((p) => p.team_id === awayId) : false}
                         disabled={locked || weeklyQuotaFull || !awayId}
                         onClick={() => awayId && togglePick(awayId, g.id)}
                       />
@@ -376,7 +323,7 @@ export default function PicksPage() {
           </SectionCard>
         </div>
 
-        {/* RIGHT column (1/3) — my picks */}
+        {/* RIGHT 1/3 — My picks */}
         <aside className="lg:col-span-4 grid gap-6">
           <SectionCard title={`My picks — Week ${week}`}>
             {picks.length === 0 ? (
@@ -384,13 +331,10 @@ export default function PicksPage() {
             ) : (
               <ul className="text-sm grid gap-2">
                 {picks.map((p) => {
-                  const t = teamsLike[p.team_id]
+                  const t = teamIndex[p.team_id] || teamIndex[(teamIndex[p.team_id]?.abbreviation || '').toUpperCase()]
                   const locked = p.game_id ? isLocked(games.find((g) => g.id === p.game_id)?.game_utc) : false
                   return (
-                    <li
-                      key={p.id}
-                      className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2"
-                    >
+                    <li key={p.id} className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2">
                       <span className="font-medium flex items-center gap-2">
                         {t?.abbreviation ?? p.team_id} — {t?.name ?? ''}
                       </span>
@@ -399,10 +343,13 @@ export default function PicksPage() {
                         disabled={locked}
                         onClick={async () => {
                           try {
-                            await deletePick(p.id) // ✅ delete by pick id
+                            await deletePickById(p.id)
                             await refreshMyPicks()
+                            setMsg('')
                           } catch (e: any) {
-                            setLog(e?.message || 'Unpick failed')
+                            const m = e?.message || 'Unpick failed'
+                            setMsg(m)
+                            console.error('unpick error', m)
                           }
                         }}
                         title={locked ? 'Locked (kickoff passed)' : 'Unpick'}

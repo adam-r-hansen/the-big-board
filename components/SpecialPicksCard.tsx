@@ -24,20 +24,11 @@ type Props = {
   leagueId: string
   season: number
   week: number
-  teams: Record<string, TeamLike> // keyed by UUID
+  // IMPORTANT: this is the merged index keyed by uuid AND abbr (uppercased)
+  teams: Record<string, TeamLike>
 }
 
-function TeamButton({
-  team,
-  disabled,
-  picked,
-  onClick,
-}: {
-  team?: TeamLike
-  disabled?: boolean
-  picked?: boolean
-  onClick?: () => void
-}) {
+function TeamButton({ team, disabled, picked, onClick }: { team?: TeamLike; disabled?: boolean; picked?: boolean; onClick?: () => void }) {
   const abbr = team?.abbreviation ?? '—'
   const primary = team?.color_primary ?? '#6b7280'
   const secondary = team?.color_secondary ?? '#374151'
@@ -70,31 +61,19 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
   const [wGame, setWGame] = useState<WrinkleGame | null>(null)
   const [myPick, setMyPick] = useState<{ id: string; team_id: string; game_id: string | null } | null>(null)
 
-  // fast map by abbreviation
-  const byAbbr: Record<string, TeamLike> = useMemo(() => {
-    const m: Record<string, TeamLike> = {}
-    for (const t of Object.values(teams)) {
-      if (t?.abbreviation) m[t.abbreviation.toUpperCase()] = t
-    }
-    return m
-  }, [teams])
-
-  // helpers
   const resolveTeam = (key?: string | null): TeamLike | undefined => {
     if (!key) return undefined
-    return teams[key] || byAbbr[key.toUpperCase()]
+    return teams[key] || teams[key.toUpperCase()] // uuid or ABBR
   }
   const resolveTeamId = (key?: string | null): string | undefined => {
     const t = resolveTeam(key)
     return t?.id ?? undefined
   }
 
-  // load wrinkle + game + my pick
   useEffect(() => {
     if (!leagueId || !season || !week) return
     ;(async () => {
-      setLoading(true)
-      setErr(null)
+      setLoading(true); setErr(null)
       try {
         const res = await fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' })
         const j = await res.json().catch(() => ({}))
@@ -123,7 +102,7 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
           }
         }
 
-        // hydrate via week schedule if needed
+        // Hydrate from weekly schedule when only game_id is present
         if (row?.game_id && (!row.home_team || !row.away_team)) {
           const wk = await fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({}))
           const match = (wk.games ?? []).find((g: any) => g.id === row!.game_id)
@@ -153,29 +132,26 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
     })()
   }, [leagueId, season, week])
 
-  const locked = useMemo(() => {
-    const utc = wGame?.game_utc
-    return utc ? new Date(utc) <= new Date() : false
-  }, [wGame?.game_utc])
+  const locked = useMemo(() => (wGame?.game_utc ? new Date(wGame.game_utc) <= new Date() : false), [wGame?.game_utc])
+  const home = resolveTeam(wGame?.home_team ?? null)
+  const away = resolveTeam(wGame?.away_team ?? null)
+  const myTeamId = myPick?.team_id ?? null
 
   async function pick(teamKey: string | null | undefined) {
     try {
       if (!wrinkle?.id) throw new Error('No active wrinkle')
       const teamId = resolveTeamId(teamKey)
       if (!teamId) throw new Error('Unknown team')
-      const body = { teamId, gameId: wGame?.game_id ?? null }
       const res = await fetch(`/api/wrinkles/${wrinkle.id}/picks`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ teamId, gameId: wGame?.game_id ?? null }),
         cache: 'no-store',
       })
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}))
-        throw new Error(j?.error || 'Pick failed')
-      }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Pick failed')
       const pj = await fetch(`/api/wrinkles/${wrinkle.id}/picks`, { cache: 'no-store' }).then((r) => r.json())
       setMyPick((Array.isArray(pj?.picks) ? pj.picks[0] : pj?.pick ?? null) as any)
+      setErr(null)
     } catch (e: any) {
       setErr(e?.message || 'Pick failed')
     }
@@ -185,20 +161,14 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
     try {
       if (!wrinkle?.id || !myPick?.id) return
       const res = await fetch(`/api/wrinkles/${wrinkle.id}/picks?id=${myPick.id}`, { method: 'DELETE', cache: 'no-store' })
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}))
-        throw new Error(j?.error || 'Unpick failed')
-      }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Unpick failed')
       const pj = await fetch(`/api/wrinkles/${wrinkle.id}/picks`, { cache: 'no-store' }).then((r) => r.json())
       setMyPick((Array.isArray(pj?.picks) ? pj.picks[0] : pj?.pick ?? null) as any)
+      setErr(null)
     } catch (e: any) {
       setErr(e?.message || 'Unpick failed')
     }
   }
-
-  const home = resolveTeam(wGame?.home_team ?? null)
-  const away = resolveTeam(wGame?.away_team ?? null)
-  const myTeamId = myPick?.team_id ?? null
 
   return (
     <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
