@@ -38,39 +38,47 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
     try {
       // 1) active wrinkle
       const qs = new URLSearchParams({ leagueId, season: String(season), week: String(week) }).toString()
-      const wRes = await fetch(`/api/wrinkles/active?${qs}`, { cache: 'no-store', credentials: 'same-origin' })
+      const wRes = await fetch(`/api/wrinkles/active?${qs}`, {
+        cache: 'no-store',
+        credentials: 'same-origin',
+      })
       const wj = await wRes.json().catch(() => ({}))
       const act: Wrinkle | undefined = (wj?.wrinkles || [])[0]
       setWrinkle(act || null)
 
-      if (!act?.id) {
+      // 2) wrinkle game (may be null if not hydrated)
+      if (act?.id) {
+        const gRes = await fetch(`/api/wrinkles/${act.id}/games`, {
+          cache: 'no-store',
+          credentials: 'same-origin',
+        })
+        const gj = await gRes.json().catch(() => ({}))
+        const g = gj?.row || gj?.wrinkle_game || (Array.isArray(gj?.data) ? gj.data[0] : null)
+        setWgame(
+          g
+            ? {
+                id: g.id || g.game_id,
+                game_id: g.game_id || g.id,
+                game_utc: g.game_utc,
+                home_team: g.home_team,
+                away_team: g.away_team,
+                status: g.status ?? 'UPCOMING',
+              }
+            : null,
+        )
+
+        // 3) my pick for this wrinkle
+        const pRes = await fetch(`/api/wrinkles/${act.id}/picks`, {
+          cache: 'no-store',
+          credentials: 'same-origin',
+        })
+        const pj = await pRes.json().catch(() => ({}))
+        const p = Array.isArray(pj?.picks) ? pj.picks[0] : pj?.pick ?? null
+        setMyPick(p)
+      } else {
         setWgame(null)
         setMyPick(null)
-        return
       }
-
-      // 2) wrinkle game
-      const gRes = await fetch(`/api/wrinkles/${act.id}/games`, { cache: 'no-store', credentials: 'same-origin' })
-      const gj = await gRes.json().catch(() => ({}))
-      const g = gj?.row || gj?.wrinkle_game || (Array.isArray(gj?.data) ? gj.data[0] : null)
-      setWgame(
-        g
-          ? {
-              id: g.id || g.game_id,
-              game_id: g.game_id || g.id,
-              game_utc: g.game_utc,
-              home_team: g.home_team,
-              away_team: g.away_team,
-              status: g.status ?? 'UPCOMING',
-            }
-          : null,
-      )
-
-      // 3) my wrinkle pick
-      const pRes = await fetch(`/api/wrinkles/${act.id}/picks`, { cache: 'no-store', credentials: 'same-origin' })
-      const pj = await pRes.json().catch(() => ({}))
-      const p = Array.isArray(pj?.picks) ? pj.picks[0] : pj?.pick ?? null
-      setMyPick(p)
     } catch (e: any) {
       setErr(e?.message || 'Failed to load wrinkle')
     }
@@ -85,14 +93,14 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
   const home = wgame ? teams[wgame.home_team] : undefined
   const away = wgame ? teams[wgame.away_team] : undefined
 
-  if (!wrinkle) return null
-
   return (
     <article className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
       <header className="mb-3">
         <h3 className="text-lg font-bold">
-          {wrinkle.name || 'Special Pick'}{' '}
-          <span className="ml-2 text-xs font-medium text-neutral-500 uppercase">{wrinkle.kind}</span>
+          Wrinkle {wrinkle?.name ? `— ${wrinkle.name}` : ''}
+          {wrinkle?.kind && (
+            <span className="ml-2 text-xs font-medium text-neutral-500 uppercase">{wrinkle.kind}</span>
+          )}
         </h3>
         {wgame && (
           <div className="text-xs text-neutral-500">
@@ -101,11 +109,13 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
         )}
       </header>
 
-      {!wgame ? (
-        <div className="text-sm text-neutral-500">No game configured for this wrinkle.</div>
+      {!wrinkle ? (
+        <div className="text-sm text-neutral-500">No active wrinkle for Week {week}.</div>
+      ) : !wgame ? (
+        <div className="text-sm text-neutral-500">Wrinkle is active, but no game is linked.</div>
       ) : (
         <div className="grid gap-3">
-          {/* Display (non-click) color pills for clarity */}
+          {/* Display color pills (non-interactive) */}
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <TeamColorButton
@@ -130,7 +140,7 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
             </div>
           </div>
 
-          {/* Action buttons that actually POST the pick (this doesn't affect weekly pickability) */}
+          {/* Action buttons that POST wrinkle pick */}
           <div className="grid grid-cols-2 gap-3">
             <WrinklePickButton
               wrinkleId={wrinkle.id}
@@ -170,10 +180,7 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
                 })
                 if (!res.ok) {
                   let msg = 'Failed to unpick'
-                  try {
-                    const j = await res.json()
-                    if (j?.error) msg = j.error
-                  } catch {}
+                  try { const j = await res.json(); if (j?.error) msg = j.error } catch {}
                   alert(msg)
                 } else {
                   await load()

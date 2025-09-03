@@ -258,52 +258,78 @@ export default function PicksPage() {
         {loading && <div className="text-sm text-neutral-500">Loading…</div>}
         {!loading && games.length === 0 && <div className="text-sm text-neutral-500">No games.</div>}
 
-        {games.map((g) => {
-          const home = teams[g.home.id]
-          const away = teams[g.away.id]
-          const locked = isLocked(g.game_utc)
-          const gamePickId = pickByGame.get(g.id)
-          const weeklyQuotaFull = picksLeft === 0 && !gamePickId
-          const homeUsed = (home?.id ? usedTeamIds.has(home.id) : false) && !pickedTeamIds.has(home?.id || '')
-          const awayUsed = (away?.id ? usedTeamIds.has(away.id) : false) && !pickedTeamIds.has(away?.id || '')
+      {games.map((g) => {
+  const home = teams[g.home.id]
+  const away = teams[g.away.id]
 
-          return (
-            <article key={g.id} className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
-              <div className="mb-2 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
-                <span>{new Date(g.game_utc).toLocaleString()} • Week {g.week}</span>
-                <span className="uppercase tracking-wide">{locked ? 'LOCKED' : g.status || 'UPCOMING'}</span>
-              </div>
+  const locked = isLocked(g.game_utc)
+  const gamePickId = pickByGame.get(g.id)
+  const weeklyQuotaFull = picksLeft === 0 && !gamePickId
 
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <TeamColorButton
-                    teamId={home!.id}
-                    label={home?.abbreviation || 'HOME'}
-                    picked={pickedTeamIds.has(home?.id || '')}
-                    disabled={locked || weeklyQuotaFull || homeUsed}
-                    onClick={() => togglePick(home!.id, g.id)}
-                    teams={teams}
-                  />
-                </div>
-                <div className="select-none text-neutral-400">—</div>
-                <div className="flex-1">
-                  <TeamColorButton
-                    teamId={away!.id}
-                    label={away?.abbreviation || 'AWAY'}
-                    picked={pickedTeamIds.has(away?.id || '')}
-                    disabled={locked || weeklyQuotaFull || awayUsed}
-                    onClick={() => togglePick(away!.id, g.id)}
-                    teams={teams}
-                  />
-                </div>
-              </div>
+  const homeUsed = (home?.id ? usedTeamIds.has(home.id) : false) && !pickedTeamIds.has(home?.id || '')
+  const awayUsed = (away?.id ? usedTeamIds.has(away.id) : false) && !pickedTeamIds.has(away?.id || '')
 
-              <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-                Score: {g.home_score != null && g.away_score != null ? `${g.home_score} — ${g.away_score}` : '— — —'}
-              </div>
-            </article>
-          )
-        })}
+  const disabledHome = locked || weeklyQuotaFull || homeUsed
+  const disabledAway = locked || weeklyQuotaFull || awayUsed
+
+  return (
+    <article
+      key={g.id}
+      className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5"
+    >
+      <div className="mb-2 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
+        <span>{new Date(g.game_utc).toLocaleString()} • Week {g.week}</span>
+        <span className="uppercase tracking-wide">{locked ? 'LOCKED' : g.status || 'UPCOMING'}</span>
+      </div>
+
+      <div className="flex items-center gap-3">
+        {/* HOME side — wrapper handles click so button can stay purely presentational */}
+        <div
+          className={`flex-1 ${disabledHome ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+          onClick={() => { if (!disabledHome) togglePick(home!.id, g.id) }}
+          role="button"
+          aria-disabled={disabledHome}
+        >
+          <TeamColorButton
+            teamId={home!.id}
+            label={home?.abbreviation || 'HOME'}
+            picked={pickedTeamIds.has(home?.id || '')}
+            disabled={disabledHome}
+            onClick={() => {}}
+            teams={teams}
+          />
+        </div>
+
+        <div className="select-none text-neutral-400">—</div>
+
+        {/* AWAY side — same pattern */}
+        <div
+          className={`flex-1 ${disabledAway ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+          onClick={() => { if (!disabledAway) togglePick(away!.id, g.id) }}
+          role="button"
+          aria-disabled={disabledAway}
+        >
+          <TeamColorButton
+            teamId={away!.id}
+            label={away?.abbreviation || 'AWAY'}
+            picked={pickedTeamIds.has(away?.id || '')}
+            disabled={disabledAway}
+            onClick={() => {}}
+            teams={teams}
+          />
+        </div>
+      </div>
+
+      <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+        Score:{' '}
+        {g.home_score != null && g.away_score != null
+          ? `${g.home_score} — ${g.away_score}`
+          : '— — —'}
+      </div>
+    </article>
+  )
+})}
+
       </section>
 
       {/* RIGHT — sticky column */}
