@@ -23,7 +23,8 @@ function json(data: any, init?: number | ResponseInit) {
 }
 
 async function getUser() {
-  const supabase = createClient()
+  // ✅ your helper returns a Promise — await it
+  const supabase = await createClient()
   const { data, error } = await supabase.auth.getUser()
   return { supabase, user: data?.user ?? null, error }
 }
