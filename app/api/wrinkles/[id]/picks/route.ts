@@ -2,8 +2,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
-export const dynamic = 'force-dynamic' // don't cache
+export const dynamic = 'force-dynamic' // avoid caching
 
+// --- Compat helpers (Next 14/15: params may be object OR Promise) ---
+type Ctx =
+  | { params: { id: string } }
+  | { params: Promise<{ id: string }> }
+
+async function resolveParams(ctx: Ctx): Promise<{ id: string }> {
+  const p: any = (ctx as any).params
+  return typeof p?.then === 'function' ? await p : p
+}
+
+// --- tiny JSON helper with no-store ---
 function json(data: any, init?: number | ResponseInit) {
   const base: ResponseInit = typeof init === 'number' ? { status: init } : init || {}
   const headers = new Headers(base.headers)
@@ -19,14 +30,15 @@ async function getUser() {
 
 // GET /api/wrinkles/:id/picks
 // -> { picks: [ { id, team_id, game_id } ] }
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, ctx: Ctx) {
+  const { id } = await resolveParams(ctx)
   const { supabase, user, error } = await getUser()
   if (error || !user) return json({ error: 'unauthenticated' }, 401)
 
   const { data, error: dbErr } = await supabase
     .from('wrinkle_picks')
     .select('id, team_id, game_id')
-    .eq('wrinkle_id', params.id)
+    .eq('wrinkle_id', id)
     .eq('profile_id', user.id)
     .order('id', { ascending: true })
 
@@ -37,7 +49,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 // POST /api/wrinkles/:id/picks
 // Body: { teamId: "uuid|text", gameId: "uuid|null" }
 // -> { ok: true, id: "uuid" }
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, ctx: Ctx) {
+  const { id } = await resolveParams(ctx)
   const { supabase, user, error } = await getUser()
   if (error || !user) return json({ error: 'unauthenticated' }, 401)
 
@@ -51,8 +64,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { data, error: dbErr } = await supabase
     .from('wrinkle_picks')
     .insert({
-      wrinkle_id: params.id,
-      profile_id: user.id, // required for RLS WITH CHECK
+      wrinkle_id: id,
+      profile_id: user.id, // satisfies RLS WITH CHECK
       team_id: teamId,
       game_id: gameId,
     })
@@ -65,7 +78,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
 // DELETE /api/wrinkles/:id/picks?id=pickUuid
 // -> { ok: true }
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, ctx: Ctx) {
+  const { id: wrinkleId } = await resolveParams(ctx)
   const { supabase, user, error } = await getUser()
   if (error || !user) return json({ error: 'unauthenticated' }, 401)
 
@@ -82,3 +96,4 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   if (dbErr) return json({ error: dbErr.message }, 400)
   return json({ ok: true }, 200)
 }
+
