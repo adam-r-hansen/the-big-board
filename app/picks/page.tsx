@@ -258,7 +258,7 @@ export default function PicksPage() {
         {loading && <div className="text-sm text-neutral-500">Loading…</div>}
         {!loading && games.length === 0 && <div className="text-sm text-neutral-500">No games.</div>}
 
-      {games.map((g) => {
+{games.map((g) => {
   const home = teams[g.home.id]
   const away = teams[g.away.id]
 
@@ -275,7 +275,7 @@ export default function PicksPage() {
   return (
     <article
       key={g.id}
-      className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5"
+      className="relative z-20 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5"
     >
       <div className="mb-2 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
         <span>{new Date(g.game_utc).toLocaleString()} • Week {g.week}</span>
@@ -283,41 +283,31 @@ export default function PicksPage() {
       </div>
 
       <div className="flex items-center gap-3">
-        {/* HOME side — wrapper handles click so button can stay purely presentational */}
-        <div
-          className={`flex-1 ${disabledHome ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-          onClick={() => { if (!disabledHome) togglePick(home!.id, g.id) }}
-          role="button"
-          aria-disabled={disabledHome}
+        <button
+          type="button"
+          className={`flex-1 h-12 rounded-xl border font-semibold tracking-wide
+            ${pickedTeamIds.has(home?.id || '') ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white dark:bg-neutral-950'}
+            ${disabledHome ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+          `}
+          disabled={disabledHome}
+          onClick={() => togglePick(home!.id, g.id)}
         >
-          <TeamColorButton
-            teamId={home!.id}
-            label={home?.abbreviation || 'HOME'}
-            picked={pickedTeamIds.has(home?.id || '')}
-            disabled={disabledHome}
-            onClick={() => {}}
-            teams={teams}
-          />
-        </div>
+          {home?.abbreviation || 'HOME'}
+        </button>
 
         <div className="select-none text-neutral-400">—</div>
 
-        {/* AWAY side — same pattern */}
-        <div
-          className={`flex-1 ${disabledAway ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-          onClick={() => { if (!disabledAway) togglePick(away!.id, g.id) }}
-          role="button"
-          aria-disabled={disabledAway}
+        <button
+          type="button"
+          className={`flex-1 h-12 rounded-xl border font-semibold tracking-wide
+            ${pickedTeamIds.has(away?.id || '') ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white dark:bg-neutral-950'}
+            ${disabledAway ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+          `}
+          disabled={disabledAway}
+          onClick={() => togglePick(away!.id, g.id)}
         >
-          <TeamColorButton
-            teamId={away!.id}
-            label={away?.abbreviation || 'AWAY'}
-            picked={pickedTeamIds.has(away?.id || '')}
-            disabled={disabledAway}
-            onClick={() => {}}
-            teams={teams}
-          />
-        </div>
+          {away?.abbreviation || 'AWAY'}
+        </button>
       </div>
 
       <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
