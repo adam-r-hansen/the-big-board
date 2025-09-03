@@ -1,10 +1,11 @@
 // app/picks/page.tsx
 'use client'
+
 import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
-import TeamPill from '@/components/TeamPill'
 import SpecialPicksCard from '@/components/SpecialPicksCard'
 import type { Team } from '@/types/domain'
+import TeamColorButton from '@/components/TeamColorButton'
 
 type League = { id: string; name: string; season: number }
 type Game = {
@@ -18,6 +19,31 @@ type Game = {
   status?: string | null
 }
 type Pick = { id: string; team_id: string; game_id: string | null }
+
+// ---------- color helpers for right column pills ----------
+function readableOn(bg: string) {
+  try {
+    const hex = bg.replace('#', '')
+    const r = parseInt(hex.slice(0, 2), 16)
+    const g = parseInt(hex.slice(2, 4), 16)
+    const b = parseInt(hex.slice(4, 6), 16)
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return luminance > 0.6 ? '#111' : '#fff'
+  } catch {
+    return '#fff'
+  }
+}
+function pillStyles(team?: Team) {
+  const primary = (team?.color_primary || '#0f172a').toLowerCase() // slate-900 fallback
+  const secondary = (team?.color_secondary || '#94a3b8').toLowerCase() // slate-400 fallback
+  const color = readableOn(primary)
+  return {
+    primary,
+    secondary,
+    style: { backgroundColor: primary, color, border: `1px solid ${secondary}` },
+  }
+}
+// ----------------------------------------------------------
 
 export default function PicksPage() {
   const [leagues, setLeagues] = useState<League[]>([])
@@ -48,7 +74,7 @@ export default function PicksPage() {
           setSeason(ls[0].season)
         }
       })
-    // team map for pills
+    // team map for colors/logos/abbrs
     fetch('/api/team-map')
       .then((r) => r.json())
       .then((j) => setTeams(j.teams || {}))
@@ -287,20 +313,26 @@ export default function PicksPage() {
 
               <div className="flex items-center gap-3">
                 <div className="flex-1">
-                  <TeamPill
-                    team={home}
+                  <TeamColorButton
+                    teamId={home!.id}
+                    label={home?.abbreviation || (home as any)?.abbr || 'HOME'}
                     picked={pickedTeamIds.has(home?.id || '')}
                     disabled={locked || weeklyQuotaFull || homeUsed}
                     onClick={() => togglePick(home!.id, g.id)}
+                    teams={teams}
                   />
                 </div>
-                <div className="text-neutral-400">—</div>
+
+                <div className="select-none text-neutral-400">—</div>
+
                 <div className="flex-1">
-                  <TeamPill
-                    team={away}
+                  <TeamColorButton
+                    teamId={away!.id}
+                    label={away?.abbreviation || (away as any)?.abbr || 'AWAY'}
                     picked={pickedTeamIds.has(away?.id || '')}
                     disabled={locked || weeklyQuotaFull || awayUsed}
                     onClick={() => togglePick(away!.id, g.id)}
+                    teams={teams}
                   />
                 </div>
               </div>
@@ -329,6 +361,7 @@ export default function PicksPage() {
               {picks.map((p) => {
                 const t = teams[p.team_id]
                 const locked = p.game_id ? isLocked(games.find((g) => g.id === p.game_id)?.game_utc || '') : false
+                const { style } = pillStyles(t)
                 return (
                   <li
                     key={p.id}
@@ -344,7 +377,18 @@ export default function PicksPage() {
                           className="rounded"
                         />
                       )}
-                      {t ? `${t.abbreviation} — ${t.name}` : p.team_id}
+                      <span className="inline-flex items-center gap-2">
+                        <span
+                          className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold"
+                          style={style}
+                          title={`${t?.name ?? ''}`}
+                        >
+                          {t?.abbreviation || 'TEAM'}
+                        </span>
+                        <span className="hidden md:inline text-neutral-700 dark:text-neutral-300">
+                          {t?.name}
+                        </span>
+                      </span>
                     </span>
                     <button
                       className="text-xs underline disabled:opacity-50"
@@ -376,12 +420,24 @@ export default function PicksPage() {
                   const t = teams[p.team_id]
                   const gm = games.find((g) => g.id === p.game_id)
                   const locked = gm ? isLocked(gm.game_utc) : false
+                  const { style } = pillStyles(t)
                   return (
                     <li
                       key={p.id}
                       className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2"
                     >
-                      <span className="font-medium">{t ? `${t.abbreviation} — ${t.name}` : p.team_id}</span>
+                      <span className="font-medium flex items-center gap-2">
+                        <span
+                          className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold"
+                          style={style}
+                          title={`${t?.name ?? ''}`}
+                        >
+                          {t?.abbreviation || 'TEAM'}
+                        </span>
+                        <span className="hidden md:inline text-neutral-700 dark:text-neutral-300">
+                          {t?.name}
+                        </span>
+                      </span>
                       <button
                         type="button"
                         className="text-xs underline disabled:opacity-50"

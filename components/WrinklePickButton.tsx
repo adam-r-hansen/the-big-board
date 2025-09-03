@@ -1,55 +1,78 @@
+// components/WrinklePickButton.tsx
 "use client";
 
 import { useState } from "react";
-import { readApiError } from "@/lib/http";
 
-type Props = {
-  wrinkleId: string;
-  selection: string; // teamId or whatever you send
+type TeamColors = {
+  color_primary?: string | null;
+  color_secondary?: string | null;
 };
 
-export default function WrinklePickButton({ wrinkleId, selection }: Props) {
-  const [busy, setBusy] = useState(false);
+type Props = {
+  picked: boolean;
+  disabled?: boolean;
+  teamId: string;
+  teams: Record<string, TeamColors>;
+  onPick: () => Promise<void>;
+  onUnpick: () => Promise<void>;
+  children?: React.ReactNode; // button label (e.g., "DAL")
+};
+
+function readableOn(bg: string) {
+  try {
+    const hex = bg.replace("#", "");
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.6 ? "#111" : "#fff";
+  } catch {
+    return "#fff";
+  }
+}
+
+export default function WrinklePickButton({
+  picked,
+  disabled,
+  teamId,
+  teams,
+  onPick,
+  onUnpick,
+  children,
+}: Props) {
+  const [loading, setLoading] = useState(false);
+
+  const team = teams?.[teamId] || {};
+  const primary = (team.color_primary || "#0f172a").toLowerCase(); // slate-900 fallback
+  const secondary = (team.color_secondary || "#94a3b8").toLowerCase(); // slate-400 fallback
+  const activeText = readableOn(primary);
+
+  const style = picked
+    ? { backgroundColor: primary, color: activeText, border: `2px solid ${secondary}` }
+    : { backgroundColor: "transparent", color: primary, border: `2px solid ${primary}` };
 
   async function onClick() {
-    if (busy) return;
-    setBusy(true);
+    if (loading || disabled) return;
+    setLoading(true);
     try {
-      const res = await fetch(`/api/wrinkles/${wrinkleId}/picks`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          // If you choose to send a bearer from client in the future, add:
-          // "authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ selection }),
-        credentials: "include", // ensure cookies are sent
-      });
-
-      if (!res.ok) {
-        alert(await readApiError(res)); // shows readable message, not [object Object]
-        return;
+      if (picked) {
+        await onUnpick();
+      } else {
+        await onPick();
       }
-
-      const data = await res.json();
-      // success UX of your choice:
-      alert("Pick saved!");
-      // or toast, or refresh:
-      // router.refresh();
-    } catch (e: any) {
-      alert(e?.message ?? "Network error");
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
   }
 
   return (
     <button
       onClick={onClick}
-      disabled={busy}
-      className="px-4 py-2 rounded-md bg-black text-white disabled:opacity-50"
+      disabled={loading || disabled}
+      style={style}
+      className="h-9 rounded-xl px-4 font-semibold transition-colors disabled:opacity-50"
     >
-      {busy ? "Saving..." : "Save Pick"}
+      {picked ? "Unpick" : children ?? "Pick"}
     </button>
   );
 }
