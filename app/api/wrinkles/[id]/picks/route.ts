@@ -6,7 +6,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-// Next 14/15 compat: context.params may be object OR Promise
+// Next 14/15 compat: params may be object OR Promise
 type Ctx = { params: { id: string } } | { params: Promise<{ id: string }> }
 async function resolveParams(ctx: Ctx): Promise<{ id: string }> {
   const p: any = (ctx as any).params
@@ -20,16 +20,35 @@ function j(data: any, init?: number | ResponseInit) {
   return NextResponse.json(data, { ...base, headers })
 }
 
-async function getUser() {
+async function getClient() {
   const supabase = await createClient()
   const { data, error } = await supabase.auth.getUser()
   return { supabase, user: data?.user ?? null, error }
 }
 
-// GET /api/wrinkles/:id/picks -> { picks: [...] }
+// Lock helper (same idea as weekly picks). If games table missing, skip instead of 500.
+async function isLocked(supabase: any, gameId?: string | null): Promise<{ locked: boolean; why?: string }> {
+  if (!gameId) return { locked: false }
+  try {
+    const { data, error } = await supabase
+      .from('games')
+      .select('id, game_utc, status')
+      .eq('id', gameId)
+      .maybeSingle()
+    if (error) return { locked: false }
+    const utc = data?.game_utc as string | undefined
+    if (utc && new Date(utc) <= new Date()) return { locked: true, why: 'game is locked (kickoff passed)' }
+    if ((data?.status || '').toUpperCase() === 'FINAL') return { locked: true, why: 'game is locked (kickoff passed)' }
+    return { locked: false }
+  } catch {
+    return { locked: false }
+  }
+}
+
+// GET /api/wrinkles/:id/picks  -> { picks: [ { id, team_id, game_id } ] }
 export async function GET(_req: NextRequest, ctx: Ctx) {
   const { id } = await resolveParams(ctx)
-  const { supabase, user, error } = await getUser()
+  const { supabase, user, error } = await getClient()
   if (error || !user) return j({ error: 'unauthenticated' }, 401)
 
   const { data, error: dbErr } = await supabase
@@ -42,10 +61,12 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   return j({ picks: data ?? [] }, 200)
 }
 
-// POST /api/wrinkles/:id/picks  Body: { teamId, gameId|null } -> { ok, id }
+// POST /api/wrinkles/:id/picks
+// Body: { teamId: "uuid|text", gameId: "uuid|null" }
+// Behavior: upsert on (wrinkle_id, profile_id, game_id) so user can flip sides without duplicate errors.
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { id } = await resolveParams(ctx)
-  const { supabase, user, error } = await getUser()
+  const { supabase, user, error } = await getClient()
   if (error || !user) return j({ error: 'unauthenticated' }, 401)
 
   let body: any = {}
@@ -54,33 +75,53 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   const gameId = (body?.gameId ?? null) as string | null
   if (!teamId) return j({ error: 'teamId required' }, 400)
 
-  const { data, error: dbErr } = await supabase
+  // respect lock if we know the game
+  const lock = await isLocked(supabase, gameId)
+  if (lock.locked) return j({ error: lock.why }, 400)
+
+  // ✅ UPSERT so we update team when the same wrinkle/profile/game already exists
+  const { data, error: upErr } = await supabase
     .from('wrinkle_picks')
-    .insert({ wrinkle_id: id, profile_id: user.id, team_id: teamId, game_id: gameId })
+    .upsert(
+      { wrinkle_id: id, profile_id: user.id, game_id: gameId, team_id: teamId },
+      { onConflict: 'wrinkle_id,profile_id,game_id' }
+    )
     .select('id')
     .single()
 
-  if (dbErr) return j({ error: dbErr.message }, 400)
+  if (upErr) return j({ error: upErr.message }, 400)
   return j({ ok: true, id: data?.id }, 200)
 }
 
-// DELETE /api/wrinkles/:id/picks?id=pickUuid -> { ok: true }
+// DELETE /api/wrinkles/:id/picks?id=pickUuid  -> { ok: true }
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { id: wrinkleId } = await resolveParams(ctx)
-  const { supabase, user, error } = await getUser()
+  const { supabase, user, error } = await getClient()
   if (error || !user) return j({ error: 'unauthenticated' }, 401)
 
   const { searchParams } = new URL(req.url)
   const pickId = searchParams.get('id')
   if (!pickId) return j({ error: 'id required' }, 400)
 
-  const { error: dbErr } = await supabase
+  // enforce lock before deleting
+  const { data: row, error: rowErr } = await supabase
+    .from('wrinkle_picks')
+    .select('id, game_id')
+    .eq('id', pickId)
+    .eq('profile_id', user.id)
+    .maybeSingle()
+  if (rowErr) return j({ error: rowErr.message }, 400)
+
+  const lock = await isLocked(supabase, row?.game_id ?? null)
+  if (lock.locked) return j({ error: lock.why }, 400)
+
+  const { error: delErr } = await supabase
     .from('wrinkle_picks')
     .delete()
     .eq('id', pickId)
     .eq('profile_id', user.id)
 
-  if (dbErr) return j({ error: dbErr.message }, 400)
+  if (delErr) return j({ error: delErr.message }, 400)
   return j({ ok: true }, 200)
 }
 
