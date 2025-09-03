@@ -1,124 +1,80 @@
+// app/admin/page.tsx
 'use client'
-
-import Link from 'next/link'
 import { useEffect, useState } from 'react'
 
 type League = { id: string; name: string; season: number }
 
 export default function AdminPage() {
-  const [isOwner, setIsOwner] = useState(false)
-  const [leagues, setLeagues] = useState<League[]>([])
   const [name, setName] = useState('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
-  const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<string>('')
-
-  async function loadIsOwner() {
-    try {
-      const res = await fetch('/api/admin/is-site-owner', { cache: 'no-store' })
-      const j = await res.json().catch(() => ({}))
-      setIsOwner(!!j?.isOwner)
-    } catch {
-      setIsOwner(false)
-    }
-  }
+  const [busy, setBusy] = useState(false)
+  const [leagues, setLeagues] = useState<League[]>([])
 
   async function loadLeagues() {
-    setMsg('')
     try {
-      // Lists leagues you belong to (used elsewhere in the app)
-      const res = await fetch('/api/my-leagues', { cache: 'no-store' })
-      const j = await res.json().catch(() => ({}))
-      setLeagues(Array.isArray(j?.leagues) ? j.leagues : [])
-    } catch (e) {
-      setMsg('Failed to load leagues')
-    }
+      // Prefer my-leagues if you want only joined; this lists owned/global
+      const j = await fetch('/api/my-leagues', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}))
+      setLeagues(j?.leagues || [])
+    } catch { /* ignore */ }
   }
 
-  async function createLeague() {
+  useEffect(() => { loadLeagues() }, [])
+
+  async function createLeague(e: React.FormEvent) {
+    e.preventDefault()
     setMsg('')
-    if (!name.trim()) { setMsg('Enter a league name'); return }
-    setLoading(true)
+    setBusy(true)
     try {
       const res = await fetch('/api/leagues', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), season })
+        body: JSON.stringify({ name, season }),
       })
       const j = await res.json().catch(() => ({}))
-      if (!res.ok || !j?.ok) {
-        setMsg(j?.error || 'Create failed')
-        return
-      }
+      if (!res.ok) throw new Error(j?.error || `HTTP ${res.status}`)
+      setMsg('League created ✅')
       setName('')
       await loadLeagues()
+    } catch (err: any) {
+      setMsg(err?.message || 'Failed to create league')
     } finally {
-      setLoading(false)
+      setBusy(false)
     }
   }
 
-  useEffect(() => { loadIsOwner(); loadLeagues() }, [])
-
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8 grid gap-6">
-      <h1 className="text-4xl font-extrabold tracking-tight">Admin</h1>
+    <main className="mx-auto max-w-3xl px-4 py-6">
+      <h1 className="text-2xl font-bold mb-4">Admin</h1>
 
-      {isOwner && (
-        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 flex items-center justify-between bg-white dark:bg-neutral-900">
-          <div>
-            <div className="font-semibold">Global Schedule</div>
-            <div className="text-sm text-neutral-600 dark:text-neutral-400">
-              Sync regular-season games from ESPN across all leagues.
-            </div>
-          </div>
-          <Link
-            href="/admin/schedule"
-            className="px-3 py-1.5 rounded-md border hover:bg-neutral-50 dark:hover:bg-neutral-800"
-          >
-            Open
-          </Link>
-        </div>
-      )}
-
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 grid gap-4">
-        <h2 className="text-xl font-semibold">Create a League</h2>
-        {msg && <p className="text-sm text-red-600">{msg}</p>}
-        <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
-          <input
-            className="flex-1 h-10 rounded-md border px-3"
-            placeholder="League name"
-            value={name}
-            onChange={e=>setName(e.target.value)}
-          />
-          <label className="text-sm">
-            Season
-            <input
-              className="ml-2 h-10 w-28 rounded-md border px-2"
-              type="number"
-              value={season}
-              onChange={e=>setSeason(+e.target.value)}
-            />
+      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 mb-6">
+        <h2 className="text-lg font-semibold mb-3">Create a league</h2>
+        <form onSubmit={createLeague} className="grid gap-3 max-w-md">
+          <label className="grid gap-1">
+            <span className="text-sm text-neutral-600">Name</span>
+            <input className="border rounded px-3 py-2 bg-transparent" value={name} onChange={e => setName(e.target.value)} placeholder="2025 Big Board" required />
           </label>
-          <button
-            className="h-10 px-4 rounded-md bg-black text-white disabled:opacity-60"
-            disabled={loading || !name.trim()}
-            onClick={createLeague}
-          >
-            {loading ? 'Creating…' : 'Create'}
-          </button>
-        </div>
+          <label className="grid gap-1">
+            <span className="text-sm text-neutral-600">Season</span>
+            <input type="number" className="border rounded px-3 py-2 bg-transparent" value={season} onChange={e => setSeason(Number(e.target.value))} min={2000} max={3000} required />
+          </label>
+          <div className="flex items-center gap-3">
+            <button disabled={busy} className="px-4 py-2 rounded-lg border">{busy ? 'Creating…' : 'Create league'}</button>
+            {msg && <span className="text-sm">{msg}</span>}
+          </div>
+        </form>
       </section>
 
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 grid gap-4">
-        <h2 className="text-xl font-semibold">Your Leagues</h2>
+      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
+        <h2 className="text-lg font-semibold mb-3">Your leagues</h2>
         {leagues.length === 0 ? (
-          <div className="text-sm text-neutral-600">No leagues yet.</div>
+          <div className="text-sm text-neutral-500">No leagues yet.</div>
         ) : (
           <ul className="grid gap-2">
             {leagues.map(l => (
               <li key={l.id} className="flex items-center justify-between border rounded-lg px-3 py-2">
-                <span>{l.name} — {l.season}</span>
-                <Link href={`/admin/leagues/${l.id}`} className="text-sm underline">Manage</Link>
+                <span>{l.name} • {l.season}</span>
+                <a className="text-sm underline" href="/picks">Go to picks</a>
               </li>
             ))}
           </ul>
