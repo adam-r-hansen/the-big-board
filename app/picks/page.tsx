@@ -20,7 +20,6 @@ type Game = {
 }
 type Pick = { id: string; team_id: string; game_id: string | null }
 
-// ---------- color helpers for right column pills ----------
 function readableOn(bg: string) {
   try {
     const hex = bg.replace('#', '')
@@ -34,16 +33,11 @@ function readableOn(bg: string) {
   }
 }
 function pillStyles(team?: Team) {
-  const primary = (team?.color_primary || '#0f172a').toLowerCase() // slate-900 fallback
-  const secondary = (team?.color_secondary || '#94a3b8').toLowerCase() // slate-400 fallback
+  const primary = (team?.color_primary || '#0f172a').toLowerCase()
+  const secondary = (team?.color_secondary || '#94a3b8').toLowerCase()
   const color = readableOn(primary)
-  return {
-    primary,
-    secondary,
-    style: { backgroundColor: primary, color, border: `1px solid ${secondary}` },
-  }
+  return { style: { backgroundColor: primary, color, border: `1px solid ${secondary}` } }
 }
-// ----------------------------------------------------------
 
 export default function PicksPage() {
   const [leagues, setLeagues] = useState<League[]>([])
@@ -53,6 +47,7 @@ export default function PicksPage() {
 
   const [games, setGames] = useState<Game[]>([])
   const [picks, setPicks] = useState<Pick[]>([])
+  const [seasonPicks, setSeasonPicks] = useState<Pick[]>([])
   const [teams, setTeams] = useState<Record<string, Team>>({})
   const [usedTeamIds, setUsedTeamIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
@@ -63,7 +58,6 @@ export default function PicksPage() {
   const [myWrinklePicks, setMyWrinklePicks] = useState<Record<string, Pick | null>>({})
 
   useEffect(() => {
-    // my leagues + default selection
     fetch('/api/my-leagues')
       .then((r) => r.json())
       .then((j) => {
@@ -74,14 +68,12 @@ export default function PicksPage() {
           setSeason(ls[0].season)
         }
       })
-    // team map for colors/logos/abbrs
     fetch('/api/team-map')
       .then((r) => r.json())
       .then((j) => setTeams(j.teams || {}))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // main load when league/season/week set
   useEffect(() => {
     if (!leagueId || !season || !week) return
     ;(async () => {
@@ -110,7 +102,13 @@ export default function PicksPage() {
 
         setPicks((p.picks ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
 
-        // used teams (season-wide)
+        // season picks (no week param)
+        const sp = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
+          .then((r) => r.json())
+          .catch(() => ({}))
+        setSeasonPicks((sp.picks ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
+
+        // used teams
         const uRes = await fetch(`/api/used-teams?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
         const u = await uRes.json().catch(() => ({}))
         setUsedTeamIds(new Set((u.used ?? []) as string[]))
@@ -151,7 +149,7 @@ export default function PicksPage() {
   const picksLeft = Math.max(0, 2 - (picks?.length ?? 0))
   const pickedTeamIds = new Set(picks.map((x) => x.team_id))
   const pickByGame = useMemo(() => {
-    const m = new Map<string, string>() // gameId -> pickId
+    const m = new Map<string, string>()
     for (const p of picks) if (p.game_id) m.set(p.game_id, p.id)
     return m
   }, [picks])
@@ -165,9 +163,7 @@ export default function PicksPage() {
     if (ct.includes('application/json')) {
       try {
         return await res.json()
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     }
     return null
   }
@@ -220,11 +216,16 @@ export default function PicksPage() {
           throw new Error((j && (j as any).error) || 'Pick failed')
         }
       }
-      // refresh weekly picks + used teams + wrinkle picks
+      // refresh weekly + season + wrinkle
       const j = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(
         (r) => r.json(),
       )
       setPicks((j.picks ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
+
+      const sp = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }).then((r) =>
+        r.json(),
+      )
+      setSeasonPicks((sp.picks ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
 
       const uRes = await fetch(`/api/used-teams?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
       if (uRes.ok) {
@@ -241,7 +242,7 @@ export default function PicksPage() {
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Controls row spans full width */}
+      {/* Top controls */}
       <div className="lg:col-span-3 flex flex-wrap items-end gap-2">
         <h1 className="text-3xl font-extrabold tracking-tight mr-auto">Make Your Picks</h1>
         <label className="text-sm">
@@ -251,9 +252,7 @@ export default function PicksPage() {
             value={leagueId}
             onChange={(e) => setLeagueId(e.target.value)}
           >
-            <option value="" disabled>
-              Choose…
-            </option>
+            <option value="" disabled>Choose…</option>
             {leagues.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.name} · {l.season}
@@ -284,9 +283,8 @@ export default function PicksPage() {
         </span>
       </div>
 
-      {/* LEFT 2/3 — games */}
+      {/* LEFT 2/3 — weekly games grid */}
       <section className="lg:col-span-2 grid gap-4">
-        {/* Wrinkle (special) pick — single hero card that self-loads */}
         <SpecialPicksCard leagueId={leagueId} season={season} week={week} teams={teams} />
 
         {loading && <div className="text-sm text-neutral-500">Loading…</div>}
@@ -339,17 +337,63 @@ export default function PicksPage() {
 
               <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
                 Score:{' '}
-                {g.home_score != null && g.away_score != null
-                  ? `${g.home_score} — ${g.away_score}`
-                  : '— — —'}
+                {g.home_score != null && g.away_score != null ? `${g.home_score} — ${g.away_score}` : '— — —'}
               </div>
             </article>
           )
         })}
       </section>
 
-      {/* RIGHT 1/3 — this week's picks */}
-      <aside className="grid gap-4">
+      {/* RIGHT 1/3 — sticky, scrollable column */}
+      <aside className="grid gap-4 lg:sticky lg:top-4 self-start max-h-[calc(100vh-2rem)] overflow-auto">
+        {/* 1) Wrinkle picks (summary) */}
+        {wrinkles.length > 0 && (
+          <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+            <header className="mb-3">
+              <h2 className="text-base font-semibold">Wrinkle</h2>
+              <div className="text-xs text-neutral-500">Your special pick for Week {week}</div>
+            </header>
+            {Object.values(myWrinklePicks).filter(Boolean).length === 0 ? (
+              <div className="text-sm text-neutral-500">No wrinkle pick yet.</div>
+            ) : (
+              <ul className="text-sm grid gap-2">
+                {Object.entries(myWrinklePicks).map(([wid, p]) => {
+                  if (!p) return null
+                  const t = teams[p.team_id]
+                  const gm = games.find((g) => g.id === p.game_id)
+                  const locked = gm ? isLocked(gm.game_utc) : false
+                  const { style } = pillStyles(t)
+                  return (
+                    <li
+                      key={p.id}
+                      className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2"
+                    >
+                      <span className="font-medium flex items-center gap-2">
+                        <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold" style={style}>
+                          {t?.abbreviation || 'TEAM'}
+                        </span>
+                        <span className="hidden md:inline text-neutral-700 dark:text-neutral-300">{t?.name}</span>
+                      </span>
+                      <button
+                        type="button"
+                        className="text-xs underline disabled:opacity-50"
+                        disabled={locked}
+                        onClick={async () => {
+                          await fetch(`/api/wrinkles/${wid}/picks?id=${p.id}`, { method: 'DELETE', cache: 'no-store' })
+                          await refreshWrinklePicks()
+                        }}
+                      >
+                        {locked ? 'Locked' : 'Unpick'}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </section>
+        )}
+
+        {/* 2) My picks — current week */}
         <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
           <header className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold">My picks — Week {week}</h2>
@@ -368,27 +412,11 @@ export default function PicksPage() {
                     className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2"
                   >
                     <span className="font-medium flex items-center gap-2">
-                      {t?.logo && (
-                        <Image
-                          src={(t.logo_dark || t.logo)!}
-                          alt=""
-                          width={16}
-                          height={16}
-                          className="rounded"
-                        />
-                      )}
-                      <span className="inline-flex items-center gap-2">
-                        <span
-                          className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold"
-                          style={style}
-                          title={`${t?.name ?? ''}`}
-                        >
-                          {t?.abbreviation || 'TEAM'}
-                        </span>
-                        <span className="hidden md:inline text-neutral-700 dark:text-neutral-300">
-                          {t?.name}
-                        </span>
+                      {t?.logo && <Image src={(t.logo_dark || t.logo)!} alt="" width={16} height={16} className="rounded" />}
+                      <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold" style={style}>
+                        {t?.abbreviation || 'TEAM'}
                       </span>
+                      <span className="hidden md:inline text-neutral-700 dark:text-neutral-300">{t?.name}</span>
                     </span>
                     <button
                       className="text-xs underline disabled:opacity-50"
@@ -405,60 +433,37 @@ export default function PicksPage() {
           )}
         </section>
 
-        {/* My wrinkle picks (right-hand list) */}
-        {wrinkles.length > 0 && (
-          <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-            <header className="mb-3">
-              <h2 className="text-base font-semibold">My wrinkle picks</h2>
-            </header>
-            {Object.values(myWrinklePicks).filter(Boolean).length === 0 ? (
-              <div className="text-sm text-neutral-500">No wrinkle picks yet.</div>
-            ) : (
-              <ul className="text-sm grid gap-2">
-                {Object.entries(myWrinklePicks).map(([wid, p]) => {
-                  if (!p) return null
-                  const t = teams[p.team_id]
-                  const gm = games.find((g) => g.id === p.game_id)
-                  const locked = gm ? isLocked(gm.game_utc) : false
-                  const { style } = pillStyles(t)
-                  return (
-                    <li
-                      key={p.id}
-                      className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2"
-                    >
-                      <span className="font-medium flex items-center gap-2">
-                        <span
-                          className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold"
-                          style={style}
-                          title={`${t?.name ?? ''}`}
-                        >
-                          {t?.abbreviation || 'TEAM'}
-                        </span>
-                        <span className="hidden md:inline text-neutral-700 dark:text-neutral-300">
-                          {t?.name}
-                        </span>
+        {/* 3) My season picks */}
+        <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+          <header className="mb-3">
+            <h2 className="text-base font-semibold">My season picks</h2>
+            <div className="text-xs text-neutral-500">All picks for {season}</div>
+          </header>
+          {seasonPicks.length === 0 ? (
+            <div className="text-sm text-neutral-500">No season picks yet.</div>
+          ) : (
+            <ul className="text-sm grid gap-2">
+              {seasonPicks.map((p) => {
+                const t = teams[p.team_id]
+                const { style } = pillStyles(t)
+                return (
+                  <li
+                    key={p.id}
+                    className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2"
+                  >
+                    <span className="font-medium flex items-center gap-2">
+                      {t?.logo && <Image src={(t.logo_dark || t.logo)!} alt="" width={16} height={16} className="rounded" />}
+                      <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold" style={style}>
+                        {t?.abbreviation || 'TEAM'}
                       </span>
-                      <button
-                        type="button"
-                        className="text-xs underline disabled:opacity-50"
-                        disabled={locked}
-                        onClick={async () => {
-                          await fetch(`/api/wrinkles/${wid}/picks?id=${p.id}`, {
-                            method: 'DELETE',
-                            cache: 'no-store',
-                          })
-                          await refreshWrinklePicks()
-                        }}
-                      >
-                        {locked ? 'Locked' : 'Unpick'}
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </section>
-        )}
+                      <span className="hidden md:inline text-neutral-700 dark:text-neutral-300">{t?.name}</span>
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
 
         {log && <pre className="text-xs text-red-600 whitespace-pre-wrap">{log}</pre>}
       </aside>

@@ -1,79 +1,73 @@
-// components/WrinklePickButton.tsx
-"use client";
+'use client'
 
-import { useState } from "react";
-
-type TeamColors = {
-  color_primary?: string | null;
-  color_secondary?: string | null;
-};
+import { useState } from 'react'
 
 type Props = {
-  picked: boolean;
-  disabled?: boolean;
-  teamId: string;
-  teams: Record<string, TeamColors>;
-  onPick: () => Promise<void>;
-  onUnpick: () => Promise<void>;
-  children?: React.ReactNode; // button label (e.g., "DAL")
-};
-
-function readableOn(bg: string) {
-  try {
-    const hex = bg.replace("#", "");
-    const r = parseInt(hex.slice(0, 2), 16);
-    const g = parseInt(hex.slice(2, 4), 16);
-    const b = parseInt(hex.slice(4, 6), 16);
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return luminance > 0.6 ? "#111" : "#fff";
-  } catch {
-    return "#fff";
-  }
+  wrinkleId: string
+  gameId: string
+  teamId: string
+  leagueId: string
+  season: number
+  week: number
+  label: string
+  picked?: boolean
+  disabled?: boolean
+  onSaved?: () => void
 }
 
 export default function WrinklePickButton({
+  wrinkleId,
+  gameId,
+  teamId,
+  leagueId,
+  season,
+  week,
+  label,
   picked,
   disabled,
-  teamId,
-  teams,
-  onPick,
-  onUnpick,
-  children,
+  onSaved,
 }: Props) {
-  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false)
 
-  const team = teams?.[teamId] || {};
-  const primary = (team.color_primary || "#0f172a").toLowerCase(); // slate-900 fallback
-  const secondary = (team.color_secondary || "#94a3b8").toLowerCase(); // slate-400 fallback
-  const activeText = readableOn(primary);
-
-  const style = picked
-    ? { backgroundColor: primary, color: activeText, border: `2px solid ${secondary}` }
-    : { backgroundColor: "transparent", color: primary, border: `2px solid ${primary}` };
-
-  async function onClick() {
-    if (loading || disabled) return;
-    setLoading(true);
+  async function save() {
+    if (disabled || busy) return
+    setBusy(true)
     try {
-      if (picked) {
-        await onUnpick();
-      } else {
-        await onPick();
+      const res = await fetch(`/api/wrinkles/${wrinkleId}/picks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({ teamId, gameId, leagueId, season, week }),
+      })
+      if (!res.ok) {
+        let msg = 'Failed to save wrinkle pick'
+        try {
+          const j = await res.json()
+          if (j?.error) msg = j.error
+        } catch {}
+        throw new Error(msg)
       }
+      onSaved?.()
+    } catch (e: any) {
+      alert(e?.message || 'Failed to save wrinkle pick')
     } finally {
-      setLoading(false);
+      setBusy(false)
     }
   }
 
   return (
     <button
-      onClick={onClick}
-      disabled={loading || disabled}
-      style={style}
-      className="h-9 rounded-xl px-4 font-semibold transition-colors disabled:opacity-50"
+      type="button"
+      onClick={save}
+      disabled={disabled || busy}
+      className={`h-10 w-full rounded-lg border px-3 text-sm font-semibold transition
+        ${disabled || busy ? 'opacity-60 cursor-not-allowed' : 'hover:brightness-95'}
+        ${picked ? 'bg-black text-white border-black' : 'bg-white text-black border-neutral-300 dark:bg-neutral-900 dark:text-white dark:border-neutral-700'}
+      `}
+      title={picked ? 'You picked this team' : 'Make wrinkle pick'}
     >
-      {picked ? "Unpick" : children ?? "Pick"}
+      {busy ? 'Saving…' : label}
     </button>
-  );
+  )
 }
 
