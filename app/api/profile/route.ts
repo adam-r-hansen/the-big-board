@@ -11,7 +11,7 @@ export async function GET(_req: NextRequest) {
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, email, full_name, display_name')
+    .select('id, email, display_name') // ⬅️ no full_name
     .eq('id', user.id)
     .maybeSingle()
 
@@ -20,7 +20,6 @@ export async function GET(_req: NextRequest) {
   const profile = data ?? {
     id: user.id,
     email: user.email ?? null,
-    full_name: (user.user_metadata as any)?.full_name ?? null,
     display_name: null,
   }
 
@@ -47,14 +46,14 @@ export async function PATCH(req: NextRequest) {
 
   const display_name = raw
 
+  // Upsert row with minimal shape (no full_name)
   const { error } = await supabase
     .from('profiles')
     .upsert(
       {
         id: user.id,
-        display_name,
         email: user.email ?? null,
-        full_name: (user.user_metadata as any)?.full_name ?? null,
+        display_name,
       },
       { onConflict: 'id' }
     )
@@ -66,5 +65,5 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({ ok: true })
 }
 
-// Allow POST as an alias for PATCH
+// POST behaves like PATCH
 export const POST = PATCH
