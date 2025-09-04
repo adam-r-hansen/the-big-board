@@ -1,17 +1,19 @@
 // app/join/page.tsx
 'use client'
-import { useEffect, useState } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
 
-export default function JoinPage() {
+import { Suspense, useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+
+function JoinInner() {
   const sp = useSearchParams()
-  const router = useRouter()
   const leagueId = sp.get('leagueId') || ''
   const [msg, setMsg] = useState('Joining league…')
-  const [done, setDone] = useState(false)
 
   useEffect(() => {
-    if (!leagueId) { setMsg('Missing leagueId'); setDone(true); return }
+    if (!leagueId) {
+      setMsg('Missing leagueId')
+      return
+    }
     ;(async () => {
       try {
         const res = await fetch('/api/leagues/join', {
@@ -25,8 +27,6 @@ export default function JoinPage() {
         setMsg(j?.already ? 'You are already a member. ✅' : 'Joined! ✅')
       } catch (e: any) {
         setMsg(e?.message || 'Join failed')
-      } finally {
-        setDone(true)
       }
     })()
   }, [leagueId])
@@ -40,5 +40,20 @@ export default function JoinPage() {
         <a className="underline" href="/standings">Standings</a>
       </div>
     </main>
+  )
+}
+
+export default function JoinPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto max-w-xl px-4 py-20 text-center">
+          <h1 className="text-2xl font-bold mb-3">League invite</h1>
+          <p className="text-neutral-700">Loading…</p>
+        </main>
+      }
+    >
+      <JoinInner />
+    </Suspense>
   )
 }
