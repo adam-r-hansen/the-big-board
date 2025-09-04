@@ -1,321 +1,659 @@
 // app/page.tsx
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+/**
+ * Home: overview + scoreboard (left 2/3), and
+ * My Picks / League Picks (locked only) / Standings mini (right 1/3).
+ *
+ * Scoring:
+ *  - Win  -> team final score
+ *  - Loss -> 0
+ *  - Tie  -> half of team final score (e.g. 10 -> 5)
+ */
+
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 
 type League = { id: string; name: string; season: number }
-type StandingRow = { profile_id: string; points: number; profiles?: { display_name?: string; email?: string } }
 type Team = {
   id: string
-  name: string
-  abbreviation: string
+  abbreviation: string | null
+  name?: string | null
   color_primary?: string | null
   color_secondary?: string | null
-  color_tertiary?: string | null
-  color_quaternary?: string | null
-  color_pref_light?: 'primary' | 'secondary' | 'tertiary' | 'quaternary' | null
-  color_pref_dark?: 'primary' | 'secondary' | 'tertiary' | 'quaternary' | null
   logo?: string | null
   logo_dark?: string | null
 }
+type TeamLike = {
+  id?: string
+  abbreviation?: string
+  name?: string
+  color_primary?: string
+  color_secondary?: string
+  logo?: string
+  logo_dark?: string
+}
 type Game = {
   id: string
-  start_time?: string
-  game_utc?: string
+  season: number
+  week: number
+  game_utc: string
   status?: string
-  week?: number
-  home?: { id: string }
-  away?: { id: string }
-  home_score?: number | null
-  away_score?: number | null
+  home: { id?: string; abbr?: string | null; score?: number | null }
+  away: { id?: string; abbr?: string | null; score?: number | null }
 }
-type PickRow = { team_id: string; points?: number | null; locked?: boolean }
+type Pick = { id: string; team_id: string; game_id: string | null }
 
-function parseHex(hex?: string | null) {
-  if (!hex) return null
-  const s = hex.trim().replace('#', '')
-  if (![3, 6].includes(s.length)) return null
-  const v = s.length === 3 ? s.split('').map(c => c + c).join('') : s
-  const r = parseInt(v.slice(0, 2), 16), g = parseInt(v.slice(2, 4), 16), b = parseInt(v.slice(4, 6), 16)
-  return { r, g, b }
-}
-function relL({ r, g, b }: { r: number; g: number; b: number }) {
-  const f = (c: number) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }
-  const R = f(r), G = f(g), B = f(b)
-  return 0.2126 * R + 0.7152 * G + 0.0722 * B
-}
-function contrast(bgHex: string, textHex: string) {
-  const bg = parseHex(bgHex), tx = parseHex(textHex); if (!bg || !tx) return 0
-  const L1 = relL(bg) + 0.05, L2 = relL(tx) + 0.05
-  return L1 > L2 ? L1 / L2 : L2 / L1
-}
-function textOn(bgHex?: string | null) {
-  const bg = bgHex || '#e5e7eb'
-  return contrast(bg, '#000000') >= contrast(bg, '#ffffff') ? '#000000' : '#ffffff'
-}
-function tint(hex?: string | null, amt = 0.90) {
-  const c = parseHex(hex); if (!c) return '#e5e7eb'
-  const r = Math.round(c.r + (255 - c.r) * amt), g = Math.round(c.g + (255 - c.g) * amt), b = Math.round(c.b + (255 - c.b) * amt)
-  return `rgb(${r}, ${g}, ${b})`
-}
-function usePrefersDark() {
-  const [dark, setDark] = useState(false)
-  useEffect(() => {
-    const mq = window.matchMedia?.('(prefers-color-scheme: dark)')
-    const sync = () => setDark(!!mq?.matches); sync()
-    mq?.addEventListener?.('change', sync)
-    return () => mq?.removeEventListener?.('change', sync)
-  }, [])
-  return dark
-}
-function colorByKey(t?: Team, key?: string | null) {
-  if (!t) return null
-  switch (key) {
-    case 'primary': return t.color_primary
-    case 'secondary': return t.color_secondary
-    case 'tertiary': return t.color_tertiary
-    case 'quaternary': return t.color_quaternary
-    default: return null
-  }
-}
-function teamBaseColor(t?: Team, dark = false) {
-  const pref = dark ? t?.color_pref_dark : t?.color_pref_light
-  const chosen = colorByKey(t, pref || undefined)
-  if (chosen) return chosen
-  return t?.color_primary || t?.color_secondary || t?.color_tertiary || t?.color_quaternary || '#e5e7eb'
+type MemberLockedPicks = {
+  profile_id: string
+  display_name: string
+  points_week: number
+  picks: Array<{
+    game_id: string
+    team_id: string
+    status: 'LIVE' | 'FINAL'
+    points: number | null
+  }>
 }
 
-function Card({ title, action, children }: { title?: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }) {
+function Card({
+  children,
+  title,
+  right,
+  className = '',
+}: {
+  children: React.ReactNode
+  title: string
+  right?: React.ReactNode
+  className?: string
+}) {
   return (
-    <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
-      {(title || action) && (
-        <header className="mb-3 flex items-center justify-between gap-3">
-          {title ? <h2 className="text-base font-semibold">{title}</h2> : <span />}
-          {action}
-        </header>
-      )}
-      <div>{children}</div>
+    <section
+      className={[
+        'rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5',
+        className,
+      ].join(' ')}
+    >
+      <header className="mb-3 flex items-center justify-between">
+        <h2 className="text-lg font-semibold">{title}</h2>
+        {right}
+      </header>
+      {children}
     </section>
   )
 }
 
-export default function Home() {
-  const prefersDark = usePrefersDark()
+function Chip({
+  label,
+  primary = '#6b7280',
+  secondary = '#374151',
+  subtle = false,
+  badge,
+  title,
+}: {
+  label: string
+  primary?: string
+  secondary?: string
+  subtle?: boolean
+  badge?: React.ReactNode
+  title?: string
+}) {
+  return (
+    <span
+      title={title}
+      className={[
+        'inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm font-semibold',
+        subtle ? 'opacity-80' : '',
+      ].join(' ')}
+      style={{
+        borderColor: primary,
+        color: primary,
+        background: subtle ? `linear-gradient(0deg, ${secondary}10, transparent)` : 'transparent',
+      }}
+    >
+      {label}
+      {badge ? <span className="text-xs font-normal">{badge}</span> : null}
+    </span>
+  )
+}
 
+function StatusBadge({ s }: { s?: string }) {
+  const up = (s || 'UPCOMING').toUpperCase()
+  return (
+    <span className="text-[10px] tracking-wide uppercase text-neutral-500 dark:text-neutral-400">
+      {up}
+    </span>
+  )
+}
+
+function useTeamIndex(teamMap: Record<string, Team>) {
+  return useMemo(() => {
+    const idx: Record<string, TeamLike> = {}
+    for (const t of Object.values(teamMap || {})) {
+      const v: TeamLike = {
+        id: t.id,
+        abbreviation: t.abbreviation ?? undefined,
+        name: t.name ?? undefined,
+        color_primary: t.color_primary ?? undefined,
+        color_secondary: t.color_secondary ?? undefined,
+        logo: t.logo ?? undefined,
+        logo_dark: t.logo_dark ?? undefined,
+      }
+      if (t.id) idx[t.id] = v
+      if (t.abbreviation) idx[t.abbreviation.toUpperCase()] = v
+    }
+    return idx
+  }, [teamMap])
+}
+
+function normalizeGames(rows: any[]): Game[] {
+  return (rows || []).map((x: any) => ({
+    id: x.id,
+    season: x.season,
+    week: x.week,
+    game_utc: x.game_utc || x.start_time,
+    status: x.status ?? 'UPCOMING',
+    home: {
+      id: x.home?.id ?? x.home_team ?? x.homeTeamId ?? x.home_team_id,
+      abbr: x.home?.abbreviation ?? x.home_abbr ?? x.homeAbbr ?? x.home?.abbr ?? null,
+      score: x.home_score ?? x.home?.score ?? null,
+    },
+    away: {
+      id: x.away?.id ?? x.away_team ?? x.awayTeamId ?? x.away_team_id,
+      abbr: x.away?.abbreviation ?? x.away_abbr ?? x.awayAbbr ?? x.away?.abbr ?? null,
+      score: x.away_score ?? x.away?.score ?? null,
+    },
+  }))
+}
+
+function gameLocked(g?: Game) {
+  if (!g) return false
+  const s = (g.status || '').toUpperCase()
+  if (s === 'FINAL' || s === 'LIVE') return true
+  if (!g.game_utc) return false
+  return new Date(g.game_utc) <= new Date()
+}
+
+function pickPointsForGame(pickTeamId: string, g?: Game): number | null {
+  if (!g) return null
+  const s = (g.status || '').toUpperCase()
+  const hs = typeof g.home.score === 'number' ? g.home.score : null
+  const as = typeof g.away.score === 'number' ? g.away.score : null
+  if (s !== 'FINAL') {
+    // LIVE -> not awarded yet
+    return null
+  }
+  if (hs == null || as == null) return 0
+  // tie
+  if (hs === as) {
+    if (g.home.id === pickTeamId) return hs / 2
+    if (g.away.id === pickTeamId) return as / 2
+    return 0
+  }
+  // win by home
+  if (hs > as) {
+    if (g.home.id === pickTeamId) return hs
+    return 0
+  }
+  // win by away
+  if (g.away.id === pickTeamId) return as
+  return 0
+}
+
+function HomeInner() {
   const [leagues, setLeagues] = useState<League[]>([])
-  const [leagueId, setLeagueId] = useState<string>('')
+  const [leagueId, setLeagueId] = useState('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
   const [week, setWeek] = useState<number>(1)
-  const [games, setGames] = useState<Game[]>([])
-  const [picks, setPicks] = useState<PickRow[]>([])
-  const [stand, setStand] = useState<StandingRow[]>([])
-  const [teams, setTeams] = useState<Record<string, Team>>({})
-  const [loading, setLoading] = useState(false)
-  const [teamsReady, setTeamsReady] = useState(false)
 
-  // Load leagues + teams (teams first so everything can colorize)
+  const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
+  const teamIndex = useTeamIndex(teamMap)
+
+  const [games, setGames] = useState<Game[]>([])
+  const [myPicks, setMyPicks] = useState<Pick[]>([])
+  const [wrinkleExtra, setWrinkleExtra] = useState<number>(0)
+
+  const [leagueLocked, setLeagueLocked] = useState<MemberLockedPicks[]>([])
+  const [standRows, setStandRows] = useState<any[]>([])
+  const [msg, setMsg] = useState('')
+
+  const singleLeague = leagues.length === 1
+  const noLeagues = leagues.length === 0
+
+  // load base data
   useEffect(() => {
     ;(async () => {
-      const teamRes = await fetch('/api/team-map').then(r => r.json()).catch(() => ({ teams: {} }))
-      setTeams(teamRes.teams || {})
-      setTeamsReady(true)
-
-      const lRes = await fetch('/api/my-leagues').then(r => r.json())
-      const ls: League[] = lRes.leagues || []
-      setLeagues(ls)
-      if (!leagueId && ls[0]) { setLeagueId(ls[0].id); setSeason(ls[0].season) }
+      try {
+        const lj = await fetch('/api/my-leagues', { cache: 'no-store' }).then(r => r.json())
+        const ls: League[] = lj?.leagues || []
+        setLeagues(ls)
+        if (ls.length === 1) {
+          setLeagueId(ls[0].id)
+          setSeason(ls[0].season)
+        } else if (!leagueId && ls[0]) {
+          setLeagueId(ls[0].id)
+          setSeason(ls[0].season)
+        }
+      } catch {}
+      try {
+        const tm = await fetch('/api/team-map', { cache: 'no-store' }).then(r => r.json())
+        setTeamMap(tm?.teams || {})
+      } catch {}
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Load games/picks/standings only after teams are available
+  // load per-week data
   useEffect(() => {
-    if (!teamsReady || !leagueId || !season || !week) return
+    if (!leagueId || !season || !week) return
     ;(async () => {
-      setLoading(true)
-      const [g, p, s] = await Promise.all([
-        fetch(`/api/games-for-week?season=${season}&week=${week}`).then(r => r.json()),
-        fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`).then(r => r.json()),
-        fetch(`/api/standings?leagueId=${leagueId}&season=${season}`).then(r => r.json()),
-      ])
-      setGames((g?.games || []).map((x: any) => ({
-        id: x.id,
-        start_time: x.start_time || x.game_utc,
-        status: x.status || 'UPCOMING',
-        week: x.week,
-        home: x.home, away: x.away,
-        home_score: x.home_score ?? x.home?.score ?? null,
-        away_score: x.away_score ?? x.away?.score ?? null,
-      })))
-      setPicks(p?.picks || [])
-      setStand(s?.standings || [])
-      setLoading(false)
+      setMsg('')
+      try {
+        const [g, p, w, s, L] = await Promise.all([
+          fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()),
+          fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()),
+          fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
+          fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
+          fetch(`/api/league-picks-week?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({ members: [] })),
+        ])
+
+        setGames(normalizeGames(g?.games || g || []))
+        setMyPicks((p?.picks || []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
+        const extra = Array.isArray(w?.wrinkles)
+          ? w.wrinkles.reduce((acc: number, it: any) => acc + (Number(it?.extra_picks) || 0), 0)
+          : 0
+        setWrinkleExtra(extra)
+
+        // standings: normalize a few possible shapes
+        const rows = Array.isArray(s) ? s : (s?.standings || s?.rows || [])
+        setStandRows(rows || [])
+
+        setLeagueLocked(Array.isArray(L?.members) ? L.members : [])
+      } catch (e: any) {
+        setMsg(e?.message || 'Failed to load data')
+      }
     })()
-  }, [teamsReady, leagueId, season, week])
+  }, [leagueId, season, week])
 
-  const picksUsed = picks.length
-  const ptsThisWeek = picks.reduce((n, r) => n + (r.points ?? 0), 0)
-  const remaining = Math.max(0, 2 - picksUsed)
-  const picked = useMemo(() => new Set(picks.map(p => p.team_id)), [picks])
+  // maps for quick lookups
+  const gameById = useMemo(() => {
+    const m = new Map<string, Game>()
+    for (const g of games) m.set(g.id, g)
+    return m
+  }, [games])
 
-  // Auto-load default league if user only belongs to one
-  useEffect(() => {
-    if (leagues.length === 1 && !leagueId) {
-      setLeagueId(leagues[0].id)
-      setSeason(leagues[0].season)
+  const picksAllowed = 2 + (wrinkleExtra || 0)
+  const picksUsed = myPicks.length
+  const picksLocked = useMemo(() => {
+    let c = 0
+    for (const p of myPicks) {
+      if (!p.game_id) continue
+      const g = gameById.get(p.game_id)
+      if (gameLocked(g)) c++
     }
-  }, [leagues, leagueId])
+    return c
+  }, [myPicks, gameById])
+
+  const weekPoints = useMemo(() => {
+    let sum = 0
+    for (const p of myPicks) {
+      if (!p.game_id) continue
+      const g = gameById.get(p.game_id)
+      const pts = pickPointsForGame(p.team_id, g)
+      if (typeof pts === 'number') sum += pts
+    }
+    return sum
+  }, [myPicks, gameById])
+
+  // helpers
+  function teamChipForId(teamId?: string, opts?: { showPoints?: number | null; status?: string }) {
+    if (!teamId) return <Chip label="—" />
+    const t = teamIndex[teamId]
+    const label = t?.abbreviation || '—'
+    const primary = t?.color_primary || '#6b7280'
+    const secondary = t?.color_secondary || '#374151'
+    let badge: React.ReactNode = null
+    let title: string | undefined = undefined
+
+    if (opts?.status) {
+      const s = opts.status.toUpperCase()
+      if (s === 'LIVE') badge = <span>• LIVE</span>
+      if (s === 'FINAL' && typeof opts.showPoints === 'number') {
+        const pts = opts.showPoints
+        badge = <span>{pts >= 0 ? `+${pts}` : `${pts}`}</span>
+      }
+      title = s
+    }
+
+    return <Chip label={label} primary={primary} secondary={secondary} subtle badge={badge} title={title} />
+  }
+
+  // standings normalization for mini view
+  const miniStand = useMemo(() => {
+    const rows = (standRows || []).map((r: any) => ({
+      profile_id: r.profile_id ?? r.user_id ?? r.id ?? '',
+      display_name: r.display_name ?? r.name ?? r.team ?? r.email ?? 'Member',
+      points_total:
+        typeof r.points_total === 'number'
+          ? r.points_total
+          : typeof r.points === 'number'
+          ? r.points
+          : typeof r.total_points === 'number'
+          ? r.total_points
+          : 0,
+      points_week:
+        typeof r.points_week === 'number'
+          ? r.points_week
+          : typeof r.week_points === 'number'
+          ? r.week_points
+          : 0,
+    }))
+    rows.sort((a, b) => (b.points_total || 0) - (a.points_total || 0))
+    return rows.slice(0, 5)
+  }, [standRows])
+
+  const singleLeagueControls = !noLeagues && singleLeague
 
   return (
-    <div className="mx-auto max-w-6xl">
-      <div className="mb-6 flex items-end justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight">NFL Pick’em</h1>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Welcome! Use the Admin page to import teams & schedule, then come back to make picks.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <select className="h-9 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
-                  value={leagueId} onChange={e => setLeagueId(e.target.value)}>
-            <option value="" disabled>Choose league…</option>
-            {leagues.map(l => <option key={l.id} value={l.id}>{l.name} · {l.season}</option>)}
+    <main className="mx-auto max-w-6xl px-4 py-6">
+      {/* Header controls */}
+      <section className="mb-4 flex flex-wrap items-center gap-3">
+        <h1 className="text-xl font-bold">NFL Pick’em</h1>
+
+        <div className="ml-auto flex items-center gap-3">
+          <Link className="underline text-sm" href="/picks">
+            Picks
+          </Link>
+          <Link className="underline text-sm" href="/standings">
+            Standings
+          </Link>
+
+          {/* League control: label if 1 league, dropdown if >1 */}
+          {noLeagues ? null : singleLeagueControls ? (
+            <span className="text-sm text-neutral-600">
+              League: <strong>{leagues[0].name}</strong>
+            </span>
+          ) : (
+            <select
+              className="border rounded px-2 py-1 bg-transparent"
+              value={leagueId}
+              onChange={(e) => setLeagueId(e.target.value)}
+            >
+              {leagues.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name} · {l.season}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {/* Season & Week (always shown) */}
+          <select
+            className="border rounded px-2 py-1 bg-transparent"
+            value={season}
+            onChange={(e) => setSeason(Number(e.target.value))}
+          >
+            {Array.from({ length: 3 }).map((_, i) => {
+              const yr = new Date().getFullYear() - 1 + i
+              return (
+                <option key={yr} value={yr}>
+                  {yr}
+                </option>
+              )
+            })}
           </select>
-          <input className="h-9 w-20 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
-                 type="number" value={season} onChange={e => setSeason(+e.target.value)} />
-          <input className="h-9 w-16 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
-                 type="number" value={week} onChange={e => setWeek(+e.target.value)} />
+
+          <select
+            className="border rounded px-2 py-1 bg-transparent"
+            value={week}
+            onChange={(e) => setWeek(Number(e.target.value))}
+          >
+            {Array.from({ length: 18 }).map((_, i) => {
+              const wk = i + 1
+              return (
+                <option key={wk} value={wk}>
+                  {wk}
+                </option>
+              )
+            })}
+          </select>
         </div>
-      </div>
+      </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* LEFT 2/3 */}
-        <div className="lg:col-span-2 grid gap-5">
-          <Card title="League Overview" action={<Link className="text-sm underline underline-offset-2" href="/picks">Make picks →</Link>}>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4">
-                <div className="text-sm text-neutral-500">Picks used</div>
-                <div className="text-2xl font-bold">{picksUsed}/2</div>
-              </div>
-              <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4">
-                <div className="text-sm text-neutral-500">Points (wk)</div>
-                <div className="text-2xl font-bold">{ptsThisWeek}</div>
-              </div>
-              <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4">
-                <div className="text-sm text-neutral-500">Remaining</div>
-                <div className="text-2xl font-bold">{remaining}</div>
-              </div>
-            </div>
-          </Card>
-
-          <Card title={`Week ${week} — Games`} action={<Link className="text-sm underline underline-offset-2" href="/picks">Make picks →</Link>}>
-            {loading && <div className="text-sm text-neutral-500">Loading…</div>}
-            {!loading && games.length === 0 && <div className="text-sm text-neutral-500">No games.</div>}
-            <div className="grid gap-4">
-              {games.map(g => {
-                const home: Team | undefined = teams[g.home?.id || '']
-                const away: Team | undefined = teams[g.away?.id || '']
-
-                const mk = (t?: Team) => {
-                  const base = teamBaseColor(t, prefersDark)
-                  const bg = tint(base, 0.90)
-                  const fg = textOn(bg)
-                  const logo = prefersDark ? (t?.logo_dark || t?.logo) : (t?.logo || t?.logo_dark)
-                  return { base, bg, fg, logo }
-                }
-                const H = mk(home), A = mk(away)
-
-                const final = (g.status || '').toUpperCase().includes('FINAL')
-                const hs = g.home_score, as = g.away_score
-
-                return (
-                  <div key={g.id} className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
-                    <div className="mb-2 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
-                      <span>{g.start_time ? new Date(g.start_time).toLocaleString() : '—'}</span>
-                      <span className="uppercase tracking-wide">{g.status || '—'}</span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex-1 rounded-full px-3 py-2 border transition-[border-width]"
-                           style={{ background: H.bg, color: H.fg, borderColor: H.base, borderWidth: 1 }}>
-                        <div className="flex items-center gap-2">
-                          {H.logo && <img src={H.logo} alt="" width={18} height={18} className="rounded" />}
-                          <span className="font-semibold">{home?.abbreviation ? `${home.abbreviation} — ` : ''}{home?.name || '—'}</span>
-                        </div>
-                      </div>
-                      <div className="text-neutral-400">—</div>
-                      <div className="flex-1 rounded-full px-3 py-2 border transition-[border-width]"
-                           style={{ background: A.bg, color: A.fg, borderColor: A.base, borderWidth: 1 }}>
-                        <div className="flex items-center gap-2">
-                          {A.logo && <img src={A.logo} alt="" width={18} height={18} className="rounded" />}
-                          <span className="font-semibold">{away?.abbreviation ? `${away.abbreviation} — ` : ''}{away?.name || '—'}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-                      {final && hs != null && as != null ? <>Score: {hs} — {as}</> : <>Score: — — —</>}
-                    </div>
+      {noLeagues ? (
+        <Card title="Join a league">
+          <p className="text-sm text-neutral-600">
+            Ask your commissioner for an invite link and visit <code>/join?leagueId=…</code>.
+          </p>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* LEFT 2/3 */}
+          <div className="lg:col-span-8 grid gap-6">
+            {/* Overview */}
+            <Card
+              title="League overview"
+              right={
+                <Link
+                  href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`}
+                  className="text-sm underline"
+                >
+                  Make picks →
+                </Link>
+              }
+            >
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-xl border px-4 py-3">
+                  <div className="text-xs text-neutral-500">Picks used</div>
+                  <div className="text-2xl font-semibold">{picksUsed}</div>
+                  <div className="text-xs text-neutral-500">of {picksAllowed}</div>
+                </div>
+                <div className="rounded-xl border px-4 py-3">
+                  <div className="text-xs text-neutral-500">Points (wk)</div>
+                  <div className="text-2xl font-semibold">{weekPoints}</div>
+                </div>
+                <div className="rounded-xl border px-4 py-3">
+                  <div className="text-xs text-neutral-500">Remaining</div>
+                  <div className="text-2xl font-semibold">
+                    {Math.max(0, picksAllowed - picksUsed)}
                   </div>
-                )
-              })}
-            </div>
-          </Card>
-        </div>
+                </div>
+                <div className="rounded-xl border px-4 py-3">
+                  <div className="text-xs text-neutral-500">Locked</div>
+                  <div className="text-2xl font-semibold">{picksLocked}</div>
+                </div>
+              </div>
+            </Card>
 
-        {/* RIGHT 1/3 */}
-        <div className="grid gap-5">
-          <Card title={`My picks — Week ${week}`} action={<Link className="text-sm underline underline-offset-2" href="/standings">Standings →</Link>}>
-            {picks.length === 0 ? (
-              <div className="text-sm text-neutral-500">No pick</div>
-            ) : (
-              <ul className="text-sm grid gap-2 max-h-[208px] overflow-auto pr-1">
-                {picks.slice(0, 3).map((p, i) => {
-                  const t = teams[p.team_id]
-                  const base = teamBaseColor(t, prefersDark)
-                  const bg = tint(base, 0.90)
-                  const fg = textOn(bg)
-                  const logo = prefersDark ? (t?.logo_dark || t?.logo) : (t?.logo || t?.logo_dark)
-                  return (
-                    <li key={i} className="flex items-center justify-between rounded-lg border px-3 py-2"
-                        style={{ background: bg, color: fg, borderColor: base }}>
-                      <span className="font-medium flex items-center gap-2">
-                        {logo && <img src={logo} alt="" width={16} height={16} className="rounded" />}
-                        {t ? `${t.abbreviation} — ${t.name}` : p.team_id}
-                      </span>
-                      <span className="text-xs opacity-70">{p.locked ? 'Locked' : (p.points ?? 0)}</span>
+            {/* Week N — Games */}
+            <Card
+              title={`Week ${week} — Games`}
+              right={
+                <div className="flex items-center gap-3">
+                  <Link
+                    href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`}
+                    className="text-sm underline"
+                  >
+                    Make picks →
+                  </Link>
+                  <Link href="/scoreboard" className="text-xs underline">
+                    Scoreboard →
+                  </Link>
+                </div>
+              }
+            >
+              {games.length === 0 ? (
+                <div className="text-sm text-neutral-500">No games.</div>
+              ) : (
+                <div className="grid gap-4">
+                  {games.map((g) => {
+                    const kickoff = g.game_utc ? new Date(g.game_utc).toLocaleString() : ''
+                    const scoreKnown =
+                      typeof g.home.score === 'number' && typeof g.away.score === 'number'
+
+                    const homeChip = teamChipForId(g.home.id)
+                    const awayChip = teamChipForId(g.away.id)
+
+                    return (
+                      <article
+                        key={g.id}
+                        className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4"
+                      >
+                        <div className="mb-2 flex items-center justify-between text-xs text-neutral-500">
+                          <span>
+                            {kickoff} • Week {g.week}
+                          </span>
+                          <StatusBadge s={g.status} />
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1">{homeChip}</div>
+                          <div className="text-neutral-400">—</div>
+                          <div className="flex-1">{awayChip}</div>
+                        </div>
+                        <div className="mt-1 text-xs text-neutral-500">
+                          {scoreKnown ? (
+                            <span>
+                              Score: {g.home.score} — {g.away.score}
+                            </span>
+                          ) : (
+                            <span>— — —</span>
+                          )}
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
+            </Card>
+          </div>
+
+          {/* RIGHT 1/3 */}
+          <aside className="lg:col-span-4 grid gap-6">
+            {/* My Picks */}
+            <Card
+              title={`My picks — Week ${week}`}
+              right={
+                <Link
+                  href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`}
+                  className="text-xs underline"
+                >
+                  Edit on Picks →
+                </Link>
+              }
+            >
+              {myPicks.length === 0 ? (
+                <div className="text-sm text-neutral-500">No picks yet.</div>
+              ) : (
+                <ul className="grid gap-2">
+                  {myPicks.map((p) => {
+                    const g = p.game_id ? gameById.get(p.game_id) : undefined
+                    const s = (g?.status || (gameLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase()
+                    const pts = pickPointsForGame(p.team_id, g)
+                    return (
+                      <li key={p.id} className="flex items-center justify-between">
+                        {teamChipForId(p.team_id, {
+                          status: s as any,
+                          showPoints: typeof pts === 'number' ? pts : null,
+                        })}
+                        <span className="text-[10px] uppercase tracking-wide text-neutral-500">
+                          {s}
+                        </span>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </Card>
+
+            {/* League picks (locked only), grouped by member */}
+            <Card title="League picks (locked)">
+              {leagueLocked.length === 0 ? (
+                <div className="text-sm text-neutral-500">No locked picks yet.</div>
+              ) : (
+                <ul className="grid gap-3">
+                  {leagueLocked.map((m) => (
+                    <li key={m.profile_id} className="border rounded-xl px-3 py-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium">{m.display_name || 'Member'}</span>
+                        <span className="text-neutral-600">{m.points_week ?? 0} pts</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {m.picks && m.picks.length > 0 ? (
+                          m.picks.map((pk) =>
+                            teamChipForId(pk.team_id, {
+                              status: pk.status,
+                              showPoints:
+                                pk.status === 'FINAL' && typeof pk.points === 'number'
+                                  ? pk.points
+                                  : null,
+                            }),
+                          )
+                        ) : (
+                          <span className="text-xs text-neutral-500">No locked picks yet.</span>
+                        )}
+                      </div>
                     </li>
-                  )
-                })}
-              </ul>
-            )}
-          </Card>
+                  ))}
+                </ul>
+              )}
+            </Card>
 
-          <Card title="League snapshot" action={<Link className="text-sm underline underline-offset-2" href="/standings">Standings →</Link>}>
-            <table className="w-full text-sm">
-              <thead className="text-neutral-500">
-                <tr><th className="text-left font-medium py-1">#</th><th className="text-left font-medium py-1">Team</th><th className="text-right font-medium py-1">Pts</th></tr>
-              </thead>
-              <tbody>
-                {stand.slice(0, 5).map((r, i) => (
-                  <tr key={r.profile_id} className="border-t border-neutral-200 dark:border-neutral-800">
-                    <td className="py-1">{i + 1}</td>
-                    <td className="py-1">{r.profiles?.display_name || r.profiles?.email || r.profile_id}</td>
-                    <td className="py-1 text-right">{r.points}</td>
-                  </tr>
-                ))}
-                {stand.length === 0 && (
-                  <tr className="border-t border-neutral-200 dark:border-neutral-800">
-                    <td className="py-1">—</td><td className="py-1">No data yet.</td><td className="py-1 text-right">—</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </Card>
+            {/* Standings mini */}
+            <Card
+              title="Standings"
+              right={
+                <Link
+                  href={`/standings?leagueId=${leagueId}&season=${season}`}
+                  className="text-xs underline"
+                >
+                  Standings →
+                </Link>
+              }
+            >
+              {miniStand.length === 0 ? (
+                <div className="text-sm text-neutral-500">No standings yet.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="text-left text-neutral-500">
+                      <tr>
+                        <th className="py-2 pr-3">#</th>
+                        <th className="py-2 pr-3">Member</th>
+                        <th className="py-2 pr-3">Pts</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {miniStand.map((r, i) => (
+                        <tr key={r.profile_id} className="border-t">
+                          <td className="py-2 pr-3">{i + 1}</td>
+                          <td className="py-2 pr-3">{r.display_name}</td>
+                          <td className="py-2 pr-3">{r.points_total}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </aside>
         </div>
-      </div>
-    </div>
+      )}
+      {msg && <div className="text-xs mt-2">{msg}</div>}
+    </main>
   )
 }
 
+export default function HomePage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto max-w-6xl px-4 py-6">
+          <h1 className="text-xl font-bold mb-3">NFL Pick’em</h1>
+          <div className="text-neutral-600">Loading…</div>
+        </main>
+      }
+    >
+      <HomeInner />
+    </Suspense>
+  )
+}
