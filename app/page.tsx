@@ -11,7 +11,7 @@
  *  - Tie  -> half of team final score (e.g. 10 -> 5)
  */
 
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 
 type League = { id: string; name: string; season: number }
@@ -90,20 +90,23 @@ function Chip({
   subtle = false,
   badge,
   title,
+  className = '',
 }: {
-  label: string
+  label: ReactNode
   primary?: string
   secondary?: string
   subtle?: boolean
   badge?: React.ReactNode
   title?: string
+  className?: string
 }) {
   return (
     <span
       title={title}
       className={[
-        'inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm font-semibold',
+        'inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm font-semibold whitespace-nowrap',
         subtle ? 'opacity-80' : '',
+        className,
       ].join(' ')}
       style={{
         borderColor: primary,
@@ -180,22 +183,18 @@ function pickPointsForGame(pickTeamId: string, g?: Game): number | null {
   const hs = typeof g.home.score === 'number' ? g.home.score : null
   const as = typeof g.away.score === 'number' ? g.away.score : null
   if (s !== 'FINAL') {
-    // LIVE -> not awarded yet
     return null
   }
   if (hs == null || as == null) return 0
-  // tie
   if (hs === as) {
     if (g.home.id === pickTeamId) return hs / 2
     if (g.away.id === pickTeamId) return as / 2
     return 0
   }
-  // win by home
   if (hs > as) {
     if (g.home.id === pickTeamId) return hs
     return 0
   }
-  // win by away
   if (g.away.id === pickTeamId) return as
   return 0
 }
@@ -264,7 +263,6 @@ function HomeInner() {
           : 0
         setWrinkleExtra(extra)
 
-        // standings: normalize a few possible shapes
         const rows = Array.isArray(s) ? s : (s?.standings || s?.rows || [])
         setStandRows(rows || [])
 
@@ -305,7 +303,7 @@ function HomeInner() {
     return sum
   }, [myPicks, gameById])
 
-  // helpers
+  // compact abbr chip used everywhere except scoreboard
   function teamChipForId(teamId?: string, opts?: { showPoints?: number | null; status?: string }) {
     if (!teamId) return <Chip label="—" />
     const t = teamIndex[teamId]
@@ -326,6 +324,29 @@ function HomeInner() {
     }
 
     return <Chip label={label} primary={primary} secondary={secondary} subtle badge={badge} title={title} />
+  }
+
+  // NEW: responsive chip for scoreboard — abbr on mobile, full name on md+
+  function responsiveTeamChip(teamId?: string) {
+    if (!teamId) return <Chip label="—" />
+    const t = teamIndex[teamId]
+    const abbr = t?.abbreviation || '—'
+    const full = t?.name || abbr
+    const primary = t?.color_primary || '#6b7280'
+    const secondary = t?.color_secondary || '#374151'
+    return (
+      <Chip
+        label={
+          <>
+            <span className="md:hidden">{abbr}</span>
+            <span className="hidden md:inline">{full}</span>
+          </>
+        }
+        primary={primary}
+        secondary={secondary}
+        subtle
+      />
+    )
   }
 
   // standings normalization for mini view
@@ -361,12 +382,8 @@ function HomeInner() {
         <h1 className="text-xl font-bold">NFL Pick’em</h1>
 
         <div className="ml-auto flex items-center gap-3">
-          <Link className="underline text-sm" href="/picks">
-            Picks
-          </Link>
-          <Link className="underline text-sm" href="/standings">
-            Standings
-          </Link>
+          <Link className="underline text-sm" href="/picks">Picks</Link>
+          <Link className="underline text-sm" href="/standings">Standings</Link>
 
           {/* League control: label if 1 league, dropdown if >1 */}
           {noLeagues ? null : singleLeagueControls ? (
@@ -491,8 +508,8 @@ function HomeInner() {
                     const scoreKnown =
                       typeof g.home.score === 'number' && typeof g.away.score === 'number'
 
-                    const homeChip = teamChipForId(g.home.id)
-                    const awayChip = teamChipForId(g.away.id)
+                    const homeChip = responsiveTeamChip(g.home.id)   // <— responsive desktop/mobile label
+                    const awayChip = responsiveTeamChip(g.away.id)   // <— responsive desktop/mobile label
 
                     return (
                       <article
