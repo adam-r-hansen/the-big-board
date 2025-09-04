@@ -104,7 +104,9 @@ function Chip({
     <span
       title={title}
       className={[
-        'inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm font-semibold whitespace-nowrap',
+        'inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm font-semibold',
+        // keep one line, ellipsize if needed for uniform width chips
+        'overflow-hidden text-ellipsis whitespace-nowrap',
         subtle ? 'opacity-80' : '',
         className,
       ].join(' ')}
@@ -326,9 +328,9 @@ function HomeInner() {
     return <Chip label={label} primary={primary} secondary={secondary} subtle badge={badge} title={title} />
   }
 
-  // NEW: responsive chip for scoreboard — abbr on mobile, full name on md+
+  // Responsive, UNIFORM-size chip for scoreboard — abbr on mobile, full name on md+
   function responsiveTeamChip(teamId?: string) {
-    if (!teamId) return <Chip label="—" />
+    if (!teamId) return <Chip label="—" className="w-full h-10 md:h-12 justify-center" />
     const t = teamIndex[teamId]
     const abbr = t?.abbreviation || '—'
     const full = t?.name || abbr
@@ -337,14 +339,16 @@ function HomeInner() {
     return (
       <Chip
         label={
-          <>
+          <span className="truncate max-w-full">
             <span className="md:hidden">{abbr}</span>
             <span className="hidden md:inline">{full}</span>
-          </>
+          </span>
         }
         primary={primary}
         secondary={secondary}
         subtle
+        // Full width/height chip for equal sizing; centered label
+        className="w-full h-10 md:h-12 justify-center"
       />
     )
   }
@@ -508,8 +512,8 @@ function HomeInner() {
                     const scoreKnown =
                       typeof g.home.score === 'number' && typeof g.away.score === 'number'
 
-                    const homeChip = responsiveTeamChip(g.home.id)   // <— responsive desktop/mobile label
-                    const awayChip = responsiveTeamChip(g.away.id)   // <— responsive desktop/mobile label
+                    const homeChip = responsiveTeamChip(g.home.id)   // uniform size
+                    const awayChip = responsiveTeamChip(g.away.id)   // uniform size
 
                     return (
                       <article
