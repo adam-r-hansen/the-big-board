@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
 export async function GET(_req: NextRequest) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) {
     return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
@@ -17,7 +17,6 @@ export async function GET(_req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Fallback shape if row not created yet
   const profile = data ?? {
     id: user.id,
     email: user.email ?? null,
@@ -29,7 +28,7 @@ export async function GET(_req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) {
     return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
@@ -48,7 +47,6 @@ export async function PATCH(req: NextRequest) {
 
   const display_name = raw
 
-  // Upsert ensures the row exists; server sets id to auth.uid()
   const { error } = await supabase
     .from('profiles')
     .upsert(
@@ -68,6 +66,5 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({ ok: true })
 }
 
-// Allow POST as an alias for PATCH for convenience
+// Allow POST as an alias for PATCH
 export const POST = PATCH
-
