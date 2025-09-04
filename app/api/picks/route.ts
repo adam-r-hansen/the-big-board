@@ -14,7 +14,6 @@ function j(data: any, init?: number | ResponseInit) {
 }
 
 async function getClient() {
-  // your helper returns a Promise
   const supabase = await createClient()
   const { data, error } = await supabase.auth.getUser()
   return { supabase, user: data?.user ?? null, error }
@@ -28,27 +27,25 @@ type Body = {
   gameId?: string | null
 }
 
-// Lock helper — if "games" table exists use it, otherwise skip lock check gracefully.
+async function ensureMember(supabase: any, leagueId: string, userId: string) {
+  // Upsert membership so “auto-join on pick” keeps working
+  await supabase
+    .from('league_memberships')
+    .upsert({ league_id: leagueId, profile_id: userId, role: 'member' }, { onConflict: 'league_id,profile_id' })
+}
+
+// Lock check (skip on unknown table)
 async function isLocked(supabase: any, gameId?: string | null): Promise<{ locked: boolean; why?: string }> {
   if (!gameId) return { locked: false }
   try {
-    const { data, error } = await supabase
-      .from('games')
-      .select('id, game_utc, status')
-      .eq('id', gameId)
-      .maybeSingle()
-    if (error) return { locked: false } // don't 500 on missing table
+    const { data } = await supabase.from('games').select('id, game_utc, status').eq('id', gameId).maybeSingle()
     const utc = data?.game_utc as string | undefined
     if (utc && new Date(utc) <= new Date()) return { locked: true, why: 'game is locked (kickoff passed)' }
-    // also honor explicit status if present
     if ((data?.status || '').toUpperCase() === 'FINAL') return { locked: true, why: 'game is locked (kickoff passed)' }
     return { locked: false }
-  } catch {
-    return { locked: false }
-  }
+  } catch { return { locked: false } }
 }
 
-// POST /api/picks  -> { ok: true, id } or 400 with explicit error
 export async function POST(req: NextRequest) {
   const { supabase, user, error } = await getClient()
   if (error || !user) return j({ error: 'unauthenticated' }, 401)
@@ -65,7 +62,10 @@ export async function POST(req: NextRequest) {
     return j({ error: 'leagueId, season, week, teamId required' }, 400)
   }
 
-  // 1) Weekly quota = 2
+  // ✅ guarantee membership before proceeding
+  try { await ensureMember(supabase, leagueId, user.id) } catch {}
+
+  // weekly quota = 2
   const { data: weekPicks, error: countErr } = await supabase
     .from('picks')
     .select('id', { count: 'exact', head: true })
@@ -75,11 +75,9 @@ export async function POST(req: NextRequest) {
     .eq('week', week)
 
   if (countErr) return j({ error: countErr.message }, 400)
-  if ((weekPicks?.length ?? 0) >= 2) {
-    return j({ error: 'quota reached (2 picks/week)' }, 400)
-  }
+  if ((weekPicks?.length ?? 0) >= 2) return j({ error: 'quota reached (2 picks/week)' }, 400)
 
-  // 2) Season prior-week reuse check
+  // prior-week reuse ban
   const { data: prior, error: priorErr } = await supabase
     .from('picks')
     .select('id')
@@ -91,25 +89,15 @@ export async function POST(req: NextRequest) {
     .limit(1)
 
   if (priorErr) return j({ error: priorErr.message }, 400)
-  if (prior && prior.length > 0) {
-    return j({ error: 'team already used in a prior week' }, 400)
-  }
+  if (prior && prior.length > 0) return j({ error: 'team already used in a prior week' }, 400)
 
-  // 3) Lock check iff we have a gameId
+  // lock check
   const lock = await isLocked(supabase, gameId)
   if (lock.locked) return j({ error: lock.why }, 400)
 
-  // 4) Insert
   const { data: inserted, error: insErr } = await supabase
     .from('picks')
-    .insert({
-      league_id: leagueId,
-      profile_id: user.id,
-      team_id: teamId,
-      game_id: gameId, // can be null
-      season,
-      week,
-    })
+    .insert({ league_id: leagueId, profile_id: user.id, team_id: teamId, game_id: gameId, season, week })
     .select('id')
     .single()
 
@@ -117,7 +105,6 @@ export async function POST(req: NextRequest) {
   return j({ ok: true, id: inserted?.id }, 200)
 }
 
-// DELETE /api/picks?id=… (or allow other selectors later)
 export async function DELETE(req: NextRequest) {
   const { supabase, user, error } = await getClient()
   if (error || !user) return j({ error: 'unauthenticated' }, 401)
@@ -126,16 +113,18 @@ export async function DELETE(req: NextRequest) {
   const pickId = searchParams.get('id')
   if (!pickId) return j({ error: 'id required' }, 400)
 
-  // fetch pick to check lock
   const { data: pickRow, error: pickErr } = await supabase
     .from('picks')
-    .select('id, game_id')
+    .select('id, game_id, league_id')
     .eq('id', pickId)
     .eq('profile_id', user.id)
     .maybeSingle()
 
   if (pickErr) return j({ error: pickErr.message }, 400)
-  if (!pickRow) return j({ ok: true }, 200) // already gone
+  if (!pickRow) return j({ ok: true }, 200)
+
+  // ✅ also guarantee membership here (harmless if already)
+  try { await ensureMember(supabase, pickRow.league_id, user.id) } catch {}
 
   const lock = await isLocked(supabase, pickRow.game_id)
   if (lock.locked) return j({ error: lock.why }, 400)
@@ -149,4 +138,3 @@ export async function DELETE(req: NextRequest) {
   if (delErr) return j({ error: delErr.message }, 400)
   return j({ ok: true }, 200)
 }
-
