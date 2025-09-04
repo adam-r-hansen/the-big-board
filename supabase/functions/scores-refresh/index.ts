@@ -10,6 +10,11 @@ const ESPN_URL =
   Deno.env.get("ESPN_SCOREBOARD_URL") ??
   "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"; // public
 
+// Window tuning: how far around "now" to consider games "near".
+// Extend future to catch early London/Europe kickoffs.
+const PAST_HOURS = Number(Deno.env.get("SCORES_PAST_HOURS") ?? 12);   // look back this many hours
+const FUTURE_HOURS = Number(Deno.env.get("SCORES_FUTURE_HOURS") ?? 18); // look ahead this many hours
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
@@ -40,7 +45,7 @@ function toIso(x?: string): string | null {
 }
 
 async function fetchEspnScoreboard(season: number, week?: number): Promise<ExtGame[]> {
-  // seasontype=2 => regular season
+  // Regular season by default (seasontype=2). Adjust later if you want pre/postseason.
   const qs = new URLSearchParams({ seasontype: "2", dates: String(season) });
   if (typeof week === "number") qs.set("week", String(week));
   const url = `${ESPN_URL}?${qs.toString()}`;
@@ -90,13 +95,38 @@ async function fetchEspnScoreboard(season: number, week?: number): Promise<ExtGa
   return out;
 }
 
+// Find (season, week) pairs that have games "near now" based on the window.
+async function findWindowPairs(): Promise<Array<{ season: number; week: number }>> {
+  const now = Date.now();
+  const fromIso = new Date(now - PAST_HOURS * 3600 * 1000).toISOString();
+  const toIso_ = new Date(now + FUTURE_HOURS * 3600 * 1000).toISOString();
+
+  const { data, error } = await supabase
+    .from("games")
+    .select("season, week")
+    .gte("game_utc", fromIso)
+    .lte("game_utc", toIso_);
+  if (error) throw error;
+
+  const uniq = new Map<string, { season: number; week: number }>();
+  for (const r of data || []) {
+    if (typeof r.season === "number" && typeof r.week === "number") {
+      uniq.set(`${r.season}-${r.week}`, { season: r.season, week: r.week });
+    }
+  }
+  return Array.from(uniq.values()).sort((a, b) => (a.season - b.season) || (a.week - b.week));
+}
+
 serve(async (req) => {
   try {
     const url = new URL(req.url);
-    const season = Number(url.searchParams.get("season") || new Date().getFullYear());
-    const week = url.searchParams.get("week") ? Number(url.searchParams.get("week")) : undefined;
+    // Optional overrides for manual invocations
+    const seasonQ = url.searchParams.get("season");
+    const weekQ = url.searchParams.get("week");
+    const seasonOverride = seasonQ ? Number(seasonQ) : undefined;
+    const weekOverride = weekQ ? Number(weekQ) : undefined;
 
-    // Load team abbreviations for mapping (abbr -> team.id)
+    // Load teams once for abbr -> team.id mapping
     const { data: teams, error: tErr } = await supabase.from("teams").select("id, abbreviation");
     if (tErr) throw tErr;
     const abbrToId = new Map<string, string>();
@@ -104,29 +134,41 @@ serve(async (req) => {
       if (t?.abbreviation && t?.id) abbrToId.set(String(t.abbreviation).toUpperCase(), t.id);
     });
 
-    // Pull our DB games for the selected season (and optional week)
-    let gq = supabase
-      .from("games")
-      .select("id, season, week, game_utc, status, home_team, away_team, home_score, away_score, espn_id")
-      .eq("season", season)
-      .order("week", { ascending: true });
-    if (typeof week === "number") gq = gq.eq("week", week);
-    const { data: games, error: gErr } = await gq;
-    if (gErr) throw gErr;
+    // Build the list of (season, week) to process
+    let pairs: Array<{ season: number; week: number }> = [];
+    if (typeof seasonOverride === "number" && typeof weekOverride === "number") {
+      pairs = [{ season: seasonOverride, week: weekOverride }];
+    } else if (typeof seasonOverride === "number") {
+      // No week specified: limit to weeks in window for that season
+      const windowPairs = await findWindowPairs();
+      pairs = windowPairs.filter((p) => p.season === seasonOverride);
+    } else {
+      // Neither specified: use window across all seasons present
+      pairs = await findWindowPairs();
+    }
 
-    // Figure which weeks to fetch from ESPN
-    const weeksToFetch =
-      typeof week === "number"
-        ? [week]
-        : Array.from(new Set((games || []).map((g: any) => g.week).filter((n: any) => typeof n === "number")));
+    if (pairs.length === 0) {
+      const now = Date.now();
+      const fromIso = new Date(now - PAST_HOURS * 3600 * 1000).toISOString();
+      const toIso_ = new Date(now + FUTURE_HOURS * 3600 * 1000).toISOString();
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          skipped: "no games in window",
+          window: { fromIso, toIso },
+        }),
+        { headers: { "content-type": "application/json", "cache-control": "no-store" } },
+      );
+    }
 
     let matched = 0;
     let updated = 0;
 
-    for (const wk of weeksToFetch) {
-      const extGames = await fetchEspnScoreboard(season, wk);
+    for (const { season, week } of pairs) {
+      // Fetch ESPN for this (season, week)
+      const extGames = await fetchEspnScoreboard(season, week);
 
-      // Build lookups
+      // Lookups from ESPN data
       const byEspn = new Map(extGames.map((e) => [e.espn_id, e]));
       const byKey = new Map<string, ExtGame>(); // "HOME-AWAY-ISO"
       for (const e of extGames) {
@@ -134,8 +176,15 @@ serve(async (req) => {
         byKey.set(key, e);
       }
 
-      const ours = (games || []).filter((g: any) => g.week === wk);
-      for (const g of ours) {
+      // Only the games we need from our DB
+      const { data: games, error: gErr } = await supabase
+        .from("games")
+        .select("id, season, week, game_utc, status, home_team, away_team, home_score, away_score, espn_id")
+        .eq("season", season)
+        .eq("week", week);
+      if (gErr) throw gErr;
+
+      for (const g of games || []) {
         let eg: ExtGame | undefined;
 
         // 1) espn_id match
@@ -179,7 +228,7 @@ serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ ok: true, season, week, matched, updated }), {
+    return new Response(JSON.stringify({ ok: true, matched, updated, processed: pairs }), {
       headers: { "content-type": "application/json", "cache-control": "no-store" },
     });
   } catch (e) {
