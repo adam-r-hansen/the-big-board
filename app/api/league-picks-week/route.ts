@@ -13,6 +13,11 @@ function j(data: any, init?: number | ResponseInit) {
   return NextResponse.json(data, { ...base, headers })
 }
 
+function takeOne<T = any>(rel: any): T | undefined {
+  if (!rel) return undefined
+  return Array.isArray(rel) ? rel[0] : rel
+}
+
 function statusFor(game: any): 'LIVE' | 'FINAL' | 'UPCOMING' {
   const raw = (game?.status || '').toUpperCase()
   if (raw === 'FINAL' || raw === 'LIVE') return raw as any
@@ -64,8 +69,7 @@ export async function GET(req: NextRequest) {
   if (mErr) return j({ error: mErr.message }, 400)
   if (!mem) return j({ error: 'forbidden' }, 403)
 
-  // load picks for this league/week with joined game + profile (display name)
-  // only include rows with game_id not null (weekly picks)
+  // Picks + joined game + joined profile
   const { data: rows, error: pErr } = await supabase
     .from('picks')
     .select(
@@ -85,9 +89,9 @@ export async function GET(req: NextRequest) {
 
   if (pErr) return j({ error: pErr.message }, 400)
 
-  // compute status and filter to LOCKED (LIVE/FINAL)
   const locked = (rows || []).filter((r: any) => {
-    const s = statusFor(r.games)
+    const game = takeOne(r.games)
+    const s = statusFor(game)
     return s === 'LIVE' || s === 'FINAL'
   })
 
@@ -98,13 +102,15 @@ export async function GET(req: NextRequest) {
   >()
 
   for (const r of locked) {
-    const prof = r.profiles || {}
+    const prof = takeOne(r.profiles) || {}
+    const game = takeOne(r.games) || {}
     const display =
       prof.display_name ||
       prof.full_name ||
       (prof.email ? String(prof.email).split('@')[0] : 'Member')
-    const s = statusFor(r.games)
-    const pts = s === 'FINAL' ? pointsForPick(r.team_id, r.games) : 0
+
+    const s = statusFor(game)
+    const pts = s === 'FINAL' ? pointsForPick(r.team_id, game) : 0
 
     if (!byMember.has(r.profile_id)) {
       byMember.set(r.profile_id, {
@@ -124,7 +130,6 @@ export async function GET(req: NextRequest) {
     if (s === 'FINAL') bucket.points_week += pts
   }
 
-  // alphabetical by display_name
   const members = Array.from(byMember.values()).sort((a, b) =>
     a.display_name.localeCompare(b.display_name),
   )
