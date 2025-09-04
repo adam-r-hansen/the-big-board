@@ -17,22 +17,55 @@ export async function GET(_req: NextRequest) {
   const supabase = await createClient()
   const { data: auth, error: authErr } = await supabase.auth.getUser()
   if (authErr || !auth?.user) return j({ error: 'unauthenticated' }, 401)
+  const uid = auth.user.id
 
-  // 1) fetch memberships
+  // 1) Current memberships
   const { data: mems, error: mErr } = await supabase
     .from('league_memberships')
     .select('league_id')
-    .eq('profile_id', auth.user.id)
+    .eq('profile_id', uid)
 
   if (mErr) return j({ error: mErr.message }, 400)
-  const ids = (mems ?? []).map((m: any) => m.league_id).filter(Boolean)
-  if (ids.length === 0) return j({ leagues: [] }, 200)
 
-  // 2) fetch only those leagues
+  let leagueIds = (mems ?? []).map((m: any) => m.league_id).filter(Boolean)
+
+  // 2) Backfill: if no memberships, infer from past picks (migration helper)
+  if (leagueIds.length === 0) {
+    const { data: picksLeagues, error: pErr } = await supabase
+      .from('picks')
+      .select('league_id')
+      .eq('profile_id', uid)
+
+    if (!pErr) {
+      const inferred = Array.from(new Set((picksLeagues ?? [])
+        .map((r: any) => r.league_id)
+        .filter(Boolean)))
+
+      // Upsert inferred memberships (ignore errors quietly to avoid blocking)
+      if (inferred.length > 0) {
+        try {
+          await supabase
+            .from('league_memberships')
+            .upsert(
+              inferred.map((lid: string) => ({ league_id: lid, profile_id: uid, role: 'member' })),
+              { onConflict: 'league_id,profile_id' }
+            )
+        } catch { /* ignore */ }
+
+        // Recompute leagueIds to include inferred
+        leagueIds = inferred
+      }
+    }
+  }
+
+  if (leagueIds.length === 0) return j({ leagues: [] }, 200)
+
+  // 3) Return only leagues the user belongs to (RLS will also enforce this if enabled)
   const { data: leagues, error: lErr } = await supabase
     .from('leagues')
     .select('id, name, season, created_at')
-    .in('id', ids)
+    .in('id', leagueIds)
+    .order('created_at', { ascending: false })
 
   if (lErr) return j({ error: lErr.message }, 400)
   return j({ leagues: leagues ?? [] }, 200)
