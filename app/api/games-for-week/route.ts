@@ -1,6 +1,7 @@
 // app/api/games-for-week/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+// Use a RELATIVE import to avoid alias resolution issues in build
+import { createClient } from '../../../lib/supabase/server'
 
 // NOTE: This route is AUTH-OPTIONAL (public scoreboard).
 // It returns games for a given season & week with joined team metadata.
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
     const season = Number(seasonParam ?? new Date().getUTCFullYear())
     const week = Number(weekParam ?? 1)
 
-    const supabase = await createClient()
+    const supabase = await createClient() // your helper returns a Promise<SupabaseClient>
 
     // 1) Pull games
     const { data: games, error: gErr } = await supabase
@@ -57,9 +58,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: tErr.message }, { status: 500 })
       }
 
-      teamsById = Object.fromEntries(
-        (teams ?? []).map((t: any) => [t.id, t])
-      )
+      teamsById = Object.fromEntries((teams ?? []).map((t: any) => [t.id, t]))
     }
 
     // 3) Shape the response the UI expects
@@ -68,7 +67,7 @@ export async function GET(req: NextRequest) {
       season: g.season,
       week: g.week,
       game_utc: g.game_utc,
-      status: g.status, // 'UPCOMING' | 'LIVE' | 'FINAL' (set by your refresh fn)
+      status: g.status, // 'UPCOMING' | 'LIVE' | 'FINAL'
       home_score: g.home_score,
       away_score: g.away_score,
       home_team_id: g.home_team,
