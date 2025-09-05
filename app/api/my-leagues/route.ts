@@ -7,37 +7,38 @@ export const dynamic = 'force-dynamic'
 export async function GET(_req: NextRequest) {
   const supabase = await createClient()
 
-  // Auth
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) {
     return NextResponse.json({ error: 'unauthenticated' }, { status: 401, headers: { 'cache-control': 'no-store' } })
   }
 
-  // Get league ids I belong to
-  const { data: mems, error: mErr } = await supabase
+  // Pull leagues by JOINing from memberships. This works even if a separate
+  // "select leagues by id" is blocked by RLS, as long as leagues are readable.
+  const { data, error } = await supabase
     .from('league_memberships')
-    .select('league_id')
+    .select(`
+      league_id,
+      leagues:league_id (
+        id,
+        name,
+        season
+      )
+    `)
     .eq('profile_id', user.id)
 
-  if (mErr) {
-    return NextResponse.json({ error: mErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
   }
 
-  const leagueIds = Array.from(new Set((mems ?? []).map(r => r.league_id))).filter(Boolean)
-  if (leagueIds.length === 0) {
-    return NextResponse.json({ leagues: [] }, { headers: { 'cache-control': 'no-store' } })
+  // Dedupe leagues in case of multiple membership rows (role changes, etc.)
+  const leaguesMap = new Map<string, { id: string; name: string; season: number }>()
+  for (const r of data ?? []) {
+    const lg = (r as any).leagues
+    if (lg?.id) leaguesMap.set(lg.id, { id: lg.id, name: lg.name, season: lg.season })
   }
 
-  // Fetch leagues (minimal fields the UI needs; add more if your UI expects them)
-  const { data: leagues, error: lErr } = await supabase
-    .from('leagues')
-    .select('id, name, season')
-    .in('id', leagueIds)
-    .order('name', { ascending: true })
-
-  if (lErr) {
-    return NextResponse.json({ error: lErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
-  }
-
-  return NextResponse.json({ leagues: leagues ?? [] }, { headers: { 'cache-control': 'no-store' } })
+  return NextResponse.json(
+    { leagues: Array.from(leaguesMap.values()) },
+    { headers: { 'cache-control': 'no-store' } }
+  )
 }
