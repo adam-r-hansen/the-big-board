@@ -1,23 +1,22 @@
 // app/api/games-for-week/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-// Use a RELATIVE import to avoid alias resolution issues in build
-import { createClient } from '../../../lib/supabase/server'
+// NOTE: project structure: [root]/app/api/games-for-week/route.ts
+// lib is at [root]/lib/supabase/server.ts  -> go up 3 dirs to root, then /lib...
+import { createClient } from '../../../../lib/supabase/server'
 
-// NOTE: This route is AUTH-OPTIONAL (public scoreboard).
-// It returns games for a given season & week with joined team metadata.
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url)
-    // Be tolerant of missing params; default to current UTC year & week 1
     const seasonParam = url.searchParams.get('season')
     const weekParam = url.searchParams.get('week')
 
     const season = Number(seasonParam ?? new Date().getUTCFullYear())
     const week = Number(weekParam ?? 1)
 
-    const supabase = await createClient() // your helper returns a Promise<SupabaseClient>
+    // Your helper returns a Promise<SupabaseClient>
+    const supabase = await createClient()
 
-    // 1) Pull games
+    // Pull games for the selected week/season
     const { data: games, error: gErr } = await supabase
       .from('games')
       .select(
@@ -27,41 +26,34 @@ export async function GET(req: NextRequest) {
       .eq('week', week)
       .order('game_utc', { ascending: true })
 
-    if (gErr) {
-      return NextResponse.json({ error: gErr.message }, { status: 500 })
-    }
+    if (gErr) return NextResponse.json({ error: gErr.message }, { status: 500 })
 
     if (!games || games.length === 0) {
-      // Return a well-formed empty payload (the page expects `rows`)
       return NextResponse.json({ rows: [], season, week })
     }
 
-    // 2) Join team metadata in one round-trip
-    const ids = Array.from(
+    // Join team metadata in one go
+    const teamIds = Array.from(
       new Set(
-        games
-          .flatMap((g: any) => [g.home_team, g.away_team])
-          .filter((x: any) => !!x)
+        games.flatMap((g: any) => [g.home_team, g.away_team]).filter(Boolean)
       )
     )
 
     let teamsById: Record<string, any> = {}
-    if (ids.length > 0) {
+    if (teamIds.length) {
       const { data: teams, error: tErr } = await supabase
         .from('teams')
         .select(
           'id, abbreviation, short_name, name, color_primary, color_secondary'
         )
-        .in('id', ids)
+        .in('id', teamIds)
 
       if (tErr) {
         return NextResponse.json({ error: tErr.message }, { status: 500 })
       }
-
       teamsById = Object.fromEntries((teams ?? []).map((t: any) => [t.id, t]))
     }
 
-    // 3) Shape the response the UI expects
     const rows = games.map((g: any) => ({
       id: g.id,
       season: g.season,
