@@ -10,20 +10,43 @@ export type TeamLike = {
   color_secondary?: string | null | undefined
 }
 
-export default function PickPill({
-  team,
-  status,
-  score,
-}: {
+// Back-compat props (old usage in MyPicksCard, etc.)
+type LegacyProps = {
+  teamId: string
+  teams: Record<string, TeamLike>
+  statusText?: string
+  score?: number | null
+}
+
+// New props (explicit team object)
+type NewProps = {
   team: TeamLike
   status?: string
   score?: number | null
-}) {
-  const t = team ?? {}
+}
+
+// Accept either shape
+type Props = LegacyProps | NewProps
+
+function isLegacy(p: Props): p is LegacyProps {
+  return (p as LegacyProps).teamId !== undefined
+}
+
+export default function PickPill(props: Props) {
+  const t: TeamLike = isLegacy(props)
+    ? (props.teams?.[props.teamId] ?? {})
+    : (props as NewProps).team ?? {}
+
+  const status: string | undefined = isLegacy(props)
+    ? props.statusText
+    : (props as NewProps).status
+
+  const score: number | null | undefined = props.score
+
   const abbr = (t.abbreviation ?? '').toUpperCase()
   const name = (t.name ?? t.short_name ?? (abbr || '—')).toString()
 
-  const primary = t.color_primary ?? '#111827'   // neutral-900
+  const primary = t.color_primary ?? '#111827'    // neutral-900
   const secondary = t.color_secondary ?? '#6B7280' // neutral-500
 
   return (
