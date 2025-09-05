@@ -30,20 +30,18 @@ function isCorrect(g: Game, teamId: string): boolean {
   if (g.status !== 'FINAL') return false
   const hs = Number(g.home_score ?? 0)
   const as = Number(g.away_score ?? 0)
-  if (hs === as) return false // ties award half points but are not "correct"
+  if (hs === as) return false
   return (teamId === g.home_team && hs > as) || (teamId === g.away_team && as > hs)
 }
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
 
-  // Auth
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) {
     return NextResponse.json({ error: 'unauthenticated' }, { status: 401, headers: { 'cache-control': 'no-store' } })
   }
 
-  // Params
   const url = new URL(req.url)
   let leagueId = url.searchParams.get('leagueId') || ''
   const season = Number(url.searchParams.get('season') || '')
@@ -54,22 +52,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'season (and optional week) must be numbers' }, { status: 400, headers: { 'cache-control': 'no-store' } })
   }
 
-  // If leagueId missing, pick a default league the user can see (prefer same season)
+  // Choose a default league if not provided
   if (!leagueId) {
-    // read my memberships joined to leagues for season filtering
     const { data: mems, error: mErr } = await supabase
       .from('league_memberships')
-      .select(`
-        league_id,
-        leagues:league_id ( id, season )
-      `)
+      .select(`league_id, leagues:league_id ( id, season )`)
       .eq('profile_id', user.id)
 
-    if (mErr) {
-      return NextResponse.json({ error: mErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
-    }
+    if (mErr) return NextResponse.json({ error: mErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
 
-    // prefer a league that matches the requested season
     const candidates = (mems ?? []).map((r: any) => r.leagues).filter((l: any) => l?.id)
     const bySeason = candidates.find((l: any) => Number(l.season) === season)
     const any = candidates[0]
@@ -79,16 +70,12 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Members (everyone in this league)
-  const { data: lm, error: lmErr } = await supabase
-    .from('league_memberships')
-    .select('profile_id')
-    .eq('league_id', leagueId)
+  // ✅ Get ALL member ids via RPC (bypass RLS safely)
+  const { data: memberRows, error: rpcErr } = await supabase.rpc('get_league_member_ids', { p_league_id: leagueId })
+  if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
+  const memberIds: string[] = (memberRows ?? []).map((r: any) => r.profile_id)
 
-  if (lmErr) return NextResponse.json({ error: lmErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
-  const memberIds = (lm ?? []).map(r => r.profile_id)
-
-  // Profiles for names
+  // Names
   let profiles: Record<string, Member> = {}
   if (memberIds.length) {
     const { data: profs, error: pErr } = await supabase
@@ -110,7 +97,7 @@ export async function GET(req: NextRequest) {
   if (pkErr) return NextResponse.json({ error: pkErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
   const picks: Pick[] = (picksRows ?? []) as any
 
-  // Wrinkle picks in this league/season[/week]
+  // Wrinkles in scope
   const wrnQ = supabase.from('wrinkles').select('id').eq('league_id', leagueId).eq('season', season)
   const { data: wrinkleDefs, error: wDefErr } = week != null ? await wrnQ.eq('week', week) : await wrnQ
   if (wDefErr) return NextResponse.json({ error: wDefErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
@@ -131,7 +118,7 @@ export async function GET(req: NextRequest) {
     }))
   }
 
-  // Games to score
+  // Games we need
   const gameIds = Array.from(new Set([
     ...picks.map(p => p.game_id).filter(Boolean),
     ...wrinklePicks.map(p => p.game_id).filter(Boolean),
@@ -147,7 +134,7 @@ export async function GET(req: NextRequest) {
     for (const g of games ?? []) gamesMap.set((g as any).id, g as any)
   }
 
-  // Build rows for every member (even those with zero picks yet)
+  // Build rows for everyone (even 0-pick members)
   const rows = memberIds.map((mid) => {
     const prof = profiles[mid] || { id: mid, display_name: null, email: null }
     const display = (prof.display_name || (prof.email ? String(prof.email).split('@')[0] : 'Member')) as string
@@ -164,18 +151,11 @@ export async function GET(req: NextRequest) {
       return { when, correct, pts, isWrinkle }
     }).sort((a, b) => a.when - b.when)
 
-    // aggregate: points, correct, longest streak, wrinkle points
     let cur = 0, best = 0, correctCount = 0, wrinklePts = 0, totalPts = 0
     for (const e of events) {
       totalPts += e.pts
       if (e.isWrinkle) wrinklePts += e.pts
-      if (e.correct) {
-        correctCount += 1
-        cur += 1
-        best = Math.max(best, cur)
-      } else {
-        cur = 0
-      }
+      if (e.correct) { correctCount += 1; cur += 1; best = Math.max(best, cur) } else { cur = 0 }
     }
 
     return {
@@ -188,7 +168,6 @@ export async function GET(req: NextRequest) {
     }
   })
 
-  // Sort by tiebreakers
   rows.sort((a, b) =>
     (b.points - a.points) ||
     (b.correct - a.correct) ||
