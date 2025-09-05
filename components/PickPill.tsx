@@ -23,11 +23,12 @@ export default function PickPill({ teamId, teams, statusText, ariaLabel }: Props
   const t = teams[teamId] || ({} as TeamLike)
 
   const abbr = (t.abbreviation ?? '').toUpperCase()
-  const name = (t.name ?? t.short_name ?? abbr || '—').toString()
+  // fix: avoid mixing ?? with || by isolating the coalescing chain
+  const nameBase = t.name ?? t.short_name ?? abbr
+  const name = (nameBase || '—').toString()
 
-  // colors are soft; status sits to the right
-  const primary = t.color_primary ?? '#111827' // neutral-900 fallback
-  const border = t.color_secondary ?? '#e5e7eb' // neutral-200 fallback
+  const primary = t.color_primary ?? '#111827'   // neutral-900 fallback
+  const border = t.color_secondary ?? '#e5e7eb'  // neutral-200 fallback
 
   return (
     <div className="flex items-center justify-between gap-3 w-full">
