@@ -26,7 +26,6 @@ export default async function StandingsPage({ searchParams }: { searchParams: Pr
   const weekStr = readParam(sp, 'week')
   const week = weekStr ? Number(weekStr) : undefined
 
-  // First, hit standings (it will auto-select a league if missing)
   const qs = new URLSearchParams({ season: String(season) })
   if (week !== undefined && Number.isFinite(week)) qs.set('week', String(week))
   if (providedLeagueId) qs.set('leagueId', providedLeagueId)
@@ -42,23 +41,18 @@ export default async function StandingsPage({ searchParams }: { searchParams: Pr
     back_from_first: number
     back_to_playoffs: number
   }[] = []
-  let chosenLeagueId = ''
-  try {
-    const data = await fetchJSON<{ rows: typeof rows; leagueId: string }>(`/api/standings?${qs}`)
-    rows = data.rows
-    chosenLeagueId = data.leagueId || ''
-  } catch {
-    // leave empty
-  }
-
-  // Load leagues so we can show the chosen league's name
   let leagueName = '—'
+
   try {
-    const ml = await fetchJSON<{ leagues: { id: string; name: string; season: number }[] }>('/api/my-leagues')
-    const found = (ml.leagues || []).find(l => l.id === chosenLeagueId)
-    if (found) leagueName = found.name
+    const data = await fetchJSON<{
+      rows: typeof rows
+      leagueId: string
+      leagueName: string
+    }>(`/api/standings?${qs}`)
+    rows = data.rows
+    leagueName = data.leagueName || '—'
   } catch {
-    // ignore
+    // leave defaults
   }
 
   return (
