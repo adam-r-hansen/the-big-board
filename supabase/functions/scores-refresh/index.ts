@@ -8,12 +8,11 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ESPN_URL =
   Deno.env.get("ESPN_SCOREBOARD_URL") ??
-  "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"; // public
+  "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
 
-// Window tuning: how far around "now" to consider games "near".
-// Extend future to catch early London/Europe kickoffs.
-const PAST_HOURS = Number(Deno.env.get("SCORES_PAST_HOURS") ?? 12);   // look back this many hours
-const FUTURE_HOURS = Number(Deno.env.get("SCORES_FUTURE_HOURS") ?? 18); // look ahead this many hours
+// Window tuning for “which weeks to refresh”
+const PAST_HOURS = Number(Deno.env.get("SCORES_PAST_HOURS") ?? 12);
+const FUTURE_HOURS = Number(Deno.env.get("SCORES_FUTURE_HOURS") ?? 18);
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
@@ -44,8 +43,13 @@ function toIso(x?: string): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+function kickedOff(startIso?: string | null): boolean {
+  if (!startIso) return false;
+  const t = new Date(startIso).getTime();
+  return Number.isFinite(t) && t <= Date.now();
+}
+
 async function fetchEspnScoreboard(season: number, week?: number): Promise<ExtGame[]> {
-  // Regular season by default (seasontype=2). Adjust later if you want pre/postseason.
   const qs = new URLSearchParams({ seasontype: "2", dates: String(season) });
   if (typeof week === "number") qs.set("week", String(week));
   const url = `${ESPN_URL}?${qs.toString()}`;
@@ -62,10 +66,11 @@ async function fetchEspnScoreboard(season: number, week?: number): Promise<ExtGa
     if (!espn_id) continue;
 
     const comp = Array.isArray(ev?.competitions) ? ev.competitions[0] : undefined;
-    const status = comp?.status?.type ?? ev?.status?.type ?? {};
-    const state = status?.state; // "pre" | "in" | "post"
-    const completed = Boolean(status?.completed);
-    const s = stdStatus(state, completed);
+    const statusType = comp?.status?.type ?? ev?.status?.type ?? {};
+    const state = statusType?.state; // "pre" | "in" | "post"
+    const completed = Boolean(statusType?.completed);
+
+    const startISO = toIso(ev?.date || comp?.date);
 
     const comps = Array.isArray(comp?.competitors) ? comp.competitors : [];
     const home = comps.find((c: any) => (c?.homeAway || c?.homeaway) === "home");
@@ -74,28 +79,41 @@ async function fetchEspnScoreboard(season: number, week?: number): Promise<ExtGa
     const home_abbr = String(home?.team?.abbreviation || "").toUpperCase() || undefined;
     const away_abbr = String(away?.team?.abbreviation || "").toUpperCase() || undefined;
 
-    const home_score =
+    const hScoreRaw =
       home?.score != null ? Number(home.score) : home?.team?.score != null ? Number(home.team.score) : null;
-    const away_score =
+    const aScoreRaw =
       away?.score != null ? Number(away.score) : away?.team?.score != null ? Number(away.team.score) : null;
+
+    const home_score = Number.isFinite(hScoreRaw) ? Number(hScoreRaw) : null;
+    const away_score = Number.isFinite(aScoreRaw) ? Number(aScoreRaw) : null;
+
+    // ---- Status derivation (hardened) ----
+    // 1) Use ESPN’s state first
+    let s: "UPCOMING" | "LIVE" | "FINAL" = stdStatus(state, completed);
+    // 2) If ESPN still says UPCOMING but kickoff has passed OR any score exists, treat as LIVE
+    if (s === "UPCOMING" && !completed && (kickedOff(startISO) || home_score !== null || away_score !== null)) {
+      s = "LIVE";
+    }
+    // 3) If completed, always FINAL
+    if (completed) s = "FINAL";
+    // --------------------------------------
 
     out.push({
       espn_id,
       season,
       week,
-      start_utc: toIso(ev?.date || comp?.date),
+      start_utc: startISO,
       status: s,
       home_abbr,
       away_abbr,
-      home_score: Number.isFinite(home_score) ? home_score : null,
-      away_score: Number.isFinite(away_score) ? away_score : null,
+      home_score,
+      away_score,
     });
   }
 
   return out;
 }
 
-// Find (season, week) pairs that have games "near now" based on the window.
 async function findWindowPairs(): Promise<Array<{ season: number; week: number }>> {
   const now = Date.now();
   const fromIso = new Date(now - PAST_HOURS * 3600 * 1000).toISOString();
@@ -120,13 +138,11 @@ async function findWindowPairs(): Promise<Array<{ season: number; week: number }
 serve(async (req) => {
   try {
     const url = new URL(req.url);
-    // Optional overrides for manual invocations
     const seasonQ = url.searchParams.get("season");
     const weekQ = url.searchParams.get("week");
     const seasonOverride = seasonQ ? Number(seasonQ) : undefined;
     const weekOverride = weekQ ? Number(weekQ) : undefined;
 
-    // Load teams once for abbr -> team.id mapping
     const { data: teams, error: tErr } = await supabase.from("teams").select("id, abbreviation");
     if (tErr) throw tErr;
     const abbrToId = new Map<string, string>();
@@ -134,16 +150,13 @@ serve(async (req) => {
       if (t?.abbreviation && t?.id) abbrToId.set(String(t.abbreviation).toUpperCase(), t.id);
     });
 
-    // Build the list of (season, week) to process
     let pairs: Array<{ season: number; week: number }> = [];
     if (typeof seasonOverride === "number" && typeof weekOverride === "number") {
       pairs = [{ season: seasonOverride, week: weekOverride }];
     } else if (typeof seasonOverride === "number") {
-      // No week specified: limit to weeks in window for that season
       const windowPairs = await findWindowPairs();
       pairs = windowPairs.filter((p) => p.season === seasonOverride);
     } else {
-      // Neither specified: use window across all seasons present
       pairs = await findWindowPairs();
     }
 
@@ -152,11 +165,7 @@ serve(async (req) => {
       const fromIso = new Date(now - PAST_HOURS * 3600 * 1000).toISOString();
       const toIso_ = new Date(now + FUTURE_HOURS * 3600 * 1000).toISOString();
       return new Response(
-        JSON.stringify({
-          ok: true,
-          skipped: "no games in window",
-          window: { fromIso, toIso },
-        }),
+        JSON.stringify({ ok: true, skipped: "no games in window", window: { fromIso, toIso } }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } },
       );
     }
@@ -165,10 +174,8 @@ serve(async (req) => {
     let updated = 0;
 
     for (const { season, week } of pairs) {
-      // Fetch ESPN for this (season, week)
       const extGames = await fetchEspnScoreboard(season, week);
 
-      // Lookups from ESPN data
       const byEspn = new Map(extGames.map((e) => [e.espn_id, e]));
       const byKey = new Map<string, ExtGame>(); // "HOME-AWAY-ISO"
       for (const e of extGames) {
@@ -176,7 +183,6 @@ serve(async (req) => {
         byKey.set(key, e);
       }
 
-      // Only the games we need from our DB
       const { data: games, error: gErr } = await supabase
         .from("games")
         .select("id, season, week, game_utc, status, home_team, away_team, home_score, away_score, espn_id")
@@ -187,10 +193,8 @@ serve(async (req) => {
       for (const g of games || []) {
         let eg: ExtGame | undefined;
 
-        // 1) espn_id match
         if (g.espn_id && byEspn.has(g.espn_id)) eg = byEspn.get(g.espn_id);
 
-        // 2) fallback: team abbr + kickoff ISO
         if (!eg) {
           const homeAbbr = [...abbrToId.entries()].find(([, id]) => id === g.home_team)?.[0];
           const awayAbbr = [...abbrToId.entries()].find(([, id]) => id === g.away_team)?.[0];
