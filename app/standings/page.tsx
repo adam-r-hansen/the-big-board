@@ -1,7 +1,7 @@
 // app/standings/page.tsx
 export const dynamic = 'force-dynamic'
 
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 
 type SP = Record<string, string | string[] | undefined>
 
@@ -16,14 +16,23 @@ function fmtPts(n: number) {
 }
 
 async function fetchJSONWithAuth<T>(path: string): Promise<T> {
-  // Forward the user's cookies so Supabase session is available to the API
+  // Build absolute URL so the cookie header applies to the same origin in SSR
+  const h = await headers()
+  const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000'
+  const proto = h.get('x-forwarded-proto') ?? 'https'
+  const origin = `${proto}://${host}`
+
   const cookieHeader = (await cookies()).toString()
-  const res = await fetch(path, {
+
+  const res = await fetch(`${origin}${path}`, {
     cache: 'no-store',
-    headers: { cookie: cookieHeader },
+    headers: {
+      cookie: cookieHeader,          // forward Supabase session cookies
+      'x-forwarded-host': host,      // keep origin hints consistent
+      'x-forwarded-proto': proto,
+    },
   })
   if (!res.ok) {
-    // Let the caller handle showing empty state
     throw new Error(`${res.status} ${res.statusText}`)
   }
   return res.json() as Promise<T>
@@ -64,7 +73,7 @@ export default async function StandingsPage({ searchParams }: { searchParams: Pr
     rows = data.rows ?? []
     leagueName = data.leagueName || '—'
   } catch {
-    // leave defaults (No rows / League: —)
+    // Leave empty state if fetch/auth fails
   }
 
   return (
