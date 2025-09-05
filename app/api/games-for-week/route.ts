@@ -18,12 +18,10 @@ function inferStatus(g: DbGame): 'UPCOMING' | 'LIVE' | 'FINAL' {
   // Only used if DB status is null. Otherwise DB is authoritative.
   const now = Date.now()
   const kickoff = Date.parse(g.game_utc)
-  // Treat 4 hours after kickoff as a safe “game window” for LIVE inference.
-  const endWindow = kickoff + 4 * 60 * 60 * 1000
+  const endWindow = kickoff + 4 * 60 * 60 * 1000 // 4h game window
 
   if (now < kickoff) return 'UPCOMING'
   if (now >= kickoff && now <= endWindow) return 'LIVE'
-  // If scores exist and we're past the window, assume FINAL.
   return 'FINAL'
 }
 
@@ -37,7 +35,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'season and week are required' }, { status: 400 })
     }
 
-    const supabase = createClient()
+    // IMPORTANT: createClient() returns a Promise in this codebase
+    const supabase = await createClient()
+
     // No auth requirement to view schedule/scoreboard
     const { data, error } = await supabase
       .from('games')
@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
       away_team: g.away_team,
       home_score: g.home_score,
       away_score: g.away_score,
-      // DB status is authoritative unless it's null.
+      // Trust DB status if present; only infer when null
       status: g.status ?? inferStatus(g),
     }))
 
