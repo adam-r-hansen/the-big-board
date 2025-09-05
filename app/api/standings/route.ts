@@ -36,7 +36,6 @@ function isCorrect(g: Game, teamId: string): boolean {
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
-
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) {
     return NextResponse.json({ error: 'unauthenticated' }, { status: 401, headers: { 'cache-control': 'no-store' } })
@@ -52,25 +51,38 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'season (and optional week) must be numbers' }, { status: 400, headers: { 'cache-control': 'no-store' } })
   }
 
-  // Choose a default league if not provided
+  // If no leagueId provided, pick one from the user's memberships the simple way (no relational joins).
   if (!leagueId) {
+    // 1) memberships
     const { data: mems, error: mErr } = await supabase
       .from('league_memberships')
-      .select(`league_id, leagues:league_id ( id, season )`)
+      .select('league_id')
       .eq('profile_id', user.id)
-
     if (mErr) return NextResponse.json({ error: mErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
 
-    const candidates = (mems ?? []).map((r: any) => r.leagues).filter((l: any) => l?.id)
-    const bySeason = candidates.find((l: any) => Number(l.season) === season)
-    const any = candidates[0]
-    leagueId = bySeason?.id || any?.id || ''
+    const leagueIds = (mems ?? []).map(r => r.league_id)
+    if (!leagueIds.length) {
+      return NextResponse.json({ rows: [], season, week: week ?? null, leagueId: '' }, { headers: { 'cache-control': 'no-store' } })
+    }
+
+    // 2) candidate leagues (id, season), then choose by requested season or first
+    const { data: leagues, error: lErr } = await supabase
+      .from('leagues')
+      .select('id, season')
+      .in('id', leagueIds)
+    if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
+
+    const bySeason = (leagues ?? []).find((l: any) => Number(l.season) === season)
+    const any = (leagues ?? [])[0]
+    leagueId = (bySeason as any)?.id || (any as any)?.id || ''
     if (!leagueId) {
       return NextResponse.json({ rows: [], season, week: week ?? null, leagueId: '' }, { headers: { 'cache-control': 'no-store' } })
     }
   }
 
-  // ✅ Get ALL member ids via RPC (bypass RLS safely)
+  // === Members (via RPC to avoid RLS headaches) ===
+  // Ensure the function exists (we shared earlier):
+  // create or replace function public.get_league_member_ids(p_league_id uuid) returns table(profile_id uuid) ...
   const { data: memberRows, error: rpcErr } = await supabase.rpc('get_league_member_ids', { p_league_id: leagueId })
   if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
   const memberIds: string[] = (memberRows ?? []).map((r: any) => r.profile_id)
@@ -97,7 +109,7 @@ export async function GET(req: NextRequest) {
   if (pkErr) return NextResponse.json({ error: pkErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
   const picks: Pick[] = (picksRows ?? []) as any
 
-  // Wrinkles in scope
+  // Wrinkles for scope
   const wrnQ = supabase.from('wrinkles').select('id').eq('league_id', leagueId).eq('season', season)
   const { data: wrinkleDefs, error: wDefErr } = week != null ? await wrnQ.eq('week', week) : await wrnQ
   if (wDefErr) return NextResponse.json({ error: wDefErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
@@ -134,7 +146,7 @@ export async function GET(req: NextRequest) {
     for (const g of games ?? []) gamesMap.set((g as any).id, g as any)
   }
 
-  // Build rows for everyone (even 0-pick members)
+  // Build rows for each member
   const rows = memberIds.map((mid) => {
     const prof = profiles[mid] || { id: mid, display_name: null, email: null }
     const display = (prof.display_name || (prof.email ? String(prof.email).split('@')[0] : 'Member')) as string
@@ -168,6 +180,7 @@ export async function GET(req: NextRequest) {
     }
   })
 
+  // Sort by tiebreakers
   rows.sort((a, b) =>
     (b.points - a.points) ||
     (b.correct - a.correct) ||

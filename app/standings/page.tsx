@@ -1,6 +1,4 @@
 // app/standings/page.tsx
-import Link from 'next/link'
-
 export const dynamic = 'force-dynamic'
 
 type SP = Record<string, string | string[] | undefined>
@@ -17,31 +15,21 @@ function readParam(sp: SP, key: string): string | undefined {
 }
 
 function fmtPts(n: number) {
-  // show .5 when needed, strip trailing .0
   const s = n.toFixed(1)
   return s.endsWith('.0') ? s.slice(0, -2) : s
 }
 
 export default async function StandingsPage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams
-  const leagueId = readParam(sp, 'leagueId') ?? ''
+  const providedLeagueId = readParam(sp, 'leagueId')
   const season = Number(readParam(sp, 'season') ?? new Date().getUTCFullYear())
   const weekStr = readParam(sp, 'week')
   const week = weekStr ? Number(weekStr) : undefined
 
-  // Load leagues for breadcrumb
-  let myLeagues: { id: string; name: string; season: number }[] = []
-  try {
-    const data = await fetchJSON<{ leagues: { id: string; name: string; season: number }[] }>('/api/my-leagues')
-    myLeagues = data.leagues
-  } catch {/* ignore */}
-
-  const chosenLeague = leagueId || myLeagues[0]?.id || ''
-  const leagueName = myLeagues.find(l => l.id === chosenLeague)?.name ?? '—'
-
-  // Standings
-  const qs = new URLSearchParams({ leagueId: chosenLeague, season: String(season) })
+  // First, hit standings (it will auto-select a league if missing)
+  const qs = new URLSearchParams({ season: String(season) })
   if (week !== undefined && Number.isFinite(week)) qs.set('week', String(week))
+  if (providedLeagueId) qs.set('leagueId', providedLeagueId)
 
   let rows: {
     profile_id: string
@@ -54,21 +42,32 @@ export default async function StandingsPage({ searchParams }: { searchParams: Pr
     back_from_first: number
     back_to_playoffs: number
   }[] = []
+  let chosenLeagueId = ''
   try {
-    const data = await fetchJSON<{ rows: typeof rows }>(`/api/standings?${qs}`)
+    const data = await fetchJSON<{ rows: typeof rows; leagueId: string }>(`/api/standings?${qs}`)
     rows = data.rows
-  } catch {/* leave empty */}
+    chosenLeagueId = data.leagueId || ''
+  } catch {
+    // leave empty
+  }
+
+  // Load leagues so we can show the chosen league's name
+  let leagueName = '—'
+  try {
+    const ml = await fetchJSON<{ leagues: { id: string; name: string; season: number }[] }>('/api/my-leagues')
+    const found = (ml.leagues || []).find(l => l.id === chosenLeagueId)
+    if (found) leagueName = found.name
+  } catch {
+    // ignore
+  }
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
       <div className="mb-6 flex items-center justify-between gap-4">
         <h1 className="text-3xl font-semibold">Standings</h1>
-        <nav className="flex items-center gap-6 text-lg">
-          <Link href="/picks" className="text-neutral-700 hover:underline">Picks</Link>
-          <span className="text-neutral-500">
-            League: <span className="font-medium text-neutral-800">{leagueName}</span>
-          </span>
-        </nav>
+        <div className="text-lg text-neutral-500">
+          League: <span className="font-medium text-neutral-800">{leagueName}</span>
+        </div>
       </div>
 
       <section className="rounded-3xl border border-neutral-200 p-6">
@@ -97,8 +96,8 @@ export default async function StandingsPage({ searchParams }: { searchParams: Pr
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, idx) => (
-                  <tr key={r.profile_id} className={`border-b border-neutral-200 last:border-b-0 ${idx === 3 ? 'bg-neutral-50' : ''}`}>
+                {rows.map((r) => (
+                  <tr key={r.profile_id} className="border-b border-neutral-200 last:border-b-0">
                     <td className="py-3 pr-3">{r.rank}</td>
                     <td className="py-3 pr-3">{r.display_name || '—'}</td>
                     <td className="py-3 text-right font-medium">{fmtPts(r.points)}</td>
