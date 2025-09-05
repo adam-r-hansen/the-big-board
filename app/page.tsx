@@ -30,7 +30,6 @@ type GameRow = {
 
 function formatKick(t: string) {
   const d = new Date(t)
-  // Example: 9/4/2025, 5:20:00 PM
   return d.toLocaleString(undefined, {
     month: "numeric",
     day: "numeric",
@@ -62,7 +61,7 @@ function Chip({
   labelMode?: "auto" | "short" | "full"
 }) {
   const abbr = (team.abbreviation ?? "").toUpperCase()
-  const short = team.short_name ?? abbr || "—"
+  const short = team.short_name ?? (abbr || "—")
   const full = team.name ?? short
 
   const label =
@@ -113,7 +112,6 @@ async function getTeamMap(): Promise<TeamMap> {
       cache: "no-store",
     })
     const json = await r.json()
-    // API earlier returned a simple map
     return (json?.map ?? json ?? {}) as TeamMap
   } catch {
     return {}
@@ -164,7 +162,7 @@ export default async function Page({
         </div>
       </div>
 
-      {/* League Overview (simple counters placeholder to avoid breaking) */}
+      {/* League Overview */}
       <section className="mb-8 rounded-2xl border p-4">
         <div className="mb-2 text-lg font-semibold">League Overview</div>
         <div className="text-sm text-gray-500">

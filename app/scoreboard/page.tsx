@@ -59,7 +59,7 @@ function Chip({
   labelMode?: "auto" | "short" | "full"
 }) {
   const abbr = (team.abbreviation ?? "").toUpperCase()
-  const short = team.short_name ?? abbr || "—"
+  const short = team.short_name ?? (abbr || "—")
   const full = team.name ?? short
   const label =
     labelMode === "short" ? short : labelMode === "full" ? full : undefined
