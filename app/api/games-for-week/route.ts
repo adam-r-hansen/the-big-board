@@ -1,90 +1,87 @@
 // app/api/games-for-week/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { createClient } from '@/lib/supabase/server'
 
-type DbGame = {
-  id: string
-  season: number
-  week: number
-  game_utc: string
-  home_team: string
-  away_team: string
-  home_score: number | null
-  away_score: number | null
-  status: 'UPCOMING' | 'LIVE' | 'FINAL' | null
-}
-
-// Only used when DB status is null
-function inferStatus(g: DbGame): 'UPCOMING' | 'LIVE' | 'FINAL' {
-  const now = Date.now()
-  const kickoff = Date.parse(g.game_utc)
-  const endWindow = kickoff + 4 * 60 * 60 * 1000 // 4h window
-
-  if (now < kickoff) return 'UPCOMING'
-  if (now >= kickoff && now <= endWindow) return 'LIVE'
-  return 'FINAL'
-}
-
-// Reconcile DB status with wall clock to avoid "LIVE" before kickoff
-function reconcileStatus(g: DbGame): 'UPCOMING' | 'LIVE' | 'FINAL' {
-  const db = g.status
-  const now = Date.now()
-  const kickoff = Date.parse(g.game_utc)
-  const preBufferMs = 60 * 1000 // 1 minute early buffer
-
-  if (db === 'FINAL') return 'FINAL'
-
-  // If we're clearly before kickoff (with a buffer), it cannot be LIVE.
-  if (now < kickoff - preBufferMs) return 'UPCOMING'
-
-  if (db === 'UPCOMING' && now >= kickoff) return 'LIVE'
-  if (db === 'LIVE' && now < kickoff) return 'UPCOMING'
-
-  // Fall back to DB value or inference when null
-  return db ?? inferStatus(g)
-}
-
+// NOTE: This route is AUTH-OPTIONAL (public scoreboard).
+// It returns games for a given season & week with joined team metadata.
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url)
-    const season = Number(searchParams.get('season'))
-    const week = Number(searchParams.get('week'))
+    const url = new URL(req.url)
+    // Be tolerant of missing params; default to current UTC year & week 1
+    const seasonParam = url.searchParams.get('season')
+    const weekParam = url.searchParams.get('week')
 
-    if (!Number.isFinite(season) || !Number.isFinite(week)) {
-      return NextResponse.json({ error: 'season and week are required' }, { status: 400 })
-    }
+    const season = Number(seasonParam ?? new Date().getUTCFullYear())
+    const week = Number(weekParam ?? 1)
 
-    // NOTE: createClient() returns a Promise in this codebase
     const supabase = await createClient()
 
-    const { data, error } = await supabase
+    // 1) Pull games
+    const { data: games, error: gErr } = await supabase
       .from('games')
-      .select(`
-        id, season, week, game_utc, home_team, away_team,
-        home_score, away_score, status
-      `)
+      .select(
+        'id, season, week, game_utc, status, home_team, away_team, home_score, away_score'
+      )
       .eq('season', season)
       .eq('week', week)
       .order('game_utc', { ascending: true })
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+    if (gErr) {
+      return NextResponse.json({ error: gErr.message }, { status: 500 })
     }
 
-    const rows = (data as DbGame[]).map((g) => ({
+    if (!games || games.length === 0) {
+      // Return a well-formed empty payload (the page expects `rows`)
+      return NextResponse.json({ rows: [], season, week })
+    }
+
+    // 2) Join team metadata in one round-trip
+    const ids = Array.from(
+      new Set(
+        games
+          .flatMap((g: any) => [g.home_team, g.away_team])
+          .filter((x: any) => !!x)
+      )
+    )
+
+    let teamsById: Record<string, any> = {}
+    if (ids.length > 0) {
+      const { data: teams, error: tErr } = await supabase
+        .from('teams')
+        .select(
+          'id, abbreviation, short_name, name, color_primary, color_secondary'
+        )
+        .in('id', ids)
+
+      if (tErr) {
+        return NextResponse.json({ error: tErr.message }, { status: 500 })
+      }
+
+      teamsById = Object.fromEntries(
+        (teams ?? []).map((t: any) => [t.id, t])
+      )
+    }
+
+    // 3) Shape the response the UI expects
+    const rows = games.map((g: any) => ({
       id: g.id,
       season: g.season,
       week: g.week,
       game_utc: g.game_utc,
-      home_team: g.home_team,
-      away_team: g.away_team,
+      status: g.status, // 'UPCOMING' | 'LIVE' | 'FINAL' (set by your refresh fn)
       home_score: g.home_score,
       away_score: g.away_score,
-      status: reconcileStatus(g),
+      home_team_id: g.home_team,
+      away_team_id: g.away_team,
+      home_team: teamsById[g.home_team] ?? null,
+      away_team: teamsById[g.away_team] ?? null,
     }))
 
-    return NextResponse.json({ games: rows })
+    return NextResponse.json({ rows, season, week })
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? 'unknown error' }, { status: 500 })
+    return NextResponse.json(
+      { error: e?.message ?? 'Unknown server error' },
+      { status: 500 }
+    )
   }
 }
