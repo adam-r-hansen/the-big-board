@@ -14,15 +14,34 @@ type DbGame = {
   status: 'UPCOMING' | 'LIVE' | 'FINAL' | null
 }
 
+// Only used when DB status is null
 function inferStatus(g: DbGame): 'UPCOMING' | 'LIVE' | 'FINAL' {
-  // Only used if DB status is null. Otherwise DB is authoritative.
   const now = Date.now()
   const kickoff = Date.parse(g.game_utc)
-  const endWindow = kickoff + 4 * 60 * 60 * 1000 // 4h game window
+  const endWindow = kickoff + 4 * 60 * 60 * 1000 // 4h window
 
   if (now < kickoff) return 'UPCOMING'
   if (now >= kickoff && now <= endWindow) return 'LIVE'
   return 'FINAL'
+}
+
+// Reconcile DB status with wall clock to avoid "LIVE" before kickoff
+function reconcileStatus(g: DbGame): 'UPCOMING' | 'LIVE' | 'FINAL' {
+  const db = g.status
+  const now = Date.now()
+  const kickoff = Date.parse(g.game_utc)
+  const preBufferMs = 60 * 1000 // 1 minute early buffer
+
+  if (db === 'FINAL') return 'FINAL'
+
+  // If we're clearly before kickoff (with a buffer), it cannot be LIVE.
+  if (now < kickoff - preBufferMs) return 'UPCOMING'
+
+  if (db === 'UPCOMING' && now >= kickoff) return 'LIVE'
+  if (db === 'LIVE' && now < kickoff) return 'UPCOMING'
+
+  // Fall back to DB value or inference when null
+  return db ?? inferStatus(g)
 }
 
 export async function GET(req: NextRequest) {
@@ -35,18 +54,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'season and week are required' }, { status: 400 })
     }
 
-    // IMPORTANT: createClient() returns a Promise in this codebase
+    // NOTE: createClient() returns a Promise in this codebase
     const supabase = await createClient()
 
-    // No auth requirement to view schedule/scoreboard
     const { data, error } = await supabase
       .from('games')
-      .select(
-        `
+      .select(`
         id, season, week, game_utc, home_team, away_team,
         home_score, away_score, status
-      `
-      )
+      `)
       .eq('season', season)
       .eq('week', week)
       .order('game_utc', { ascending: true })
@@ -64,8 +80,7 @@ export async function GET(req: NextRequest) {
       away_team: g.away_team,
       home_score: g.home_score,
       away_score: g.away_score,
-      // Trust DB status if present; only infer when null
-      status: g.status ?? inferStatus(g),
+      status: reconcileStatus(g),
     }))
 
     return NextResponse.json({ games: rows })

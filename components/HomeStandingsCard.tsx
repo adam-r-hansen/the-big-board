@@ -1,4 +1,3 @@
-// components/HomeStandingsCard.tsx
 export const dynamic = 'force-dynamic'
 
 import { cookies, headers } from 'next/headers'
@@ -39,7 +38,6 @@ export default async function HomeStandingsCard(props: {
   season: number
 }) {
   const { leagueId, season } = props
-
   let rows: Row[] = []
   try {
     const data = await fetchJSONWithAuth<{ rows: Row[] }>(
@@ -73,7 +71,6 @@ export default async function HomeStandingsCard(props: {
             </tr>
           </thead>
           <tbody>
-            {/* IMPORTANT: no slice here → show ALL rows */}
             {rows.map((r) => (
               <tr key={r.profile_id} className="border-b border-neutral-200 last:border-b-0">
                 <td className="py-2">{r.rank}</td>
