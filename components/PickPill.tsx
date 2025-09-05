@@ -1,55 +1,63 @@
-// components/PickPill.tsx
 'use client'
 
-import * as React from 'react'
-
-export type TeamLike = {
-  id: string
-  name?: string | null
-  short_name?: string | null
-  abbreviation?: string | null
-  color_primary?: string | null
-  color_secondary?: string | null
+type TeamLike = {
+  id?: string
+  abbreviation?: string | undefined | null
+  short_name?: string | undefined | null
+  name?: string | undefined | null
+  color_primary?: string | undefined | null
+  color_secondary?: string | undefined | null
 }
 
-type Props = {
-  teamId: string
-  teams: Record<string, TeamLike>
-  statusText?: string // UPCOMING | LIVE | FINAL (optional)
-  ariaLabel?: string
-}
-
-export default function PickPill({ teamId, teams, statusText, ariaLabel }: Props) {
-  const t = teams[teamId] || ({} as TeamLike)
-
+export default function PickPill({
+  team,
+  status,
+  score,
+}: {
+  team: TeamLike
+  status?: string
+  score?: number | null
+}) {
+  const t = team ?? {}
   const abbr = (t.abbreviation ?? '').toUpperCase()
-  // fix: avoid mixing ?? with || by isolating the coalescing chain
-  const nameBase = t.name ?? t.short_name ?? abbr
-  const name = (nameBase || '—').toString()
+  const name = (t.name ?? t.short_name ?? (abbr || '—')).toString()
 
-  const primary = t.color_primary ?? '#111827'   // neutral-900 fallback
-  const border = t.color_secondary ?? '#e5e7eb'  // neutral-200 fallback
+  const primary = t.color_primary ?? '#111827'
+  const secondary = t.color_secondary ?? '#6B7280'
 
   return (
-    <div className="flex items-center justify-between gap-3 w-full">
-      <div
-        className="inline-flex select-none items-center justify-center rounded-2xl border px-3 py-2 w-24 md:w-64"
-        style={{ borderColor: border }}
-        aria-label={ariaLabel || name}
-      >
-        {/* desktop: full name (truncate) */}
-        <span className="hidden md:inline truncate" style={{ color: primary, maxWidth: '14rem' }}>
-          {name}
-        </span>
-        {/* mobile: abbreviation */}
-        <span className="md:hidden font-medium" style={{ color: primary }}>
-          {abbr || name}
-        </span>
-      </div>
+    <span
+      className="inline-flex items-center gap-2 rounded-xl border px-3 py-1 text-sm font-medium select-none"
+      style={{
+        // FLAT background
+        background: 'transparent',
+        borderColor: primary as string,
+        color: primary as string,
+      }}
+    >
+      <span className="hidden md:inline">{name}</span>
+      <span className="md:hidden">{t.short_name ?? abbr || '—'}</span>
 
-      {statusText ? (
-        <span className="text-sm text-neutral-500 shrink-0">{statusText}</span>
-      ) : null}
-    </div>
+      {typeof score === 'number' && (
+        <span
+          className="ml-1 inline-flex min-w-6 items-center justify-center rounded-md px-1.5 py-0.5 text-xs font-semibold"
+          style={{
+            background: 'rgba(0,0,0,0.05)',
+            color: primary as string,
+          }}
+        >
+          {score}
+        </span>
+      )}
+
+      {status && (
+        <span
+          className="ml-1 inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+          style={{ color: secondary as string }}
+        >
+          {status}
+        </span>
+      )}
+    </span>
   )
 }
