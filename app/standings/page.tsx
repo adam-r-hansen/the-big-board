@@ -1,13 +1,9 @@
 // app/standings/page.tsx
 export const dynamic = 'force-dynamic'
 
-type SP = Record<string, string | string[] | undefined>
+import { cookies } from 'next/headers'
 
-async function fetchJSON<T>(url: string): Promise<T> {
-  const res = await fetch(url, { cache: 'no-store' })
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-  return res.json() as Promise<T>
-}
+type SP = Record<string, string | string[] | undefined>
 
 function readParam(sp: SP, key: string): string | undefined {
   const v = sp[key]
@@ -17,6 +13,20 @@ function readParam(sp: SP, key: string): string | undefined {
 function fmtPts(n: number) {
   const s = n.toFixed(1)
   return s.endsWith('.0') ? s.slice(0, -2) : s
+}
+
+async function fetchJSONWithAuth<T>(path: string): Promise<T> {
+  // Forward the user's cookies so Supabase session is available to the API
+  const cookieHeader = (await cookies()).toString()
+  const res = await fetch(path, {
+    cache: 'no-store',
+    headers: { cookie: cookieHeader },
+  })
+  if (!res.ok) {
+    // Let the caller handle showing empty state
+    throw new Error(`${res.status} ${res.statusText}`)
+  }
+  return res.json() as Promise<T>
 }
 
 export default async function StandingsPage({ searchParams }: { searchParams: Promise<SP> }) {
@@ -30,7 +40,7 @@ export default async function StandingsPage({ searchParams }: { searchParams: Pr
   if (week !== undefined && Number.isFinite(week)) qs.set('week', String(week))
   if (providedLeagueId) qs.set('leagueId', providedLeagueId)
 
-  let rows: {
+  type Row = {
     profile_id: string
     display_name: string
     points: number
@@ -40,19 +50,21 @@ export default async function StandingsPage({ searchParams }: { searchParams: Pr
     rank: number
     back_from_first: number
     back_to_playoffs: number
-  }[] = []
+  }
+
+  let rows: Row[] = []
   let leagueName = '—'
 
   try {
-    const data = await fetchJSON<{
-      rows: typeof rows
+    const data = await fetchJSONWithAuth<{
+      rows: Row[]
       leagueId: string
       leagueName: string
-    }>(`/api/standings?${qs}`)
-    rows = data.rows
+    }>(`/api/standings?${qs.toString()}`)
+    rows = data.rows ?? []
     leagueName = data.leagueName || '—'
   } catch {
-    // leave defaults
+    // leave defaults (No rows / League: —)
   }
 
   return (
