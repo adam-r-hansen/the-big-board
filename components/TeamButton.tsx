@@ -31,7 +31,6 @@ type Props = {
 function safeColor(hex?: string | null, fallback = '#111827') {
   if (!hex) return fallback
   const trimmed = String(hex).trim()
-  // naive guard; accept valid hex-like inputs
   if (/^#([0-9a-fA-F]{3}){1,2}$/.test(trimmed)) return trimmed
   return fallback
 }
@@ -51,10 +50,10 @@ export default function TeamButton({
   const abbr = (team.abbreviation ?? '').toUpperCase()
   const baseName =
     labelMode === 'abbr'
-      ? abbr || '—'
+      ? (abbr || '—')
       : labelMode === 'short'
-      ? team.short_name ?? abbr || '—'
-      : team.name ?? team.short_name ?? abbr || '—'
+      ? ((team.short_name ?? abbr) || '—')
+      : ((team.name ?? team.short_name ?? abbr) || '—')
 
   // FLAT style: solid bg, crisp border (team color), thicker when selected
   const borderWidth = selected ? 2 : 1
@@ -70,15 +69,13 @@ export default function TeamButton({
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
       className={[
-        // Sizing kept identical to previous “pill” look
         'w-full h-20 md:h-20 rounded-2xl',
         'px-4 md:px-6',
         'flex items-center justify-center text-center',
         'text-base md:text-lg font-semibold',
         'transition-[transform,box-shadow,opacity] duration-150',
         disabled ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-md active:scale-[0.99]',
-        // remove any legacy gradient utilities if they’re still present upstream
-        'bg-white', // ensure flat
+        'bg-white',
       ].join(' ')}
       style={{
         backgroundColor: bgColor,
@@ -86,17 +83,12 @@ export default function TeamButton({
         borderStyle: 'solid',
         borderWidth,
         borderColor,
-        // a subtle inner tint so secondary color still has a presence without gradients
         boxShadow: selected
           ? `inset 0 0 0 9999px rgba(0,0,0,0), 0 1px 2px rgba(0,0,0,0.05)`
           : `inset 0 0 0 9999px rgba(0,0,0,0), 0 1px 2px rgba(0,0,0,0.04)`,
       }}
     >
-      <span
-        className="truncate max-w-full"
-        // small underline accent in team’s secondary color (kept very subtle)
-        style={{ textDecorationColor: secondary }}
-      >
+      <span className="truncate max-w-full" style={{ textDecorationColor: secondary }}>
         {baseName}
       </span>
     </button>
