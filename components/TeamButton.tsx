@@ -75,10 +75,12 @@ export default function TeamButton({
         'text-base md:text-lg font-semibold',
         'transition-[transform,box-shadow,opacity] duration-150',
         disabled ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-md active:scale-[0.99]',
+        // ensure no gradient utility sneaks in
         'bg-white',
       ].join(' ')}
       style={{
         backgroundColor: bgColor,
+        backgroundImage: 'none', // <- hard-kill any gradient
         color: textColor,
         borderStyle: 'solid',
         borderWidth,
