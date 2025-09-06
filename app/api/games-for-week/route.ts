@@ -1,35 +1,41 @@
-// app/api/games-for-week/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-// Always hit the DB (no prerender cache)
+// Always hit the DB (no cache)
 export const dynamic = 'force-dynamic'
 
-// Use the public (read-only) anon client for scoreboard
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+// Support BOTH public and private env names
+const SUPABASE_URL =
+  process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? ''
+const SUPABASE_ANON_KEY =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? ''
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  // Fail fast if env vars are missing
-  console.warn(
-    '[games-for-week] Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY'
-  )
+function badEnv() {
+  return !SUPABASE_URL || !SUPABASE_ANON_KEY
 }
 
 export async function GET(req: NextRequest) {
   try {
-    const url = new URL(req.url)
-    const seasonParam = url.searchParams.get('season')
-    const weekParam = url.searchParams.get('week')
+    if (badEnv()) {
+      // Surface a clear error so the UI doesn’t silently show “No games found”
+      return NextResponse.json(
+        {
+          error:
+            'Supabase env vars missing. Expected NEXT_PUBLIC_SUPABASE_URL/ANON_KEY or SUPABASE_URL/ANON_KEY.',
+        },
+        { status: 500 }
+      )
+    }
 
-    const season = Number(seasonParam ?? new Date().getUTCFullYear())
-    const week = Number(weekParam ?? 1)
+    const url = new URL(req.url)
+    const season = Number(url.searchParams.get('season') ?? new Date().getUTCFullYear())
+    const week = Number(url.searchParams.get('week') ?? 1)
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: { persistSession: false },
     })
 
-    // Pull games for the selected week/season
+    // Get the games for the selected week/season
     const { data: games, error: gErr } = await supabase
       .from('games')
       .select(
@@ -43,15 +49,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: gErr.message }, { status: 500 })
     }
 
-    if (!games || games.length === 0) {
+    if (!games?.length) {
       return NextResponse.json({ rows: [], season, week })
     }
 
     // Join team metadata
     const teamIds = Array.from(
-      new Set(
-        games.flatMap((g: any) => [g.home_team, g.away_team]).filter(Boolean)
-      )
+      new Set(games.flatMap((g: any) => [g.home_team, g.away_team]).filter(Boolean))
     )
 
     let teamsById: Record<string, any> = {}
