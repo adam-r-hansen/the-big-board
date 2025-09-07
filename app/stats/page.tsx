@@ -19,7 +19,7 @@ type MySeason = {
     week: number
     team_id: string
     result: 'W' | 'L' | '-' | 'T'
-    score: string | null   // e.g., "20-13"
+    score: string | null
     points: number | null
     wrinkle: boolean
     status?: 'LIVE' | 'FINAL' | 'UPCOMING'
@@ -64,7 +64,6 @@ export default function StatsPage() {
           fetch(`/api/my-stats?season=${season}`, { cache: 'no-store' }).then(r => r.json()),
           fetch(`/api/league-stats?season=${season}`, { cache: 'no-store' }).then(r => r.json()),
         ])
-
         setMine(ms?.season || null)
         setLbAvg(ls?.leaderboard_avg || [])
         setLbAcc(ls?.leaderboard_accuracy || [])
@@ -133,6 +132,7 @@ export default function StatsPage() {
                               teamId={r.team_id}
                               teamIndex={teamIndex}
                               size="sm"
+                              mdUpSize="md"
                               variant="subtle"
                               status={r.status}
                               points={r.status === 'FINAL' ? (r.points ?? null) : null}

@@ -4,11 +4,18 @@ import { useEffect, useMemo, useState } from 'react'
 import type { TeamLike } from '@/lib/teamColors'
 import { resolveTeamHex } from '@/lib/teamColors'
 
+type Size = 'sm' | 'md' | 'lg'
+
 type Props = {
   team?: TeamLike
   teamId?: string
   teamIndex?: Record<string, TeamLike>
-  size?: 'sm' | 'md' | 'lg'
+  /** Base (mobile) size */
+  size?: Size
+  /** Size for ≥ md breakpoint (desktop/laptop) */
+  mdUpSize?: Size
+  /** Optional extra override for ≥ lg */
+  lgUpSize?: Size
   variant?: 'outline' | 'subtle'
   status?: 'LIVE' | 'FINAL' | 'UPCOMING'
   points?: number | null
@@ -24,9 +31,23 @@ function cls(...a: Array<string | false | null | undefined>) {
   return a.filter(Boolean).join(' ')
 }
 
+function dimsTokens(sz: Size): string[] {
+  switch (sz) {
+    case 'lg':
+      return ['w-24', 'h-11', 'text-base']
+    case 'sm':
+      return ['w-16', 'h-8', 'text-xs']
+    case 'md':
+    default:
+      return ['w-20', 'h-9', 'text-sm']
+  }
+}
+
 export default function TeamPill({
   team, teamId, teamIndex,
-  size = 'md',
+  size = 'sm',
+  mdUpSize,
+  lgUpSize,
   variant = 'outline',
   status,
   points = null,
@@ -56,13 +77,13 @@ export default function TeamPill({
 
   const color = resolveTeamHex(resolvedTeam, t)
 
-  // Uniform dimensions
-  const dims =
-    size === 'lg' ? 'w-24 h-11 text-base' :
-    size === 'sm' ? 'w-16 h-8 text-xs' :
-    'w-20 h-9 text-sm'
+  // Build uniform dimension classes with breakpoint upgrades
+  const base = dimsTokens(size)
+  const mdUp = mdUpSize ? dimsTokens(mdUpSize).map(c => `md:${c}`) : []
+  const lgUp = lgUpSize ? dimsTokens(lgUpSize).map(c => `lg:${c}`) : []
+  const dims = [...base, ...mdUp, ...lgUp].join(' ')
 
-  const base = 'inline-flex items-center justify-center gap-1 rounded-xl font-semibold overflow-hidden text-ellipsis whitespace-nowrap'
+  const shell = 'inline-flex items-center justify-center gap-1 rounded-xl font-semibold overflow-hidden text-ellipsis whitespace-nowrap'
   const border = selected ? 'border-2' : 'border'
   const cursor = disabled ? 'opacity-60 cursor-not-allowed' : ''
 
@@ -76,11 +97,13 @@ export default function TeamPill({
 
   return (
     <span
-      className={cls(base, border, dims, cursor, className)}
+      className={cls(shell, border, dims, cursor, className)}
       style={{
         borderColor: color,
-        color: color,
-        background: variant === 'subtle' ? `color-mix(in srgb, ${color} 12%, transparent)` : 'transparent',
+        color: color,                               // keep dark text palette elsewhere; chips stay tinted by team color
+        background: variant === 'subtle'
+          ? `color-mix(in srgb, ${color} 12%, transparent)`
+          : 'transparent',
       }}
       title={status || undefined}
       aria-pressed={selected || undefined}

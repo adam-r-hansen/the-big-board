@@ -100,9 +100,7 @@ function pickPointsForGame(pickTeamId: string, g?: Game): number | null {
   const s = (g.status || '').toUpperCase()
   const hs = typeof g.home.score === 'number' ? g.home.score : null
   const as = typeof g.away.score === 'number' ? g.away.score : null
-  if (s !== 'FINAL') {
-    return null
-  }
+  if (s !== 'FINAL') return null
   if (hs == null || as == null) return 0
   if (hs === as) {
     if (g.home.id === pickTeamId) return hs / 2
@@ -221,15 +219,16 @@ function HomeInner() {
     return sum
   }, [myPicks, gameById])
 
-  // compact pill for lists
+  // pills
   function pill(teamId?: string, opts?: { status?: string; points?: number | null }) {
-    if (!teamId) return <TeamPill size="sm" labelMode="abbr" />
+    if (!teamId) return <TeamPill size="sm" />
     const s = (opts?.status || '').toUpperCase() as any
     return (
       <TeamPill
         teamId={teamId}
         teamIndex={teamIndex}
         size="sm"
+        mdUpSize="md"
         variant="subtle"
         status={s}
         points={opts?.points ?? null}
@@ -238,10 +237,18 @@ function HomeInner() {
     )
   }
 
-  // uniform pill for scoreboard rows
-  function pillMd(teamId?: string) {
-    if (!teamId) return <TeamPill size="md" labelMode="abbr" />
-    return <TeamPill teamId={teamId} teamIndex={teamIndex} size="md" variant="subtle" labelMode="abbr" />
+  function pillForScoreboard(teamId?: string) {
+    if (!teamId) return <TeamPill size="sm" mdUpSize="lg" />
+    return (
+      <TeamPill
+        teamId={teamId}
+        teamIndex={teamIndex}
+        size="sm"
+        mdUpSize="lg"
+        variant="subtle"
+        labelMode="abbr"
+      />
+    )
   }
 
   // standings normalization for mini view
@@ -402,8 +409,8 @@ function HomeInner() {
                     const scoreKnown =
                       typeof g.home.score === 'number' && typeof g.away.score === 'number'
 
-                    const homeChip = pillMd(g.home.id)
-                    const awayChip = pillMd(g.away.id)
+                    const homeChip = pillForScoreboard(g.home.id)
+                    const awayChip = pillForScoreboard(g.away.id)
 
                     return (
                       <article
@@ -473,7 +480,7 @@ function HomeInner() {
               )}
             </Card>
 
-            {/* League picks (locked only), grouped by member */}
+            {/* League picks (locked) */}
             <Card title="League picks (locked)">
               {leagueLocked.length === 0 ? (
                 <div className="text-sm text-neutral-500">No locked picks yet.</div>
@@ -493,6 +500,7 @@ function HomeInner() {
                               teamId={pk.team_id}
                               teamIndex={teamIndex}
                               size="sm"
+                              mdUpSize="md"
                               variant="subtle"
                               status={pk.status}
                               points={pk.status === 'FINAL' ? pk.points ?? null : null}
