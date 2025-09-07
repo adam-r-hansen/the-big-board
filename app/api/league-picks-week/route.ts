@@ -1,138 +1,174 @@
-// app/api/league-picks-week/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { cookies } from 'next/headers'
+import { createServerClient } from '@supabase/ssr'
 
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
-
-function j(data: any, init?: number | ResponseInit) {
-  const base: ResponseInit = typeof init === 'number' ? { status: init } : init || {}
-  const headers = new Headers(base.headers)
-  headers.set('Cache-Control', 'no-store')
-  return NextResponse.json(data, { ...base, headers })
+type Row = {
+  pickId: string
+  profileId: string
+  name: string
+  team: {
+    id: string
+    abbreviation: string | null
+    short_name: string | null
+    name: string | null
+    color_primary: string | null
+    color_secondary: string | null
+  } | null
+  gameUtc: string | null
+  status: string | null
 }
 
-function takeOne<T = any>(rel: any): T | undefined {
-  if (!rel) return undefined
-  return Array.isArray(rel) ? rel[0] : rel
+function safeName(display?: string | null, email?: string | null) {
+  if (display && display.trim()) return display.trim()
+  if (email) return email.split('@')[0]
+  return 'Unknown'
 }
 
-function statusFor(game: any): 'LIVE' | 'FINAL' | 'UPCOMING' {
-  const raw = (game?.status || '').toUpperCase()
-  if (raw === 'FINAL' || raw === 'LIVE') return raw as any
-  const utc = game?.game_utc || game?.start_time
-  if (utc && new Date(utc) <= new Date()) return 'LIVE'
-  return 'UPCOMING'
-}
+function getSupabaseServer() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.SUPABASE_ANON_KEY
 
-// scoring per your rules
-function pointsForPick(pickTeamId: string, game: any): number {
-  const s = statusFor(game)
-  if (s !== 'FINAL') return 0
-  const hs = typeof game?.home_score === 'number' ? game.home_score : null
-  const as = typeof game?.away_score === 'number' ? game.away_score : null
-  const homeId = game?.home_team ?? game?.homeTeamId ?? game?.home?.id
-  const awayId = game?.away_team ?? game?.awayTeamId ?? game?.away?.id
-  if (hs == null || as == null) return 0
-  if (hs === as) {
-    if (pickTeamId === homeId) return hs / 2
-    if (pickTeamId === awayId) return as / 2
-    return 0
+  if (!url || !key) {
+    // Don’t throw at import-time; fail in-handler so build won’t break
+    return { error: 'Supabase env not configured (URL/ANON KEY missing)' } as const
   }
-  if (hs > as) return pickTeamId === homeId ? hs : 0
-  return pickTeamId === awayId ? as : 0
+
+  const cookieStore = cookies()
+  const supabase = createServerClient(url, key, {
+    cookies: {
+      get(name) {
+        return cookieStore.get(name)?.value
+      },
+      set(name, value, options) {
+        cookieStore.set(name, value, options as any)
+      },
+      remove(name, options) {
+        cookieStore.set(name, '', { ...(options as any), maxAge: 0 })
+      },
+    },
+  })
+  return { supabase } as const
 }
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
-  const leagueId = url.searchParams.get('leagueId') || ''
-  const season = Number(url.searchParams.get('season') || '0')
-  const week = Number(url.searchParams.get('week') || '0')
+  const leagueId = url.searchParams.get('leagueId')
+  const seasonStr = url.searchParams.get('season')
+  const weekStr = url.searchParams.get('week')
 
-  if (!leagueId || !season || !week) {
-    return j({ error: 'leagueId, season, week required' }, 400)
+  if (!leagueId || !seasonStr || !weekStr) {
+    return NextResponse.json(
+      { error: 'leagueId, season, week are required' },
+      { status: 400 }
+    )
+  }
+  const season = Number(seasonStr)
+  const week = Number(weekStr)
+  if (!Number.isFinite(season) || !Number.isFinite(week)) {
+    return NextResponse.json({ error: 'invalid season/week' }, { status: 400 })
   }
 
-  const supabase = await createClient()
-  const { data: auth, error: aErr } = await supabase.auth.getUser()
-  if (aErr || !auth?.user) return j({ error: 'unauthenticated' }, 401)
-  const uid = auth.user.id
+  const svc = getSupabaseServer()
+  if ('error' in svc) {
+    return NextResponse.json({ error: svc.error }, { status: 500 })
+  }
+  const { supabase } = svc
 
-  // membership check (privacy)
-  const { data: mem, error: mErr } = await supabase
-    .from('league_memberships')
-    .select('league_id')
-    .eq('profile_id', uid)
-    .eq('league_id', leagueId)
-    .maybeSingle()
-  if (mErr) return j({ error: mErr.message }, 400)
-  if (!mem) return j({ error: 'forbidden' }, 403)
-
-  // Picks + joined game + joined profile
-  const { data: rows, error: pErr } = await supabase
+  // 1) Picks (minimal)
+  const { data: picks, error: picksErr } = await supabase
     .from('picks')
-    .select(
-      `
-        id,
-        profile_id,
-        team_id,
-        game_id,
-        profiles:profile_id ( id, display_name, full_name, email ),
-        games:game_id ( id, game_utc, status, home_team, away_team, home_score, away_score )
-      `
-    )
+    .select('id, profile_id, team_id, game_id')
     .eq('league_id', leagueId)
     .eq('season', season)
     .eq('week', week)
-    .not('game_id', 'is', null)
 
-  if (pErr) return j({ error: pErr.message }, 400)
-
-  const locked = (rows || []).filter((r: any) => {
-    const game = takeOne(r.games)
-    const s = statusFor(game)
-    return s === 'LIVE' || s === 'FINAL'
-  })
-
-  // group by member
-  const byMember = new Map<
-    string,
-    { profile_id: string; display_name: string; picks: any[]; points_week: number }
-  >()
-
-  for (const r of locked) {
-    const prof = takeOne(r.profiles) || {}
-    const game = takeOne(r.games) || {}
-    const display =
-      prof.display_name ||
-      prof.full_name ||
-      (prof.email ? String(prof.email).split('@')[0] : 'Member')
-
-    const s = statusFor(game)
-    const pts = s === 'FINAL' ? pointsForPick(r.team_id, game) : 0
-
-    if (!byMember.has(r.profile_id)) {
-      byMember.set(r.profile_id, {
-        profile_id: r.profile_id,
-        display_name: display,
-        picks: [],
-        points_week: 0,
-      })
-    }
-    const bucket = byMember.get(r.profile_id)!
-    bucket.picks.push({
-      game_id: r.game_id,
-      team_id: r.team_id,
-      status: s,
-      points: s === 'FINAL' ? pts : null,
-    })
-    if (s === 'FINAL') bucket.points_week += pts
+  if (picksErr) {
+    return NextResponse.json({ error: picksErr.message }, { status: 500 })
   }
 
-  const members = Array.from(byMember.values()).sort((a, b) =>
-    a.display_name.localeCompare(b.display_name),
+  const validPicks = (picks ?? []).filter(p => p.game_id)
+  if (validPicks.length === 0) return NextResponse.json({ rows: [] })
+
+  // 2) Games (determine locked)
+  const gameIds = Array.from(new Set(validPicks.map(p => p.game_id as string)))
+  const { data: games, error: gamesErr } = await supabase
+    .from('games')
+    .select('id, game_utc, status')
+    .in('id', gameIds)
+
+  if (gamesErr) {
+    return NextResponse.json({ error: gamesErr.message }, { status: 500 })
+  }
+  const nowMs = Date.now()
+  const byGame = new Map((games ?? []).map(g => [g.id, g]))
+  const isLocked = (g: { game_utc: string | null; status: string | null }) => {
+    const st = (g?.status ?? '').toUpperCase()
+    if (st === 'LIVE' || st === 'FINAL') return true
+    const k = g?.game_utc ? Date.parse(String(g.game_utc)) : NaN
+    return Number.isFinite(k) && nowMs >= k
+  }
+  const locked = validPicks.filter(p => {
+    const g = byGame.get(p.game_id as string)
+    return g ? isLocked(g as any) : false
+  })
+  if (locked.length === 0) return NextResponse.json({ rows: [] })
+
+  // 3) Profiles (display name or email prefix) — no "full_name"
+  const profileIds = Array.from(new Set(locked.map(p => p.profile_id as string)))
+  const { data: profiles, error: profErr } = await supabase
+    .from('profiles')
+    .select('id, display_name, email')
+    .in('id', profileIds)
+
+  if (profErr) {
+    return NextResponse.json({ error: profErr.message }, { status: 500 })
+  }
+  const byProfile = new Map((profiles ?? []).map(pr => [pr.id, pr]))
+
+  // 4) Teams (public-read)
+  const teamIds = Array.from(new Set(locked.map(p => p.team_id as string)))
+  const { data: teams, error: teamsErr } = await supabase
+    .from('teams')
+    .select('id, abbreviation, short_name, name, color_primary, color_secondary')
+    .in('id', teamIds)
+
+  if (teamsErr) {
+    return NextResponse.json({ error: teamsErr.message }, { status: 500 })
+  }
+  const byTeam = new Map((teams ?? []).map(t => [t.id, t]))
+
+  // Compose rows
+  const rows: Row[] = locked.map(p => {
+    const g = byGame.get(p.game_id as string) as any
+    const pr = byProfile.get(p.profile_id as string) as any
+    const t = byTeam.get(p.team_id as string) as any
+    return {
+      pickId: p.id as string,
+      profileId: p.profile_id as string,
+      name: safeName(pr?.display_name ?? null, pr?.email ?? null),
+      team: t
+        ? {
+            id: t.id as string,
+            abbreviation: t.abbreviation ?? null,
+            short_name: t.short_name ?? null,
+            name: t.name ?? null,
+            color_primary: t.color_primary ?? null,
+            color_secondary: t.color_secondary ?? null,
+          }
+        : null,
+      gameUtc: g?.game_utc ?? null,
+      status: g?.status ?? null,
+    }
+  })
+
+  rows.sort(
+    (a, b) =>
+      a.name.localeCompare(b.name) ||
+      (a.team?.short_name ?? '').localeCompare(b.team?.short_name ?? '')
   )
 
-  return j({ members }, 200)
+  return NextResponse.json({ rows })
 }
