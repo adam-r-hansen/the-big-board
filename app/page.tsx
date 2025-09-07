@@ -105,7 +105,6 @@ function Chip({
       title={title}
       className={[
         'inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm font-semibold',
-        // keep one line, ellipsize if needed for uniform width chips
         'overflow-hidden text-ellipsis whitespace-nowrap',
         subtle ? 'opacity-80' : '',
         className,
@@ -325,7 +324,7 @@ function HomeInner() {
                 profile_id,
                 display_name,
                 points_week: 0,
-                picks: [] as MemberLockedPicks['picks'], // <-- typed to avoid never[]
+                picks: [] as MemberLockedPicks['picks'],
               }
               grouped.set(profile_id, entry)
             }
@@ -342,11 +341,9 @@ function HomeInner() {
           }
 
           const arr = Array.from(grouped.values())
-          // stable sort by name
           arr.sort((a, b) => a.display_name.localeCompare(b.display_name))
           setLeagueLocked(arr)
         } else {
-          // nothing returned
           setLeagueLocked([])
         }
       } catch (e: any) {
@@ -427,35 +424,80 @@ function HomeInner() {
         primary={primary}
         secondary={secondary}
         subtle
-        // Full width/height chip for equal sizing; centered label
         className="w-full h-10 md:h-12 justify-center"
       />
     )
   }
 
-  // standings normalization for mini view
+  // —————————————————————————————————————————————————————————————
+  // Standings mini: show ALL members, sorted by league rules:
+  // 1) total points desc, 2) correct picks desc, 3) longest streak desc,
+  // 4) wrinkle points desc, 5) name asc
+  // —————————————————————————————————————————————————————————————
   const miniStand = useMemo(() => {
-    const rows = (standRows || []).map((r: any) => ({
-      profile_id: r.profile_id ?? r.user_id ?? r.id ?? '',
-      display_name: r.display_name ?? r.name ?? r.team ?? r.email ?? 'Member',
-      points_total:
+    const rows = (standRows || []).map((r: any) => {
+      const profile_id = r.profile_id ?? r.user_id ?? r.id ?? ''
+      const display_name = r.display_name ?? r.name ?? r.team ?? r.email ?? 'Member'
+
+      // Flexible numeric field mapping from /api/standings
+      const points_total =
         typeof r.points_total === 'number'
           ? r.points_total
           : typeof r.points === 'number'
           ? r.points
           : typeof r.total_points === 'number'
           ? r.total_points
-          : 0,
-      points_week:
-        typeof r.points_week === 'number'
-          ? r.points_week
-          : typeof r.week_points === 'number'
-          ? r.week_points
-          : 0,
-    }))
-    rows.sort((a, b) => (b.points_total || 0) - (a.points_total || 0))
-    return rows.slice(0, 5)
+          : 0
+
+      const picks_correct =
+        typeof r.picks_correct === 'number'
+          ? r.picks_correct
+          : typeof r.correct_picks === 'number'
+          ? r.correct_picks
+          : typeof r.correct === 'number'
+          ? r.correct
+          : 0
+
+      const longest_streak =
+        typeof r.longest_streak === 'number'
+          ? r.longest_streak
+          : typeof r.streak_longest === 'number'
+          ? r.streak_longest
+          : typeof r.streak === 'number'
+          ? r.streak
+          : 0
+
+      const wrinkle_points =
+        typeof r.wrinkle_points === 'number'
+          ? r.wrinkle_points
+          : typeof r.wrinkle === 'number'
+          ? r.wrinkle
+          : typeof r.wrinkle_pts === 'number'
+          ? r.wrinkle_pts
+          : 0
+
+      return {
+        profile_id,
+        display_name,
+        points_total,
+        picks_correct,
+        longest_streak,
+        wrinkle_points,
+      }
+    })
+
+    rows.sort((a, b) =>
+      (b.points_total || 0) - (a.points_total || 0) ||
+      (b.picks_correct || 0) - (a.picks_correct || 0) ||
+      (b.longest_streak || 0) - (a.longest_streak || 0) ||
+      (b.wrinkle_points || 0) - (a.wrinkle_points || 0) ||
+      a.display_name.localeCompare(b.display_name)
+    )
+
+    // IMPORTANT: no cap — show all members in the mini card
+    return rows
   }, [standRows])
+  // —————————————————————————————————————————————————————————————
 
   const singleLeagueControls = !noLeagues && singleLeague
 
@@ -592,8 +634,8 @@ function HomeInner() {
                     const scoreKnown =
                       typeof g.home.score === 'number' && typeof g.away.score === 'number'
 
-                    const homeChip = responsiveTeamChip(g.home.id)   // uniform size
-                    const awayChip = responsiveTeamChip(g.away.id)   // uniform size
+                    const homeChip = responsiveTeamChip(g.home.id)
+                    const awayChip = responsiveTeamChip(g.away.id)
 
                     return (
                       <article
@@ -701,7 +743,7 @@ function HomeInner() {
               )}
             </Card>
 
-            {/* Standings mini */}
+            {/* Standings mini — now shows ALL members, sorted by league rules */}
             <Card
               title="Standings"
               right={
@@ -716,13 +758,16 @@ function HomeInner() {
               {miniStand.length === 0 ? (
                 <div className="text-sm text-neutral-500">No standings yet.</div>
               ) : (
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto max-h-96 overflow-y-auto">
                   <table className="min-w-full text-sm">
                     <thead className="text-left text-neutral-500">
                       <tr>
                         <th className="py-2 pr-3">#</th>
                         <th className="py-2 pr-3">Member</th>
                         <th className="py-2 pr-3">Pts</th>
+                        <th className="py-2 pr-3">Correct</th>
+                        <th className="py-2 pr-3">Streak</th>
+                        <th className="py-2 pr-0">Wr</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -731,6 +776,9 @@ function HomeInner() {
                           <td className="py-2 pr-3">{i + 1}</td>
                           <td className="py-2 pr-3">{r.display_name}</td>
                           <td className="py-2 pr-3">{r.points_total}</td>
+                          <td className="py-2 pr-3">{r.picks_correct}</td>
+                          <td className="py-2 pr-3">{r.longest_streak}</td>
+                          <td className="py-2 pr-0">{r.wrinkle_points}</td>
                         </tr>
                       ))}
                     </tbody>
