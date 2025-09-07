@@ -2,10 +2,20 @@
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/server'
 
+function parseOwners(envVal: string | undefined) {
+  return (envVal ?? '')
+    .split(/[,\s]+/)
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+}
+
 export default async function SiteHeader() {
   const supabase = await createClient()
   const { data } = await supabase.auth.getUser()
   const user = data?.user ?? null
+
+  const owners = parseOwners(process.env.SITE_OWNER_EMAILS)
+  const isOwner = !!(user?.email && owners.includes(user.email.toLowerCase()))
 
   return (
     <header className="border-b border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-950/80 backdrop-blur">
@@ -17,7 +27,9 @@ export default async function SiteHeader() {
           <Link href="/scoreboard" className="opacity-80 hover:opacity-100">Scoreboard</Link>
           <Link href="/standings" className="opacity-80 hover:opacity-100">Standings</Link>
           <Link href="/stats" className="opacity-80 hover:opacity-100">Stats</Link>
-          <Link href="/admin" className="opacity-80 hover:opacity-100">Admin</Link>
+          {isOwner && (
+            <Link href="/admin" className="opacity-80 hover:opacity-100">Admin</Link>
+          )}
         </nav>
 
         {/* RIGHT: auth */}
