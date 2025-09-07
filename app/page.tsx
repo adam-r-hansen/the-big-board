@@ -311,32 +311,34 @@ function HomeInner() {
 
             const team_id: string = r.team?.id || r.team_id || r.teamId || ''
             const statusRaw: string = r.status || r.game_status || ''
-            const status = (statusRaw || '').toUpperCase()
+            const statusUpper = (statusRaw || '').toUpperCase()
+            // API returns only locked games; normalize to LIVE/FINAL only
+            const lockedStatus: 'LIVE' | 'FINAL' = statusUpper === 'FINAL' ? 'FINAL' : 'LIVE'
 
             // Derive the game for this team this week (unique per week)
             const gForTeam = team_id ? gameByTeamId.get(team_id) : undefined
-            const points =
-              status === 'FINAL' ? pickPointsForGame(team_id, gForTeam) : null
+            const points = lockedStatus === 'FINAL' ? pickPointsForGame(team_id, gForTeam) : null
 
-            const entry = grouped.get(profile_id) || {
-              profile_id,
-              display_name,
-              points_week: 0,
-              picks: [],
+            let entry = grouped.get(profile_id)
+            if (!entry) {
+              entry = {
+                profile_id,
+                display_name,
+                points_week: 0,
+                picks: [] as MemberLockedPicks['picks'], // <-- typed to avoid never[]
+              }
+              grouped.set(profile_id, entry)
             }
 
             entry.picks.push({
-              game_id: gForTeam?.id || '', // for type happiness; UI doesn't use it
+              game_id: gForTeam?.id || '',
               team_id,
-              status: (status === 'FINAL' || status === 'LIVE' ? status : (gForTeam && gameLocked(gForTeam) ? 'LIVE' : 'UPCOMING')) as 'LIVE' | 'FINAL',
+              status: lockedStatus,
               points,
             })
 
             if (typeof points === 'number') entry.points_week += points
-            // Keep latest display name if we find a better one
             if (display_name && display_name !== 'Member') entry.display_name = display_name
-
-            grouped.set(profile_id, entry)
           }
 
           const arr = Array.from(grouped.values())
