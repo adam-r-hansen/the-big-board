@@ -201,6 +201,18 @@ function pickPointsForGame(pickTeamId: string, g?: Game): number | null {
   return 0
 }
 
+/** Build a quick lookup: teamId -> that team's Game (unique per week) */
+function useGameByTeamId(games: Game[]) {
+  return useMemo(() => {
+    const m = new Map<string, Game>()
+    for (const g of games) {
+      if (g.home.id) m.set(g.home.id, g)
+      if (g.away.id) m.set(g.away.id, g)
+    }
+    return m
+  }, [games])
+}
+
 function HomeInner() {
   const [leagues, setLeagues] = useState<League[]>([])
   const [leagueId, setLeagueId] = useState('')
@@ -211,6 +223,8 @@ function HomeInner() {
   const teamIndex = useTeamIndex(teamMap)
 
   const [games, setGames] = useState<Game[]>([])
+  const gameByTeamId = useGameByTeamId(games)
+
   const [myPicks, setMyPicks] = useState<Pick[]>([])
   const [wrinkleExtra, setWrinkleExtra] = useState<number>(0)
 
@@ -255,25 +269,89 @@ function HomeInner() {
           fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()),
           fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
           fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
-          fetch(`/api/league-picks-week?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({ members: [] })),
+          fetch(`/api/league-picks-week?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
         ])
 
-        setGames(normalizeGames(g?.games || g || []))
+        // games
+        const gNorm = normalizeGames(g?.games || g || [])
+        setGames(gNorm)
+
+        // my picks
         setMyPicks((p?.picks || []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
+
+        // wrinkle extra
         const extra = Array.isArray(w?.wrinkles)
           ? w.wrinkles.reduce((acc: number, it: any) => acc + (Number(it?.extra_picks) || 0), 0)
           : 0
         setWrinkleExtra(extra)
 
+        // standings
         const rows = Array.isArray(s) ? s : (s?.standings || s?.rows || [])
         setStandRows(rows || [])
 
-        setLeagueLocked(Array.isArray(L?.members) ? L.members : [])
+        // league locked picks — support both response shapes
+        if (Array.isArray(L?.members)) {
+          // Old shape already grouped
+          setLeagueLocked(L.members as MemberLockedPicks[])
+        } else if (Array.isArray(L?.rows)) {
+          // New shape: rows -> group by profile, compute points from our games
+          const grouped = new Map<string, MemberLockedPicks>()
+
+          const safeName = (r: any) =>
+            (r.name && String(r.name)) ||
+            (r.profiles?.full_name && String(r.profiles.full_name)) ||
+            (r.profiles?.display_name && String(r.profiles.display_name)) ||
+            (r.profiles?.email ? String(r.profiles.email).split('@')[0] : '') ||
+            'Member'
+
+          for (const r of L.rows as any[]) {
+            const profile_id: string =
+              r.profileId || r.profile_id || r.profiles?.id || 'unknown'
+            const display_name = safeName(r)
+
+            const team_id: string = r.team?.id || r.team_id || r.teamId || ''
+            const statusRaw: string = r.status || r.game_status || ''
+            const status = (statusRaw || '').toUpperCase()
+
+            // Derive the game for this team this week (unique per week)
+            const gForTeam = team_id ? gameByTeamId.get(team_id) : undefined
+            const points =
+              status === 'FINAL' ? pickPointsForGame(team_id, gForTeam) : null
+
+            const entry = grouped.get(profile_id) || {
+              profile_id,
+              display_name,
+              points_week: 0,
+              picks: [],
+            }
+
+            entry.picks.push({
+              game_id: gForTeam?.id || '', // for type happiness; UI doesn't use it
+              team_id,
+              status: (status === 'FINAL' || status === 'LIVE' ? status : (gForTeam && gameLocked(gForTeam) ? 'LIVE' : 'UPCOMING')) as 'LIVE' | 'FINAL',
+              points,
+            })
+
+            if (typeof points === 'number') entry.points_week += points
+            // Keep latest display name if we find a better one
+            if (display_name && display_name !== 'Member') entry.display_name = display_name
+
+            grouped.set(profile_id, entry)
+          }
+
+          const arr = Array.from(grouped.values())
+          // stable sort by name
+          arr.sort((a, b) => a.display_name.localeCompare(b.display_name))
+          setLeagueLocked(arr)
+        } else {
+          // nothing returned
+          setLeagueLocked([])
+        }
       } catch (e: any) {
         setMsg(e?.message || 'Failed to load data')
       }
     })()
-  }, [leagueId, season, week])
+  }, [leagueId, season, week, gameByTeamId])
 
   // maps for quick lookups
   const gameById = useMemo(() => {
@@ -600,15 +678,17 @@ function HomeInner() {
                       </div>
                       <div className="mt-2 flex flex-wrap gap-2">
                         {m.picks && m.picks.length > 0 ? (
-                          m.picks.map((pk) =>
-                            teamChipForId(pk.team_id, {
-                              status: pk.status,
-                              showPoints:
-                                pk.status === 'FINAL' && typeof pk.points === 'number'
-                                  ? pk.points
-                                  : null,
-                            }),
-                          )
+                          m.picks.map((pk, idx) => (
+                            <span key={`${m.profile_id}-${idx}`}>
+                              {teamChipForId(pk.team_id, {
+                                status: pk.status,
+                                showPoints:
+                                  pk.status === 'FINAL' && typeof pk.points === 'number'
+                                    ? pk.points
+                                    : null,
+                              })}
+                            </span>
+                          ))
                         ) : (
                           <span className="text-xs text-neutral-500">No locked picks yet.</span>
                         )}
