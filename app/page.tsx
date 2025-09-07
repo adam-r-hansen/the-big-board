@@ -1,38 +1,13 @@
 // app/page.tsx
 'use client'
 
-/**
- * Home: overview + scoreboard (left 2/3), and
- * My Picks / League Picks (locked only) / Standings mini (right 1/3).
- *
- * Scoring:
- *  - Win  -> team final score
- *  - Loss -> 0
- *  - Tie  -> half of team final score (e.g. 10 -> 5)
- */
-
-import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import TeamPill from '@/components/ui/TeamPill'
+import { buildTeamIndex, type Team as TeamType } from '@/lib/teamColors'
 
 type League = { id: string; name: string; season: number }
-type Team = {
-  id: string
-  abbreviation: string | null
-  name?: string | null
-  color_primary?: string | null
-  color_secondary?: string | null
-  logo?: string | null
-  logo_dark?: string | null
-}
-type TeamLike = {
-  id?: string
-  abbreviation?: string
-  name?: string
-  color_primary?: string
-  color_secondary?: string
-  logo?: string
-  logo_dark?: string
-}
+type Team = TeamType
 type Game = {
   id: string
   season: number
@@ -83,44 +58,6 @@ function Card({
   )
 }
 
-function Chip({
-  label,
-  primary = '#6b7280',
-  secondary = '#374151',
-  subtle = false,
-  badge,
-  title,
-  className = '',
-}: {
-  label: ReactNode
-  primary?: string
-  secondary?: string
-  subtle?: boolean
-  badge?: React.ReactNode
-  title?: string
-  className?: string
-}) {
-  return (
-    <span
-      title={title}
-      className={[
-        'inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm font-semibold',
-        'overflow-hidden text-ellipsis whitespace-nowrap',
-        subtle ? 'opacity-80' : '',
-        className,
-      ].join(' ')}
-      style={{
-        borderColor: primary,
-        color: primary,
-        background: subtle ? `linear-gradient(0deg, ${secondary}10, transparent)` : 'transparent',
-      }}
-    >
-      {label}
-      {badge ? <span className="text-xs font-normal">{badge}</span> : null}
-    </span>
-  )
-}
-
 function StatusBadge({ s }: { s?: string }) {
   const up = (s || 'UPCOMING').toUpperCase()
   return (
@@ -128,26 +65,6 @@ function StatusBadge({ s }: { s?: string }) {
       {up}
     </span>
   )
-}
-
-function useTeamIndex(teamMap: Record<string, Team>) {
-  return useMemo(() => {
-    const idx: Record<string, TeamLike> = {}
-    for (const t of Object.values(teamMap || {})) {
-      const v: TeamLike = {
-        id: t.id,
-        abbreviation: t.abbreviation ?? undefined,
-        name: t.name ?? undefined,
-        color_primary: t.color_primary ?? undefined,
-        color_secondary: t.color_secondary ?? undefined,
-        logo: t.logo ?? undefined,
-        logo_dark: t.logo_dark ?? undefined,
-      }
-      if (t.id) idx[t.id] = v
-      if (t.abbreviation) idx[t.abbreviation.toUpperCase()] = v
-    }
-    return idx
-  }, [teamMap])
 }
 
 function normalizeGames(rows: any[]): Game[] {
@@ -200,18 +117,6 @@ function pickPointsForGame(pickTeamId: string, g?: Game): number | null {
   return 0
 }
 
-/** Build a quick lookup: teamId -> that team's Game (unique per week) */
-function useGameByTeamId(games: Game[]) {
-  return useMemo(() => {
-    const m = new Map<string, Game>()
-    for (const g of games) {
-      if (g.home.id) m.set(g.home.id, g)
-      if (g.away.id) m.set(g.away.id, g)
-    }
-    return m
-  }, [games])
-}
-
 function HomeInner() {
   const [leagues, setLeagues] = useState<League[]>([])
   const [leagueId, setLeagueId] = useState('')
@@ -219,11 +124,9 @@ function HomeInner() {
   const [week, setWeek] = useState<number>(1)
 
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
-  const teamIndex = useTeamIndex(teamMap)
+  const teamIndex = useMemo(() => buildTeamIndex(teamMap), [teamMap])
 
   const [games, setGames] = useState<Game[]>([])
-  const gameByTeamId = useGameByTeamId(games)
-
   const [myPicks, setMyPicks] = useState<Pick[]>([])
   const [wrinkleExtra, setWrinkleExtra] = useState<number>(0)
 
@@ -268,89 +171,25 @@ function HomeInner() {
           fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()),
           fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
           fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
-          fetch(`/api/league-picks-week?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
+          fetch(`/api/league-picks-week?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({ members: [] })),
         ])
 
-        // games
-        const gNorm = normalizeGames(g?.games || g || [])
-        setGames(gNorm)
-
-        // my picks
+        setGames(normalizeGames(g?.games || g || []))
         setMyPicks((p?.picks || []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
-
-        // wrinkle extra
         const extra = Array.isArray(w?.wrinkles)
           ? w.wrinkles.reduce((acc: number, it: any) => acc + (Number(it?.extra_picks) || 0), 0)
           : 0
         setWrinkleExtra(extra)
 
-        // standings
         const rows = Array.isArray(s) ? s : (s?.standings || s?.rows || [])
         setStandRows(rows || [])
 
-        // league locked picks — support both response shapes
-        if (Array.isArray(L?.members)) {
-          // Old shape already grouped
-          setLeagueLocked(L.members as MemberLockedPicks[])
-        } else if (Array.isArray(L?.rows)) {
-          // New shape: rows -> group by profile, compute points from our games
-          const grouped = new Map<string, MemberLockedPicks>()
-
-          const safeName = (r: any) =>
-            (r.name && String(r.name)) ||
-            (r.profiles?.full_name && String(r.profiles.full_name)) ||
-            (r.profiles?.display_name && String(r.profiles.display_name)) ||
-            (r.profiles?.email ? String(r.profiles.email).split('@')[0] : '') ||
-            'Member'
-
-          for (const r of L.rows as any[]) {
-            const profile_id: string =
-              r.profileId || r.profile_id || r.profiles?.id || 'unknown'
-            const display_name = safeName(r)
-
-            const team_id: string = r.team?.id || r.team_id || r.teamId || ''
-            const statusRaw: string = r.status || r.game_status || ''
-            const statusUpper = (statusRaw || '').toUpperCase()
-            // API returns only locked games; normalize to LIVE/FINAL only
-            const lockedStatus: 'LIVE' | 'FINAL' = statusUpper === 'FINAL' ? 'FINAL' : 'LIVE'
-
-            // Derive the game for this team this week (unique per week)
-            const gForTeam = team_id ? gameByTeamId.get(team_id) : undefined
-            const points = lockedStatus === 'FINAL' ? pickPointsForGame(team_id, gForTeam) : null
-
-            let entry = grouped.get(profile_id)
-            if (!entry) {
-              entry = {
-                profile_id,
-                display_name,
-                points_week: 0,
-                picks: [] as MemberLockedPicks['picks'],
-              }
-              grouped.set(profile_id, entry)
-            }
-
-            entry.picks.push({
-              game_id: gForTeam?.id || '',
-              team_id,
-              status: lockedStatus,
-              points,
-            })
-
-            if (typeof points === 'number') entry.points_week += points
-            if (display_name && display_name !== 'Member') entry.display_name = display_name
-          }
-
-          const arr = Array.from(grouped.values())
-          arr.sort((a, b) => a.display_name.localeCompare(b.display_name))
-          setLeagueLocked(arr)
-        } else {
-          setLeagueLocked([])
-        }
+        setLeagueLocked(Array.isArray(L?.members) ? L.members : [])
       } catch (e: any) {
         setMsg(e?.message || 'Failed to load data')
       }
     })()
-  }, [leagueId, season, week, gameByTeamId])
+  }, [leagueId, season, week])
 
   // maps for quick lookups
   const gameById = useMemo(() => {
@@ -382,122 +221,52 @@ function HomeInner() {
     return sum
   }, [myPicks, gameById])
 
-  // compact abbr chip used everywhere except scoreboard
-  function teamChipForId(teamId?: string, opts?: { showPoints?: number | null; status?: string }) {
-    if (!teamId) return <Chip label="—" />
-    const t = teamIndex[teamId]
-    const label = t?.abbreviation || '—'
-    const primary = t?.color_primary || '#6b7280'
-    const secondary = t?.color_secondary || '#374151'
-    let badge: React.ReactNode = null
-    let title: string | undefined = undefined
-
-    if (opts?.status) {
-      const s = opts.status.toUpperCase()
-      if (s === 'LIVE') badge = <span>• LIVE</span>
-      if (s === 'FINAL' && typeof opts.showPoints === 'number') {
-        const pts = opts.showPoints
-        badge = <span>{pts >= 0 ? `+${pts}` : `${pts}`}</span>
-      }
-      title = s
-    }
-
-    return <Chip label={label} primary={primary} secondary={secondary} subtle badge={badge} title={title} />
-  }
-
-  // Responsive, UNIFORM-size chip for scoreboard — abbr on mobile, full name on md+
-  function responsiveTeamChip(teamId?: string) {
-    if (!teamId) return <Chip label="—" className="w-full h-10 md:h-12 justify-center" />
-    const t = teamIndex[teamId]
-    const abbr = t?.abbreviation || '—'
-    const full = t?.name || abbr
-    const primary = t?.color_primary || '#6b7280'
-    const secondary = t?.color_secondary || '#374151'
+  // compact pill for lists
+  function pill(teamId?: string, opts?: { status?: string; points?: number | null }) {
+    if (!teamId) return <TeamPill size="sm" labelMode="abbr" />
+    const s = (opts?.status || '').toUpperCase() as any
     return (
-      <Chip
-        label={
-          <span className="truncate max-w-full">
-            <span className="md:hidden">{abbr}</span>
-            <span className="hidden md:inline">{full}</span>
-          </span>
-        }
-        primary={primary}
-        secondary={secondary}
-        subtle
-        className="w-full h-10 md:h-12 justify-center"
+      <TeamPill
+        teamId={teamId}
+        teamIndex={teamIndex}
+        size="sm"
+        variant="subtle"
+        status={s}
+        points={opts?.points ?? null}
+        labelMode="abbr"
       />
     )
   }
 
-  // —————————————————————————————————————————————————————————————
-  // Standings mini: show ALL members, sorted by league rules:
-  // 1) total points desc, 2) correct picks desc, 3) longest streak desc,
-  // 4) wrinkle points desc, 5) name asc
-  // —————————————————————————————————————————————————————————————
-  const miniStand = useMemo(() => {
-    const rows = (standRows || []).map((r: any) => {
-      const profile_id = r.profile_id ?? r.user_id ?? r.id ?? ''
-      const display_name = r.display_name ?? r.name ?? r.team ?? r.email ?? 'Member'
+  // uniform pill for scoreboard rows
+  function pillMd(teamId?: string) {
+    if (!teamId) return <TeamPill size="md" labelMode="abbr" />
+    return <TeamPill teamId={teamId} teamIndex={teamIndex} size="md" variant="subtle" labelMode="abbr" />
+  }
 
-      // Flexible numeric field mapping from /api/standings
-      const points_total =
+  // standings normalization for mini view
+  const miniStand = useMemo(() => {
+    const rows = (standRows || []).map((r: any) => ({
+      profile_id: r.profile_id ?? r.user_id ?? r.id ?? '',
+      display_name: r.display_name ?? r.name ?? r.team ?? r.email ?? 'Member',
+      points_total:
         typeof r.points_total === 'number'
           ? r.points_total
           : typeof r.points === 'number'
           ? r.points
           : typeof r.total_points === 'number'
           ? r.total_points
-          : 0
-
-      const picks_correct =
-        typeof r.picks_correct === 'number'
-          ? r.picks_correct
-          : typeof r.correct_picks === 'number'
-          ? r.correct_picks
-          : typeof r.correct === 'number'
-          ? r.correct
-          : 0
-
-      const longest_streak =
-        typeof r.longest_streak === 'number'
-          ? r.longest_streak
-          : typeof r.streak_longest === 'number'
-          ? r.streak_longest
-          : typeof r.streak === 'number'
-          ? r.streak
-          : 0
-
-      const wrinkle_points =
-        typeof r.wrinkle_points === 'number'
-          ? r.wrinkle_points
-          : typeof r.wrinkle === 'number'
-          ? r.wrinkle
-          : typeof r.wrinkle_pts === 'number'
-          ? r.wrinkle_pts
-          : 0
-
-      return {
-        profile_id,
-        display_name,
-        points_total,
-        picks_correct,
-        longest_streak,
-        wrinkle_points,
-      }
-    })
-
-    rows.sort((a, b) =>
-      (b.points_total || 0) - (a.points_total || 0) ||
-      (b.picks_correct || 0) - (a.picks_correct || 0) ||
-      (b.longest_streak || 0) - (a.longest_streak || 0) ||
-      (b.wrinkle_points || 0) - (a.wrinkle_points || 0) ||
-      a.display_name.localeCompare(b.display_name)
-    )
-
-    // IMPORTANT: no cap — show all members in the mini card
-    return rows
+          : 0,
+      points_week:
+        typeof r.points_week === 'number'
+          ? r.points_week
+          : typeof r.week_points === 'number'
+          ? r.week_points
+          : 0,
+    }))
+    rows.sort((a, b) => (b.points_total || 0) - (a.points_total || 0))
+    return rows.slice(0, 5)
   }, [standRows])
-  // —————————————————————————————————————————————————————————————
 
   const singleLeagueControls = !noLeagues && singleLeague
 
@@ -511,7 +280,6 @@ function HomeInner() {
           <Link className="underline text-sm" href="/picks">Picks</Link>
           <Link className="underline text-sm" href="/standings">Standings</Link>
 
-          {/* League control: label if 1 league, dropdown if >1 */}
           {noLeagues ? null : singleLeagueControls ? (
             <span className="text-sm text-neutral-600">
               League: <strong>{leagues[0].name}</strong>
@@ -530,7 +298,7 @@ function HomeInner() {
             </select>
           )}
 
-          {/* Season & Week (always shown) */}
+          {/* Season & Week */}
           <select
             className="border rounded px-2 py-1 bg-transparent"
             value={season}
@@ -634,8 +402,8 @@ function HomeInner() {
                     const scoreKnown =
                       typeof g.home.score === 'number' && typeof g.away.score === 'number'
 
-                    const homeChip = responsiveTeamChip(g.home.id)
-                    const awayChip = responsiveTeamChip(g.away.id)
+                    const homeChip = pillMd(g.home.id)
+                    const awayChip = pillMd(g.away.id)
 
                     return (
                       <article
@@ -690,14 +458,11 @@ function HomeInner() {
                 <ul className="grid gap-2">
                   {myPicks.map((p) => {
                     const g = p.game_id ? gameById.get(p.game_id) : undefined
-                    const s = (g?.status || (gameLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase()
+                    const s = (g?.status || (gameLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase() as any
                     const pts = pickPointsForGame(p.team_id, g)
                     return (
                       <li key={p.id} className="flex items-center justify-between">
-                        {teamChipForId(p.team_id, {
-                          status: s as any,
-                          showPoints: typeof pts === 'number' ? pts : null,
-                        })}
+                        {pill(p.team_id, { status: s, points: typeof pts === 'number' ? pts : null })}
                         <span className="text-[10px] uppercase tracking-wide text-neutral-500">
                           {s}
                         </span>
@@ -722,16 +487,16 @@ function HomeInner() {
                       </div>
                       <div className="mt-2 flex flex-wrap gap-2">
                         {m.picks && m.picks.length > 0 ? (
-                          m.picks.map((pk, idx) => (
-                            <span key={`${m.profile_id}-${idx}`}>
-                              {teamChipForId(pk.team_id, {
-                                status: pk.status,
-                                showPoints:
-                                  pk.status === 'FINAL' && typeof pk.points === 'number'
-                                    ? pk.points
-                                    : null,
-                              })}
-                            </span>
+                          m.picks.map((pk) => (
+                            <TeamPill
+                              key={pk.game_id + pk.team_id}
+                              teamId={pk.team_id}
+                              teamIndex={teamIndex}
+                              size="sm"
+                              variant="subtle"
+                              status={pk.status}
+                              points={pk.status === 'FINAL' ? pk.points ?? null : null}
+                            />
                           ))
                         ) : (
                           <span className="text-xs text-neutral-500">No locked picks yet.</span>
@@ -743,7 +508,7 @@ function HomeInner() {
               )}
             </Card>
 
-            {/* Standings mini — now shows ALL members, sorted by league rules */}
+            {/* Standings mini */}
             <Card
               title="Standings"
               right={
@@ -758,16 +523,13 @@ function HomeInner() {
               {miniStand.length === 0 ? (
                 <div className="text-sm text-neutral-500">No standings yet.</div>
               ) : (
-                <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
                     <thead className="text-left text-neutral-500">
                       <tr>
                         <th className="py-2 pr-3">#</th>
                         <th className="py-2 pr-3">Member</th>
                         <th className="py-2 pr-3">Pts</th>
-                        <th className="py-2 pr-3">Correct</th>
-                        <th className="py-2 pr-3">Streak</th>
-                        <th className="py-2 pr-0">Wr</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -776,9 +538,6 @@ function HomeInner() {
                           <td className="py-2 pr-3">{i + 1}</td>
                           <td className="py-2 pr-3">{r.display_name}</td>
                           <td className="py-2 pr-3">{r.points_total}</td>
-                          <td className="py-2 pr-3">{r.picks_correct}</td>
-                          <td className="py-2 pr-3">{r.longest_streak}</td>
-                          <td className="py-2 pr-0">{r.wrinkle_points}</td>
                         </tr>
                       ))}
                     </tbody>
