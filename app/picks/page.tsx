@@ -247,7 +247,9 @@ export default function PicksPage() {
         <div className="ml-auto flex items-center gap-3">
           <Link className="underline text-sm" href="/standings">Standings</Link>
 
-          {/* Only show selectors if >1 leagues. If 1 league, show a read-only label. If 0, nothing. */}
+          
+          <Link className="opacity-80 hover:opacity-100" href="/stats">Stats</Link>
+{/* Only show selectors if >1 leagues. If 1 league, show a read-only label. If 0, nothing. */}
           {noLeagues ? null : singleLeague ? (
             <span className="text-sm text-neutral-600">
               League: <strong>{leagues[0].name}</strong>
