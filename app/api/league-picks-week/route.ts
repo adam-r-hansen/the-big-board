@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
+import { cookies as nextCookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 
 type Row = {
@@ -24,58 +24,61 @@ function safeName(display?: string | null, email?: string | null) {
   return 'Unknown'
 }
 
-function getSupabaseServer() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
-  const key =
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.SUPABASE_ANON_KEY
-
-  if (!url || !key) {
-    // Don’t throw at import-time; fail in-handler so build won’t break
-    return { error: 'Supabase env not configured (URL/ANON KEY missing)' } as const
-  }
-
-  const cookieStore = cookies()
-  const supabase = createServerClient(url, key, {
-    cookies: {
-      get(name) {
-        return cookieStore.get(name)?.value
-      },
-      set(name, value, options) {
-        cookieStore.set(name, value, options as any)
-      },
-      remove(name, options) {
-        cookieStore.set(name, '', { ...(options as any), maxAge: 0 })
-      },
-    },
-  })
-  return { supabase } as const
+/** Next 15 can type cookies() as Promise<ReadonlyRequestCookies>. Handle both. */
+async function getCookieStore() {
+  const maybe = (nextCookies as any)()
+  if (typeof maybe?.get === 'function') return maybe
+  return await maybe
 }
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url)
-  const leagueId = url.searchParams.get('leagueId')
-  const seasonStr = url.searchParams.get('season')
-  const weekStr = url.searchParams.get('week')
+  const urlObj = new URL(req.url)
+  const leagueId = urlObj.searchParams.get('leagueId')
+  const seasonStr = urlObj.searchParams.get('season')
+  const weekStr = urlObj.searchParams.get('week')
 
   if (!leagueId || !seasonStr || !weekStr) {
     return NextResponse.json(
       { error: 'leagueId, season, week are required' },
-      { status: 400 }
+      { status: 400 },
     )
   }
+
   const season = Number(seasonStr)
   const week = Number(weekStr)
   if (!Number.isFinite(season) || !Number.isFinite(week)) {
     return NextResponse.json({ error: 'invalid season/week' }, { status: 400 })
   }
 
-  const svc = getSupabaseServer()
-  if ('error' in svc) {
-    return NextResponse.json({ error: svc.error }, { status: 500 })
+  // Build the Supabase server client inside the handler (no import-time env reads)
+  const SUPABASE_URL =
+    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
+  const SUPABASE_ANON_KEY =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.SUPABASE_ANON_KEY
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return NextResponse.json(
+      { error: 'Supabase env not configured (URL/ANON KEY missing)' },
+      { status: 500 },
+    )
   }
-  const { supabase } = svc
+
+  const cookieStore = await getCookieStore()
+  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    cookies: {
+      get(name: string) {
+        return cookieStore.get(name)?.value
+      },
+      set(name: string, value: string, options: any) {
+        cookieStore.set(name, value, options)
+      },
+      remove(name: string, options: any) {
+        cookieStore.set(name, '', { ...options, maxAge: 0 })
+      },
+    },
+  })
 
   // 1) Picks (minimal)
   const { data: picks, error: picksErr } = await supabase
@@ -85,9 +88,7 @@ export async function GET(req: NextRequest) {
     .eq('season', season)
     .eq('week', week)
 
-  if (picksErr) {
-    return NextResponse.json({ error: picksErr.message }, { status: 500 })
-  }
+  if (picksErr) return NextResponse.json({ error: picksErr.message }, { status: 500 })
 
   const validPicks = (picks ?? []).filter(p => p.game_id)
   if (validPicks.length === 0) return NextResponse.json({ rows: [] })
@@ -99,9 +100,8 @@ export async function GET(req: NextRequest) {
     .select('id, game_utc, status')
     .in('id', gameIds)
 
-  if (gamesErr) {
-    return NextResponse.json({ error: gamesErr.message }, { status: 500 })
-  }
+  if (gamesErr) return NextResponse.json({ error: gamesErr.message }, { status: 500 })
+
   const nowMs = Date.now()
   const byGame = new Map((games ?? []).map(g => [g.id, g]))
   const isLocked = (g: { game_utc: string | null; status: string | null }) => {
@@ -116,16 +116,15 @@ export async function GET(req: NextRequest) {
   })
   if (locked.length === 0) return NextResponse.json({ rows: [] })
 
-  // 3) Profiles (display name or email prefix) — no "full_name"
+  // 3) Profiles (display_name/email; there is no full_name in your table)
   const profileIds = Array.from(new Set(locked.map(p => p.profile_id as string)))
   const { data: profiles, error: profErr } = await supabase
     .from('profiles')
     .select('id, display_name, email')
     .in('id', profileIds)
 
-  if (profErr) {
-    return NextResponse.json({ error: profErr.message }, { status: 500 })
-  }
+  if (profErr) return NextResponse.json({ error: profErr.message }, { status: 500 })
+
   const byProfile = new Map((profiles ?? []).map(pr => [pr.id, pr]))
 
   // 4) Teams (public-read)
@@ -135,9 +134,8 @@ export async function GET(req: NextRequest) {
     .select('id, abbreviation, short_name, name, color_primary, color_secondary')
     .in('id', teamIds)
 
-  if (teamsErr) {
-    return NextResponse.json({ error: teamsErr.message }, { status: 500 })
-  }
+  if (teamsErr) return NextResponse.json({ error: teamsErr.message }, { status: 500 })
+
   const byTeam = new Map((teams ?? []).map(t => [t.id, t]))
 
   // Compose rows
@@ -167,7 +165,7 @@ export async function GET(req: NextRequest) {
   rows.sort(
     (a, b) =>
       a.name.localeCompare(b.name) ||
-      (a.team?.short_name ?? '').localeCompare(b.team?.short_name ?? '')
+      (a.team?.short_name ?? '').localeCompare(b.team?.short_name ?? ''),
   )
 
   return NextResponse.json({ rows })
