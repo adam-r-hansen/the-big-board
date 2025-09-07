@@ -4,6 +4,26 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 
 type League = { id: string; name: string; season: number }
+
+type Team = {
+  id: string
+  abbreviation: string | null
+  name?: string | null
+  color_primary?: string | null
+  color_secondary?: string | null
+  logo?: string | null
+  logo_dark?: string | null
+}
+type TeamLike = {
+  id?: string
+  abbreviation?: string
+  name?: string
+  color_primary?: string
+  color_secondary?: string
+  logo?: string
+  logo_dark?: string
+}
+
 type MySummary = {
   picks_total: number; decided_picks: number; correct: number; accuracy: number;
   longest_streak: number; points_total: number; avg_points_per_pick: number; wrinkle_points: number
@@ -34,11 +54,73 @@ function Card(props: { title: string; right?: React.ReactNode; children: React.R
   )
 }
 
+// --- Chip + team index (same look & feel as Home) ---
+function Chip({
+  label,
+  primary = '#6b7280',
+  secondary = '#374151',
+  subtle = false,
+  badge,
+  title,
+  className = '',
+}: {
+  label: React.ReactNode
+  primary?: string
+  secondary?: string
+  subtle?: boolean
+  badge?: React.ReactNode
+  title?: string
+  className?: string
+}) {
+  return (
+    <span
+      title={title}
+      className={[
+        'inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm font-semibold',
+        'overflow-hidden text-ellipsis whitespace-nowrap',
+        subtle ? 'opacity-80' : '',
+        className,
+      ].join(' ')}
+      style={{
+        borderColor: primary,
+        color: primary,
+        background: subtle ? `linear-gradient(0deg, ${secondary}10, transparent)` : 'transparent',
+      }}
+    >
+      {label}
+      {badge ? <span className="text-xs font-normal">{badge}</span> : null}
+    </span>
+  )
+}
+
+function useTeamIndex(teamMap: Record<string, Team>) {
+  return useMemo(() => {
+    const idx: Record<string, TeamLike> = {}
+    for (const t of Object.values(teamMap || {})) {
+      const v: TeamLike = {
+        id: t.id,
+        abbreviation: t.abbreviation ?? undefined,
+        name: t.name ?? undefined,
+        color_primary: t.color_primary ?? undefined,
+        color_secondary: t.color_secondary ?? undefined,
+        logo: t.logo ?? undefined,
+        logo_dark: t.logo_dark ?? undefined,
+      }
+      if (t.id) idx[t.id] = v
+      if (t.abbreviation) idx[t.abbreviation.toUpperCase()] = v
+    }
+    return idx
+  }, [teamMap])
+}
+
 export default function StatsPage() {
   const [leagues, setLeagues] = useState<League[]>([])
   const [leagueId, setLeagueId] = useState<string>('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
   const [includeLive, setIncludeLive] = useState(false)
+
+  const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
+  const teamIndex = useTeamIndex(teamMap)
 
   const [mySummary, setMySummary] = useState<MySummary | null>(null)
   const [myLog, setMyLog] = useState<MyLogRow[]>([])
@@ -46,6 +128,7 @@ export default function StatsPage() {
   const [leagueLog, setLeagueLog] = useState<LeagueLogRow[]>([])
   const [err, setErr] = useState<string>('')
 
+  // Load leagues & team map
   useEffect(() => {
     ;(async () => {
       try {
@@ -60,17 +143,22 @@ export default function StatsPage() {
           setSeason(ls[0].season)
         }
       } catch {}
+      try {
+        const tm = await fetch('/api/team-map', { cache: 'no-store' }).then(r => r.json())
+        setTeamMap(tm?.teams || {})
+      } catch {}
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Load stats when filters change
   useEffect(() => {
     if (!season || !leagueId) return
     ;(async () => {
       setErr(''); setMySummary(null); setMyLog([]); setLeaders(null); setLeagueLog([])
       try {
         const [a, b] = await Promise.all([
-          fetch(`/api/my-stats?season=${season}&includeLive=${includeLive?'true':'false'}`, { cache: 'no-store' }).then(r => r.json()),
+          fetch(`/api/my-stats?season=${season}&leagueId=${leagueId}&includeLive=${includeLive?'true':'false'}`, { cache: 'no-store' }).then(r => r.json()),
           fetch(`/api/league-stats?leagueId=${leagueId}&season=${season}&includeLive=${includeLive?'true':'false'}`, { cache: 'no-store' }).then(r => r.json()),
         ])
         if (!a?.ok) setErr(a?.error || 'Failed to load my stats'); else { setMySummary(a.summary); setMyLog(a.log || []) }
@@ -82,14 +170,21 @@ export default function StatsPage() {
   const seasonOptions = useMemo(() => Array.from({ length: 3 }).map((_, i) => new Date().getFullYear() - 1 + i), [])
   const leagueName = useMemo(() => leagues.find(l => l.id === leagueId)?.name || 'League', [leagues, leagueId])
 
+  function teamChipForId(teamId?: string) {
+    if (!teamId) return <Chip label="—" />
+    const t = teamIndex[teamId]
+    const label = t?.abbreviation || '—'
+    const primary = t?.color_primary || '#6b7280'
+    const secondary = t?.color_secondary || '#374151'
+    return <Chip label={label} primary={primary} secondary={secondary} subtle />
+  }
+
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
+      {/* Header controls – top nav already exists, so no local nav links */}
       <section className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">Stats</h1>
         <div className="ml-auto flex flex-wrap items-center gap-3">
-          <Link className="underline text-sm" href="/">Home</Link>
-          <Link className="underline text-sm" href="/picks">Picks</Link>
-          <Link className="underline text-sm" href="/standings">Standings</Link>
           <select className="border rounded px-2 py-1 bg-transparent" value={season} onChange={e => setSeason(Number(e.target.value))}>
             {seasonOptions.map(yr => <option key={yr} value={yr}>{yr}</option>)}
           </select>
@@ -111,6 +206,7 @@ export default function StatsPage() {
 
       {!err && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* LEFT: My stats */}
           <div className="lg:col-span-5 grid gap-6">
             <Card title={`My Season (${season})`}>
               {!mySummary ? <div className="text-sm text-neutral-500">Loading…</div> : (
@@ -131,9 +227,12 @@ export default function StatsPage() {
                       </div>
                     ))}
                   </div>
+
                   <div className="mt-4">
                     <h3 className="text-sm font-semibold mb-2">My Pick Log</h3>
-                    {myLog.length === 0 ? <div className="text-sm text-neutral-500">No picks yet.</div> : (
+                    {myLog.length === 0 ? (
+                      <div className="text-sm text-neutral-500">No picks yet.</div>
+                    ) : (
                       <div className="overflow-x-auto max-h-[28rem] overflow-y-auto">
                         <table className="min-w-full text-sm">
                           <thead className="text-left text-neutral-500 sticky top-0 bg-white/90 dark:bg-neutral-900/90 backdrop-blur">
@@ -150,7 +249,7 @@ export default function StatsPage() {
                             {myLog.map((r, idx) => (
                               <tr key={idx} className="border-t">
                                 <td className="py-2 pr-3">{r.week}</td>
-                                <td className="py-2 pr-3">{r.team_id.slice(0, 6)}…</td>
+                                <td className="py-2 pr-3">{teamChipForId(r.team_id)}</td>
                                 <td className="py-2 pr-3">{r.result}</td>
                                 <td className="py-2 pr-3">{r.score ? `${r.score.home ?? '–'}-${r.score.away ?? '–'}` : '—'}</td>
                                 <td className="py-2 pr-3">{r.points ?? '—'}</td>
@@ -167,6 +266,7 @@ export default function StatsPage() {
             </Card>
           </div>
 
+          {/* RIGHT: League stats */}
           <div className="lg:col-span-7 grid gap-6">
             <Card title="Leaderboard — Avg Points / Pick" right={<span className="text-xs text-neutral-500">Finals only</span>}>
               {!leaders ? <div className="text-sm text-neutral-500">Loading…</div> :
@@ -271,7 +371,7 @@ export default function StatsPage() {
                         <tr key={idx} className="border-t">
                           <td className="py-2 pr-3">{r.week}</td>
                           <td className="py-2 pr-3">{r.display_name}</td>
-                          <td className="py-2 pr-3">{r.team_id.slice(0, 6)}…</td>
+                          <td className="py-2 pr-3">{teamChipForId(r.team_id)}</td>
                           <td className="py-2 pr-3">{r.result}</td>
                           <td className="py-2 pr-3">{r.score ? `${r.score.home ?? '–'}-${r.score.away ?? '–'}` : '—'}</td>
                           <td className="py-2 pr-3">{r.points ?? '—'}</td>
