@@ -18,15 +18,17 @@ type Team = {
   color_pref_dark: string | null
 }
 
-const KEY_OPTIONS = [
-  'color_primary',
-  'color_secondary',
-  'color_tertiary',
-  'color_quaternary',
-]
+const KEY_OPTIONS = ['color_primary','color_secondary','color_tertiary','color_quaternary']
 
-function swatch(hex?: string | null) {
-  const h = (hex && /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.test(hex)) ? hex : '#888888'
+function isHex(s?: string | null) {
+  return !!(s && /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.test(s.trim()))
+}
+function sanitize(hex?: string | null): string | null {
+  return isHex(hex) ? hex!.trim() : null
+}
+
+function Swatch({hex}:{hex?: string | null}) {
+  const h = sanitize(hex) ?? '#888888'
   return <span className="inline-block w-4 h-4 rounded border align-middle mr-1" style={{ background: h }} />
 }
 
@@ -39,18 +41,22 @@ function Chip({label, color}:{label: string; color: string}) {
   )
 }
 
-function pickHex(t: Team, key: string | null | undefined): string | null {
+function getByKey(t: Team, key: string | null | undefined): string | null {
   if (!key) return null
   const v = (t as any)[key]
   return typeof v === 'string' ? v : null
 }
 
 function resolvedLightHex(t: Team): string {
-  return (t.color_pref_light?.trim()) || pickHex(t, t.ui_light_color_key) || t.color_primary || '#6b7280'
+  const override = sanitize(t.color_pref_light)
+  const keyed = sanitize(getByKey(t, t.ui_light_color_key) ?? t.color_primary)
+  return override || keyed || '#6b7280'
 }
 
 function resolvedDarkHex(t: Team): string {
-  return (t.color_pref_dark?.trim()) || pickHex(t, t.ui_dark_color_key) || t.color_secondary || '#6b7280'
+  const override = sanitize(t.color_pref_dark)
+  const keyed = sanitize(getByKey(t, t.ui_dark_color_key) ?? t.color_secondary)
+  return override || keyed || '#6b7280'
 }
 
 export default function AdminTeamsPage() {
@@ -74,6 +80,7 @@ export default function AdminTeamsPage() {
         id: t.id,
         ui_light_color_key: t.ui_light_color_key,
         ui_dark_color_key: t.ui_dark_color_key,
+        // Persist text as-is; the UI will sanitize at render time
         color_pref_light: t.color_pref_light,
         color_pref_dark: t.color_pref_dark,
       })
@@ -90,9 +97,9 @@ export default function AdminTeamsPage() {
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
       <h1 className="text-xl font-bold mb-4">Teams — UI Colors</h1>
-      <p className="text-sm text-neutral-600 mb-4">
+      <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
         Pick which palette key the UI uses in <strong>Light</strong> and <strong>Dark</strong> modes,
-        or override with a custom hex. (Logos ignored for now.)
+        or override with a custom hex. Only valid hex values (<code>#RRGGBB</code> or <code>#RGB</code>) are used.
       </p>
 
       {msg && <div className="text-xs mb-3">{msg}</div>}
@@ -125,7 +132,7 @@ export default function AdminTeamsPage() {
                   <div className="rounded-lg border p-3">
                     <div className="font-semibold text-xs mb-2">Light mode</div>
                     <div className="flex items-center gap-2 mb-2">
-                      {swatch(pickHex(t, t.ui_light_color_key))}
+                      <Swatch hex={getByKey(t, t.ui_light_color_key) ?? t.color_primary}/>
                       <label className="flex items-center gap-2">
                         <span className="w-24 text-xs text-neutral-500">Color key</span>
                         <select
@@ -139,12 +146,12 @@ export default function AdminTeamsPage() {
                       </label>
                     </div>
                     <div className="flex items-center gap-2">
-                      {swatch(t.color_pref_light)}
+                      <Swatch hex={t.color_pref_light}/>
                       <label className="flex items-center gap-2">
                         <span className="w-24 text-xs text-neutral-500">Hex override</span>
                         <input
                           type="color"
-                          value={/^\#[0-9a-f]{3,6}$/i.test(t.color_pref_light || '') ? (t.color_pref_light as string) : '#888888'}
+                          value={sanitize(t.color_pref_light) ?? '#888888'}
                           onChange={e => setTeams(ts => ts.map(x => x.id === t.id ? { ...x, color_pref_light: e.target.value } : x))}
                         />
                         <input
@@ -153,11 +160,8 @@ export default function AdminTeamsPage() {
                           value={t.color_pref_light || ''}
                           onChange={e => setTeams(ts => ts.map(x => x.id === t.id ? { ...x, color_pref_light: e.target.value } : x))}
                         />
-                        <button
-                          type="button"
-                          className="text-xs underline"
-                          onClick={() => setTeams(ts => ts.map(x => x.id === t.id ? { ...x, color_pref_light: null } : x))}
-                        >
+                        <button type="button" className="text-xs underline"
+                          onClick={() => setTeams(ts => ts.map(x => x.id === t.id ? { ...x, color_pref_light: null } : x))}>
                           Clear
                         </button>
                       </label>
@@ -167,7 +171,7 @@ export default function AdminTeamsPage() {
                   <div className="rounded-lg border p-3">
                     <div className="font-semibold text-xs mb-2">Dark mode</div>
                     <div className="flex items-center gap-2 mb-2">
-                      {swatch(pickHex(t, t.ui_dark_color_key))}
+                      <Swatch hex={getByKey(t, t.ui_dark_color_key) ?? t.color_secondary}/>
                       <label className="flex items-center gap-2">
                         <span className="w-24 text-xs text-neutral-500">Color key</span>
                         <select
@@ -181,12 +185,12 @@ export default function AdminTeamsPage() {
                       </label>
                     </div>
                     <div className="flex items-center gap-2">
-                      {swatch(t.color_pref_dark)}
+                      <Swatch hex={t.color_pref_dark}/>
                       <label className="flex items-center gap-2">
                         <span className="w-24 text-xs text-neutral-500">Hex override</span>
                         <input
                           type="color"
-                          value={/^\#[0-9a-f]{3,6}$/i.test(t.color_pref_dark || '') ? (t.color_pref_dark as string) : '#888888'}
+                          value={sanitize(t.color_pref_dark) ?? '#888888'}
                           onChange={e => setTeams(ts => ts.map(x => x.id === t.id ? { ...x, color_pref_dark: e.target.value } : x))}
                         />
                         <input
@@ -195,11 +199,8 @@ export default function AdminTeamsPage() {
                           value={t.color_pref_dark || ''}
                           onChange={e => setTeams(ts => ts.map(x => x.id === t.id ? { ...x, color_pref_dark: e.target.value } : x))}
                         />
-                        <button
-                          type="button"
-                          className="text-xs underline"
-                          onClick={() => setTeams(ts => ts.map(x => x.id === t.id ? { ...x, color_pref_dark: null } : x))}
-                        >
+                        <button type="button" className="text-xs underline"
+                          onClick={() => setTeams(ts => ts.map(x => x.id === t.id ? { ...x, color_pref_dark: null } : x))}>
                           Clear
                         </button>
                       </label>
@@ -210,7 +211,7 @@ export default function AdminTeamsPage() {
                 <div className="mt-2 text-xs text-neutral-500">
                   Base palette: {['color_primary','color_secondary','color_tertiary','color_quaternary'].map(k => {
                     const v = (t as any)[k] as string | null
-                    return <span key={k} className="mr-3">{swatch(v)}{k}: {v || '—'}</span>
+                    return <span key={k} className="mr-3"><Swatch hex={v}/>{k}: {v || '—'}</span>
                   })}
                 </div>
               </div>
