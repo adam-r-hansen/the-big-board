@@ -5,7 +5,7 @@ import { createClient } from '@/utils/supabase/server'
 export default async function SiteHeader() {
   const supabase = await createClient()
   const { data } = await supabase.auth.getUser()
-  const user = data.user
+  const user = data?.user ?? null
 
   return (
     <header className="border-b border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-950/80 backdrop-blur">
@@ -16,6 +16,7 @@ export default async function SiteHeader() {
           <Link href="/picks" className="opacity-80 hover:opacity-100">Picks</Link>
           <Link href="/scoreboard" className="opacity-80 hover:opacity-100">Scoreboard</Link>
           <Link href="/standings" className="opacity-80 hover:opacity-100">Standings</Link>
+          <Link href="/stats" className="opacity-80 hover:opacity-100">Stats</Link>
           <Link href="/admin" className="opacity-80 hover:opacity-100">Admin</Link>
         </nav>
 
@@ -41,4 +42,3 @@ export default async function SiteHeader() {
     </header>
   )
 }
-
