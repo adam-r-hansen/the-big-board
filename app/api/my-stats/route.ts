@@ -64,7 +64,7 @@ function pointsFor(teamId: string, g?: GameRow | null): number | null {
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const season = Number(url.searchParams.get('season')) || new Date().getFullYear()
-  const leagueId = url.searchParams.get('leagueId') || ''      // ← NEW
+  const leagueId = url.searchParams.get('leagueId') || ''
   const includeLive = toBool(url.searchParams.get('includeLive'))
 
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
@@ -89,19 +89,28 @@ export async function GET(req: NextRequest) {
     },
   })
 
-  // Weekly picks (RLS = only this user). Scope by season (+ league if provided).
-  let q = supabase
+  // 🔐 identify the current user explicitly (don’t depend on RLS)
+  const { data: u, error: uErr } = await supabase.auth.getUser()
+  if (uErr || !u?.user) {
+    return NextResponse.json({ ok: false, error: 'Unauthenticated' }, { status: 200 })
+  }
+  const uid = u.user.id
+
+  // Weekly picks — strictly this user, this season (+league if provided)
+  let pq = supabase
     .from('picks')
-    .select('id, team_id, game_id, season, week')
+    .select('id, team_id, game_id, season, week, league_id, profile_id')
+    .eq('profile_id', uid)
     .eq('season', season)
-  if (leagueId) q = q.eq('league_id', leagueId)
-  const { data: picks, error: pErr } = await q
+  if (leagueId) pq = pq.eq('league_id', leagueId)
+  const { data: picks, error: pErr } = await pq
   if (pErr) return NextResponse.json({ ok: false, error: pErr.message }, { status: 200 })
 
-  // Wrinkle picks (RLS = only this user) → join via wrinkles to get week & filter to league/season
+  // Wrinkle picks — strictly this user; join via wrinkles to filter league + season & get week
   const { data: wp, error: wErr } = await supabase
     .from('wrinkle_picks')
     .select('id, profile_id, team_id, game_id, wrinkle_id')
+    .eq('profile_id', uid)
   if (wErr) return NextResponse.json({ ok: false, error: wErr.message }, { status: 200 })
 
   const wrIds = Array.from(new Set((wp || []).map(r => r.wrinkle_id))).filter(Boolean) as string[]
@@ -117,6 +126,7 @@ export async function GET(req: NextRequest) {
     if (wrErr) return NextResponse.json({ ok: false, error: wrErr.message }, { status: 200 })
     wrinkles = (wr || []) as any
   }
+  const wrIndex = new Map(wrinkles.map(w => [w.id, w]))
 
   type Row = { id: string; week: number; team_id: string; game_id: string | null; wrinkle: boolean }
   const weeklyRows: Row[] = (picks || []).map((p: any) => ({
@@ -126,19 +136,17 @@ export async function GET(req: NextRequest) {
     game_id: p.game_id,
     wrinkle: false,
   }))
-
-  const wrIndex = new Map(wrinkles.map(w => [w.id, w]))
   const wrinkleRows: Row[] = (wp || [])
     .map((r: any) => {
       const wr = wrIndex.get(r.wrinkle_id)
-      if (!wr) return null // filtered out by leagueId/season
+      if (!wr) return null // filtered out by league/season
       return { id: r.id, week: wr.week, team_id: r.team_id, game_id: r.game_id, wrinkle: true } as Row
     })
     .filter(Boolean) as Row[]
 
   const all = [...weeklyRows, ...wrinkleRows]
 
-  // Games lookup
+  // Games lookup (only those referenced)
   const gameIds = Array.from(new Set(all.map(r => r.game_id).filter(Boolean))) as string[]
   let gamesById = new Map<string, GameRow>()
   if (gameIds.length) {
@@ -181,21 +189,13 @@ export async function GET(req: NextRequest) {
     })
     .sort((a, b) => a.week - b.week)
 
-  // FINAL-only for summary metrics
+  // Summary from FINAL rows only
   const finals = log.filter(r => r.status === 'FINAL')
   const decidedCount = finals.length
   const pointsTotal = finals.reduce((acc, r) => acc + (typeof r.points === 'number' ? r.points : 0), 0)
   const correct = finals.filter(r => r.result === 'W').length
-  let longest = 0,
-    cur = 0
-  for (const r of finals) {
-    if (r.result === 'W') {
-      cur++
-      if (cur > longest) longest = cur
-    } else {
-      cur = 0
-    }
-  }
+  let longest = 0, cur = 0
+  for (const r of finals) { if (r.result === 'W') { cur++; if (cur > longest) longest = cur } else { cur = 0 } }
   const wrinklePoints = finals.filter(r => r.wrinkle).reduce((acc, r) => acc + (r.points || 0), 0)
   const avg = decidedCount ? pointsTotal / decidedCount : 0
   const accuracy = decidedCount ? correct / decidedCount : 0
