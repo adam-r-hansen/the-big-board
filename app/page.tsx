@@ -1,11 +1,6 @@
 // app/page.tsx
 'use client'
 
-/**
- * Home: overview + scoreboard (left 2/3), and
- * My Picks / Standings mini (right 1/3).
- */
-
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import TeamPill from '@/components/ui/TeamPill'
@@ -139,20 +134,16 @@ function HomeInner() {
   const [standRows, setStandRows] = useState<any[]>([])
   const [msg, setMsg] = useState('')
 
-  const singleLeague = leagues.length === 1
   const noLeagues = leagues.length === 0
 
-  // load base data
+  // base data
   useEffect(() => {
     ;(async () => {
       try {
         const lj = await fetch('/api/my-leagues', { cache: 'no-store' }).then(r => r.json())
         const ls: League[] = lj?.leagues || []
         setLeagues(ls)
-        if (ls.length === 1) {
-          setLeagueId(ls[0].id)
-          setSeason(ls[0].season)
-        } else if (!leagueId && ls[0]) {
+        if (!leagueId && ls[0]) {
           setLeagueId(ls[0].id)
           setSeason(ls[0].season)
         }
@@ -193,7 +184,7 @@ function HomeInner() {
     })()
   }, [leagueId, season, week])
 
-  // maps for quick lookups
+  // maps & computed
   const gameById = useMemo(() => {
     const m = new Map<string, Game>()
     for (const g of games) m.set(g.id, g)
@@ -223,15 +214,15 @@ function HomeInner() {
     return sum
   }, [myPicks, gameById])
 
-  // unified team pill helpers
+  // pills — bigger on desktop, and now wider tokens
   const scoreboardPill = (teamId?: string) => (
     <TeamPill
       teamId={teamId}
       teamIndex={teamIndex}
       size="sm"            // mobile
-      mdUpSize="xl"        // desktop bigger
+      mdUpSize="xl"        // desktop: HUGE uniform width (w-48)
       variant="subtle"
-      labelMode="abbrNick" // NEW: abbr on mobile, nickname on desktop
+      labelMode="abbrNick"
     />
   )
 
@@ -240,7 +231,7 @@ function HomeInner() {
       teamId={teamId}
       teamIndex={teamIndex}
       size="sm"
-      mdUpSize="md"
+      mdUpSize="lg"        // desktop: larger than before (w-36)
       variant="subtle"
       status={(opts?.status || '') as any}
       points={opts?.points ?? null}
@@ -248,7 +239,7 @@ function HomeInner() {
     />
   )
 
-  // mini standings — show ALL members (sorted desc)
+  // mini standings (all members)
   const miniStand = useMemo(() => {
     const rows = (standRows || []).map((r: any) => ({
       profile_id: r.profile_id ?? r.user_id ?? r.id ?? '',
@@ -276,26 +267,7 @@ function HomeInner() {
           <Link className="underline text-sm" href="/picks">Picks</Link>
           <Link className="underline text-sm" href="/standings">Standings</Link>
 
-          {/* League control */}
-          {noLeagues ? null : leagues.length === 1 ? (
-            <span className="text-sm text-neutral-600">
-              League: <strong>{leagues[0].name}</strong>
-            </span>
-          ) : (
-            <select
-              className="border rounded px-2 py-1 bg-transparent"
-              value={leagueId}
-              onChange={(e) => setLeagueId(e.target.value)}
-            >
-              {leagues.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name} · {l.season}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {/* Season & Week */}
+          {/* Season & Week quick selectors */}
           <select
             className="border rounded px-2 py-1 bg-transparent"
             value={season}
@@ -452,7 +424,7 @@ function HomeInner() {
               )}
             </Card>
 
-            {/* Standings mini (show all) */}
+            {/* Standings mini */}
             <Card
               title="Standings"
               right={
@@ -506,4 +478,3 @@ function Stat({ label, value, sub }: { label: string; value: number | string; su
     </div>
   )
 }
-

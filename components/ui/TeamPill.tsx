@@ -10,29 +10,24 @@ type Props = {
   team?: TeamLike
   teamId?: string
   teamIndex?: Record<string, TeamLike>
-  /** base size (mobile) */
-  size?: Size
-  /** upgrade size ≥ md */
-  mdUpSize?: Size
-  /** upgrade size ≥ lg */
-  lgUpSize?: Size
+  size?: Size            // base size (mobile)
+  mdUpSize?: Size        // ≥ md override
+  lgUpSize?: Size        // ≥ lg override
   variant?: 'outline' | 'subtle'
   status?: 'LIVE' | 'FINAL' | 'UPCOMING'
   points?: number | null
   /**
    * label rendering:
    *  - 'abbr'        = "PHI"
-   *  - 'short'       = "Eagles" or "Los Angeles Chargers" (whatever is in short_name)
+   *  - 'short'       = "Los Angeles Chargers" (whatever short_name is)
    *  - 'name'        = full team name
-   *  - 'abbrFull'    = "PHI" on mobile, short/name on md+ (responsive)
+   *  - 'abbrFull'    = "PHI" on mobile, short/name on md+
    *  - 'abbrNick'    = "PHI" on mobile, **nickname** (last word) on md+  ← recommended
    */
   labelMode?: 'abbr' | 'short' | 'name' | 'abbrFull' | 'abbrNick'
   className?: string
-  /** makes border thicker */
   selected?: boolean
   disabled?: boolean
-  /** force theme if needed */
   theme?: 'light' | 'dark'
 }
 
@@ -40,18 +35,22 @@ function cls(...a: Array<string | false | null | undefined>) {
   return a.filter(Boolean).join(' ')
 }
 
-/** Fixed, uniform dimensions per token (width is fixed; text truncates if too long) */
+/** Fixed, UNIFORM widths. Wider on larger tokens. */
 function dimsTokens(sz: Size): string[] {
   switch (sz) {
     case 'xl':
-      return ['w-36', 'h-12', 'text-base']   // 144px
+      // 192px wide — scoreboard pills on desktop
+      return ['w-48', 'h-12', 'text-base']
     case 'lg':
-      return ['w-28', 'h-11', 'text-base']
-    case 'sm':
-      return ['w-16', 'h-8', 'text-xs']
+      // 144px — My Picks pills on desktop
+      return ['w-36', 'h-11', 'text-base']
     case 'md':
+      // 112px
+      return ['w-28', 'h-10', 'text-sm']
+    case 'sm':
     default:
-      return ['w-24', 'h-10', 'text-sm']
+      // 80px — compact mobile
+      return ['w-20', 'h-8', 'text-xs']
   }
 }
 
@@ -60,9 +59,7 @@ function nicknameFrom(team?: TeamLike): string | undefined {
   const src = team.short_name || team.name || team.abbreviation
   if (!src) return undefined
   const parts = String(src).trim().split(/\s+/)
-  // If there's just one token (e.g., "Rams"), use it; else use last token (e.g., "Buccaneers")
-  const nick = parts.length ? parts[parts.length - 1] : src
-  return nick
+  return parts.length ? parts[parts.length - 1] : src
 }
 
 export default function TeamPill({
@@ -84,14 +81,16 @@ export default function TeamPill({
   useEffect(() => {
     if (theme) return
     if (typeof window === 'undefined') return
-    setDetectedTheme(document.documentElement.classList.contains('dark') ? 'dark' : 'light')
+    setDetectedTheme(
+      document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+    )
   }, [theme])
   const t = theme || detectedTheme
 
   const resolvedTeam = useMemo(() => {
     if (team) return team
     if (!teamId) return undefined
-    return teamIndex?.[teamId] || teamIndex?.[teamId.toUpperCase()]
+    return teamIndex?.[teamId] || teamIndex?.[String(teamId).toUpperCase()]
   }, [team, teamId, teamIndex])
 
   const color = resolveTeamHex(resolvedTeam, t)
@@ -102,7 +101,8 @@ export default function TeamPill({
   const lgUp = lgUpSize ? dimsTokens(lgUpSize).map(c => `lg:${c}`) : []
   const dims = [...base, ...mdUp, ...lgUp].join(' ')
 
-  const shell = 'inline-flex items-center justify-center gap-1 rounded-xl font-semibold overflow-hidden text-ellipsis whitespace-nowrap'
+  const shell =
+    'inline-flex items-center justify-center gap-1 rounded-xl font-semibold overflow-hidden text-ellipsis whitespace-nowrap'
   const border = selected ? 'border-2' : 'border'
   const cursor = disabled ? 'opacity-60 cursor-not-allowed' : ''
 
@@ -148,9 +148,10 @@ export default function TeamPill({
       style={{
         borderColor: color,
         color,
-        background: variant === 'subtle'
-          ? `color-mix(in srgb, ${color} 12%, transparent)`
-          : 'transparent',
+        background:
+          variant === 'subtle'
+            ? `color-mix(in srgb, ${color} 12%, transparent)`
+            : 'transparent',
       }}
       title={title}
       aria-pressed={selected || undefined}
