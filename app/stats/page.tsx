@@ -1,83 +1,191 @@
-// app/stats/page.tsx
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import TeamPill from '@/components/ui/TeamPill'
 import { buildTeamIndex, type Team as TeamType } from '@/lib/teamColors'
 
+type League = { id: string; name: string; season: number }
 type Team = TeamType
 
-type MySeason = {
-  picks: number
-  correct: number
-  win_pct: number
-  longest_streak: number
-  points: number
-  avg_per_pick: number
-  wrinkle_points: number
-  log: Array<{
-    week: number
-    team_id: string
-    result: 'W' | 'L' | '-' | 'T'
-    score: string | null
-    points: number | null
-    wrinkle: boolean
-    status?: 'LIVE' | 'FINAL' | 'UPCOMING'
+type MyStats = {
+  picks_total?: number
+  picks_correct?: number
+  win_pct?: number            // 0..100 or 0..1 depending on backend; we normalize below
+  longest_streak?: number
+  points_total?: number
+  avg_points_per_pick?: number
+  wrinkle_points?: number
+  pick_log?: Array<{
+    week?: number
+    team_id?: string
+    result?: 'W'|'L'|'T'|null
+    score_str?: string | null // e.g. "24—20"
+    points?: number | null
+    wrinkle?: boolean | null
   }>
 }
 
-type LeaderboardRow = {
-  rank: number
-  profile_id: string
-  display_name: string
-  decided: number
-  points: number
-  avg: number
-  correct?: number
-  accuracy?: number
+type LeagueBoards = {
+  avg_points?: Array<{ profile_id: string; display_name: string; decided?: number; points?: number; avg?: number }>
+  accuracy?: Array<{ profile_id: string; display_name: string; correct?: number; decided?: number; pct?: number }>
+  streaks?: Array<{ profile_id: string; display_name: string; streak?: number }>
 }
 
+function Card({
+  children,
+  title,
+  right,
+  className = '',
+}: {
+  children: React.ReactNode
+  title: string
+  right?: React.ReactNode
+  className?: string
+}) {
+  return (
+    <section
+      className={[
+        'rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5',
+        className,
+      ].join(' ')}
+    >
+      <header className="mb-3 flex items-center justify-between">
+        <h2 className="text-lg font-semibold">{title}</h2>
+        {right}
+      </header>
+      {children}
+    </section>
+  )
+}
+
+/** ---------- number safety helpers (prevents .toFixed on undefined) ---------- */
+const num = (v: unknown, fallback = 0): number => {
+  const n = typeof v === 'string' ? Number(v) : (v as number)
+  return Number.isFinite(n) ? n : fallback
+}
+const safePctStr = (v: unknown, alreadyPercent = true): string => {
+  // backend may send 0..100 or 0..1; normalize to 0..100
+  let n = num(v, NaN)
+  if (!Number.isFinite(n)) return '—'
+  if (!alreadyPercent) n *= 100
+  return `${n.toFixed(1)}%`
+}
+const safeFixed = (v: unknown, dp = 2): string => {
+  const n = num(v, NaN)
+  return Number.isFinite(n) ? n.toFixed(dp) : '—'
+}
+const safeInt = (v: unknown): string => {
+  const n = num(v, NaN)
+  return Number.isFinite(n) ? String(Math.trunc(n)) : '—'
+}
+
+/** ---------- main page ---------- */
 export default function StatsPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto max-w-6xl px-4 py-6">
+          <h1 className="text-xl font-bold mb-3">Stats</h1>
+          <div className="text-neutral-600">Loading…</div>
+        </main>
+      }
+    >
+      <StatsInner />
+    </Suspense>
+  )
+}
+
+function StatsInner() {
+  const [leagues, setLeagues] = useState<League[]>([])
+  const [leagueId, setLeagueId] = useState('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
+  const [includeLive, setIncludeLive] = useState(false)
+
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
   const teamIndex = useMemo(() => buildTeamIndex(teamMap), [teamMap])
 
-  const [mine, setMine] = useState<MySeason | null>(null)
-  const [lbAvg, setLbAvg] = useState<LeaderboardRow[]>([])
-  const [lbAcc, setLbAcc] = useState<LeaderboardRow[]>([])
+  const [mine, setMine] = useState<MyStats | null>(null)
+  const [boards, setBoards] = useState<LeagueBoards | null>(null)
   const [msg, setMsg] = useState('')
 
+  // boot
   useEffect(() => {
     ;(async () => {
+      try {
+        const lj = await fetch('/api/my-leagues', { cache: 'no-store' }).then(r => r.json())
+        const ls: League[] = lj?.leagues || []
+        setLeagues(ls)
+        if (!leagueId && ls[0]) {
+          setLeagueId(ls[0].id)
+          setSeason(ls[0].season)
+        }
+      } catch {}
       try {
         const tm = await fetch('/api/team-map', { cache: 'no-store' }).then(r => r.json())
         setTeamMap(tm?.teams || {})
       } catch {}
     })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // loads that depend on filters
   useEffect(() => {
+    if (!season) return
     ;(async () => {
       setMsg('')
       try {
-        const [ms, ls] = await Promise.all([
-          fetch(`/api/my-stats?season=${season}`, { cache: 'no-store' }).then(r => r.json()),
-          fetch(`/api/league-stats?season=${season}`, { cache: 'no-store' }).then(r => r.json()),
-        ])
-        setMine(ms?.season || null)
-        setLbAvg(ls?.leaderboard_avg || [])
-        setLbAcc(ls?.leaderboard_accuracy || [])
+        const my = await fetch(`/api/my-stats?season=${season}`, { cache: 'no-store' }).then(r => r.json())
+        setMine(my || {})
       } catch (e: any) {
-        setMsg(e?.message || 'Failed to load')
+        setMine({})
+        setMsg(e?.message || 'Failed to load my stats')
       }
     })()
   }, [season])
 
+  useEffect(() => {
+    if (!leagueId || !season) return
+    ;(async () => {
+      try {
+        const qs = new URLSearchParams({ leagueId, season: String(season) })
+        if (includeLive) qs.set('includeLive', '1')
+        const lb = await fetch(`/api/league-stats?${qs.toString()}`, { cache: 'no-store' }).then(r => r.json())
+        setBoards(lb || {})
+      } catch (e: any) {
+        setBoards({})
+        setMsg(e?.message || 'Failed to load league stats')
+      }
+    })()
+  }, [leagueId, season, includeLive])
+
+  // derived (display-friendly) values
+  const picksTotal = safeInt(mine?.picks_total)
+  const picksCorrect = safeInt(mine?.picks_correct)
+  // try to detect if backend gave 0..100 or 0..1; assume <= 1 means ratio
+  const winPct = (() => {
+    const raw = num(mine?.win_pct, NaN)
+    if (!Number.isFinite(raw)) return '—'
+    return raw <= 1 ? safePctStr(raw, false) : safePctStr(raw, true)
+  })()
+  const longestStreak = safeInt(mine?.longest_streak)
+  const pointsTotal = safeInt(mine?.points_total)
+  const avgPerPick = safeFixed(mine?.avg_points_per_pick, 2)
+  const wrinklePts = safeInt(mine?.wrinkle_points)
+
+  const myLog = Array.isArray(mine?.pick_log) ? mine!.pick_log! : []
+
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
-      <header className="mb-4 flex items-center gap-3">
+      <section className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">Stats</h1>
-        <div className="ml-auto flex items-center gap-2">
+
+        <div className="ml-auto flex items-center gap-3">
+          {/* Primary nav already in SiteHeader; keep quick links if you like */}
+          <Link className="underline text-sm" href="/picks">Picks</Link>
+          <Link className="underline text-sm" href="/standings">Standings</Link>
+
+          {/* Season */}
           <select
             className="border rounded px-2 py-1 bg-transparent"
             value={season}
@@ -85,127 +193,204 @@ export default function StatsPage() {
           >
             {Array.from({ length: 3 }).map((_, i) => {
               const yr = new Date().getFullYear() - 1 + i
-              return <option key={yr} value={yr}>{yr}</option>
+              return (
+                <option key={yr} value={yr}>
+                  {yr}
+                </option>
+              )
             })}
           </select>
+
+          {/* League */}
+          <select
+            className="border rounded px-2 py-1 bg-transparent"
+            value={leagueId}
+            onChange={(e) => setLeagueId(e.target.value)}
+          >
+            {leagues.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name} · {l.season}
+              </option>
+            ))}
+          </select>
+
+          <label className="text-sm flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="accent-black dark:accent-white"
+              checked={includeLive}
+              onChange={(e) => setIncludeLive(e.target.checked)}
+            />
+            Include LIVE
+          </label>
         </div>
-      </header>
+      </section>
 
-      {/* My Season */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* My Season */}
         <div className="lg:col-span-5">
-          <div className="rounded-2xl border p-5">
-            <h2 className="text-lg font-semibold mb-3">My Season ({season})</h2>
-            {!mine ? (
-              <div className="text-sm text-neutral-500">No data.</div>
-            ) : (
-              <>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  <StatCard label="Picks" value={mine.picks} />
-                  <StatCard label="Correct" value={mine.correct} />
-                  <StatCard label="Win %" value={`${(mine.win_pct * 100).toFixed(1)}%`} />
-                  <StatCard label="Longest Streak" value={mine.longest_streak} />
-                  <StatCard label="Points" value={mine.points} />
-                  <StatCard label="Avg / Pick" value={mine.avg_per_pick.toFixed(2)} />
-                  <StatCard label="Wrinkle Points" value={mine.wrinkle_points} />
-                </div>
+          <Card title={`My Season (${season})`}>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <Metric label="Picks" value={picksTotal} />
+              <Metric label="Correct" value={picksCorrect} />
+              <Metric label="Win %" value={winPct} />
+              <Metric label="Longest Streak" value={longestStreak} />
+              <Metric label="Points" value={pointsTotal} />
+              <Metric label="Avg / Pick" value={avgPerPick} />
+              <Metric label="Wrinkle Points" value={wrinklePts} wide />
+            </div>
 
-                <h3 className="mt-5 mb-2 font-semibold">My Pick Log</h3>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="text-left text-neutral-500">
-                      <tr>
-                        <th className="py-2 pr-3">Week</th>
-                        <th className="py-2 pr-3">Team</th>
-                        <th className="py-2 pr-3">Result</th>
-                        <th className="py-2 pr-3">Score</th>
-                        <th className="py-2 pr-3">Points</th>
-                        <th className="py-2 pr-3">Wrinkle</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(mine.log || []).map((r, i) => (
-                        <tr key={i} className="border-t">
-                          <td className="py-2 pr-3">{r.week}</td>
-                          <td className="py-2 pr-3">
+            <h3 className="mt-6 mb-2 font-medium">My Pick Log</h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="text-left text-neutral-500">
+                  <tr>
+                    <th className="py-2 pr-3">Week</th>
+                    <th className="py-2 pr-3">Team</th>
+                    <th className="py-2 pr-3">Result</th>
+                    <th className="py-2 pr-3">Score</th>
+                    <th className="py-2 pr-3">Points</th>
+                    <th className="py-2 pr-3">Wrinkle</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {myLog.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-4 text-neutral-500">No picks yet.</td>
+                    </tr>
+                  ) : (
+                    myLog.map((r, i) => (
+                      <tr key={i} className="border-t">
+                        <td className="py-2 pr-3">{r.week ?? '—'}</td>
+                        <td className="py-2 pr-3">
+                          <div className="max-w-[8rem]">
                             <TeamPill
                               teamId={r.team_id}
                               teamIndex={teamIndex}
                               size="sm"
-                              mdUpSize="md"
+                              mdUpSize="lg"
                               variant="subtle"
-                              status={r.status}
-                              points={r.status === 'FINAL' ? (r.points ?? null) : null}
+                              labelMode="abbrNick"
                             />
-                          </td>
-                          <td className="py-2 pr-3">{r.result}</td>
-                          <td className="py-2 pr-3">{r.score || '—'}</td>
-                          <td className="py-2 pr-3">{typeof r.points === 'number' ? r.points : '—'}</td>
-                          <td className="py-2 pr-3">{r.wrinkle ? '✓' : '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-          </div>
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3">{r.result ?? '—'}</td>
+                        <td className="py-2 pr-3">{r.score_str ?? '—'}</td>
+                        <td className="py-2 pr-3">{safeInt(r.points)}</td>
+                        <td className="py-2 pr-3">{r.wrinkle ? '✓' : '—'}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
         </div>
 
         {/* Leaderboards */}
         <div className="lg:col-span-7 grid gap-6">
-          <Board
+          <Card
             title="Leaderboard — Avg Points / Pick"
-            heads={['#', 'Member', 'Decided', 'Points', 'Avg/Pick']}
-            rows={(lbAvg || []).map((r) => [r.rank, r.display_name, r.decided, r.points, r.avg.toFixed(2)])}
-          />
-          <Board
-            title="Leaderboard — Pick Accuracy"
-            heads={['#', 'Member', 'Correct', 'Decided', 'Accuracy']}
-            rows={(lbAcc || []).map((r) => [r.rank, r.display_name, r.correct ?? '—', r.decided, `${(r.accuracy ?? 0).toFixed(1)}%`])}
-          />
-        </div>
-      </section>
+            right={<span className="text-xs opacity-70">{includeLive ? '' : 'Finals only'}</span>}
+          >
+            <BoardTable
+              rows={(boards?.avg_points || []).map((r) => ({
+                name: r.display_name,
+                col2: safeInt(r.decided),
+                col3: safeInt(r.points),
+                col4: safeFixed(r.avg, 2),
+              }))}
+              headers={['#', 'Member', 'Decided', 'Points', 'Avg/Pick']}
+            />
+          </Card>
 
-      {msg && <div className="text-xs mt-3">{msg}</div>}
+          <Card
+            title="Leaderboard — Pick Accuracy"
+            right={<span className="text-xs opacity-70">{includeLive ? '' : 'Finals only'}</span>}
+          >
+            <BoardTable
+              rows={(boards?.accuracy || []).map((r) => {
+                const decided = num(r.decided, 0)
+                const correct = num(r.correct, 0)
+                const pct = decided > 0 ? (correct / decided) * 100 : NaN
+                return {
+                  name: r.display_name,
+                  col2: safeInt(correct),
+                  col3: safeInt(decided),
+                  col4: safeFixed(pct, 1) === '—' ? '—' : `${safeFixed(pct, 1)}%`,
+                }
+              })}
+              headers={['#', 'Member', 'Correct', 'Decided', 'Accuracy']}
+            />
+          </Card>
+
+          <Card title="Leaderboard — Longest Streak">
+            <BoardTable
+              rows={(boards?.streaks || []).map((r) => ({
+                name: r.display_name,
+                col2: safeInt(r.streak),
+              }))}
+              headers={['#', 'Member', 'Streak']}
+            />
+          </Card>
+        </div>
+      </div>
+
+      {msg && <div className="text-xs mt-2">{msg}</div>}
     </main>
   )
 }
 
-function StatCard({ label, value }: { label: string; value: string | number }) {
+/** ---------- little UI helpers ---------- */
+
+function Metric({ label, value, wide = false }: { label: string; value: string | number; wide?: boolean }) {
   return (
-    <div className="rounded-xl border px-4 py-3">
+    <div className={['rounded-xl border px-4 py-3', wide ? 'sm:col-span-2' : ''].join(' ')}>
       <div className="text-xs text-neutral-500">{label}</div>
       <div className="text-2xl font-semibold">{value}</div>
     </div>
   )
 }
 
-function Board({
-  title, heads, rows,
-}: { title: string; heads: string[]; rows: (string|number)[][] }) {
+function BoardTable({
+  rows,
+  headers,
+}: {
+  rows: Array<{ name: string; col2?: string | number; col3?: string | number; col4?: string | number }>
+  headers: string[]
+}) {
   return (
-    <div className="rounded-2xl border p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        <span className="text-xs text-neutral-500">Finals only</span>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead className="text-left text-neutral-500">
-            <tr>
-              {heads.map((h) => <th key={h} className="py-2 pr-3">{h}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className="border-t">
-                {r.map((c, j) => <td key={j} className="py-2 pr-3">{c}</td>)}
-              </tr>
+    <div className="overflow-x-auto">
+      <table className="min-w-full text-sm">
+        <thead className="text-left text-neutral-500">
+          <tr>
+            {headers.map((h, i) => (
+              <th key={i} className="py-2 pr-3">
+                {h}
+              </th>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={headers.length} className="py-4 text-neutral-500">
+                No data yet.
+              </td>
+            </tr>
+          ) : (
+            rows.map((r, i) => (
+              <tr key={`${r.name}-${i}`} className="border-t">
+                <td className="py-2 pr-3">{i + 1}</td>
+                <td className="py-2 pr-3">{r.name}</td>
+                {'col2' in r && <td className="py-2 pr-3">{r.col2 ?? '—'}</td>}
+                {'col3' in r && <td className="py-2 pr-3">{r.col3 ?? '—'}</td>}
+                {'col4' in r && <td className="py-2 pr-3">{r.col4 ?? '—'}</td>}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
     </div>
   )
 }
