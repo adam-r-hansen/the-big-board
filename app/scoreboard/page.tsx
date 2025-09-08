@@ -1,12 +1,35 @@
 // app/scoreboard/page.tsx
 'use client'
 
-import { Suspense, useEffect, useMemo, useState } from 'react'
-import TeamPill from '@/components/ui/TeamPill'
-import { buildTeamIndex, type Team as TeamType } from '@/lib/teamColors'
+/**
+ * Scoreboard (modernized to match Home/Picks)
+ * - Responsive team chips: abbr on mobile, full name on desktop
+ * - Uniform chip size for clean alignment
+ * - Simple Week/Season selectors
+ */
 
-type League = { id: string; name: string; season: number }
-type Team = TeamType
+import { useEffect, useMemo, useState, Suspense, type ReactNode } from 'react'
+import Link from 'next/link'
+
+type Team = {
+  id: string
+  abbreviation: string | null
+  name?: string | null
+  color_primary?: string | null
+  color_secondary?: string | null
+  logo?: string | null
+  logo_dark?: string | null
+}
+
+type TeamLike = {
+  id?: string
+  abbreviation?: string
+  name?: string
+  color_primary?: string
+  color_secondary?: string
+  logo?: string
+  logo_dark?: string
+}
 
 type Game = {
   id: string
@@ -14,11 +37,9 @@ type Game = {
   week: number
   game_utc: string
   status?: string
-  home: { id?: string; score?: number | null }
-  away: { id?: string; score?: number | null }
+  home: { id?: string; abbr?: string | null; score?: number | null }
+  away: { id?: string; abbr?: string | null; score?: number | null }
 }
-
-type PickRow = { id: string; team_id: string; game_id: string | null }
 
 function Card({
   children,
@@ -39,12 +60,73 @@ function Card({
       ].join(' ')}
     >
       <header className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{title}</h2>
+        <h1 className="text-lg font-semibold">{title}</h1>
         {right}
       </header>
       {children}
     </section>
   )
+}
+
+function Chip({
+  label,
+  primary = '#6b7280',
+  secondary = '#374151',
+  subtle = false,
+  className = '',
+}: {
+  label: ReactNode
+  primary?: string
+  secondary?: string
+  subtle?: boolean
+  className?: string
+}) {
+  return (
+    <span
+      className={[
+        'inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm font-semibold',
+        'overflow-hidden text-ellipsis whitespace-nowrap',
+        subtle ? 'opacity-80' : '',
+        className,
+      ].join(' ')}
+      style={{
+        borderColor: primary,
+        color: primary,
+        background: subtle ? `linear-gradient(0deg, ${secondary}10, transparent)` : 'transparent',
+      }}
+    >
+      {label}
+    </span>
+  )
+}
+
+function StatusBadge({ s }: { s?: string }) {
+  const up = (s || 'UPCOMING').toUpperCase()
+  return (
+    <span className="text-[10px] tracking-wide uppercase text-neutral-500 dark:text-neutral-400">
+      {up}
+    </span>
+  )
+}
+
+function useTeamIndex(teamMap: Record<string, Team>) {
+  return useMemo(() => {
+    const idx: Record<string, TeamLike> = {}
+    for (const t of Object.values(teamMap || {})) {
+      const v: TeamLike = {
+        id: t.id,
+        abbreviation: t.abbreviation ?? undefined,
+        name: t.name ?? undefined,
+        color_primary: t.color_primary ?? undefined,
+        color_secondary: t.color_secondary ?? undefined,
+        logo: t.logo ?? undefined,
+        logo_dark: t.logo_dark ?? undefined,
+      }
+      if (t.id) idx[t.id] = v
+      if (t.abbreviation) idx[t.abbreviation.toUpperCase()] = v
+    }
+    return idx
+  }, [teamMap])
 }
 
 function normalizeGames(rows: any[]): Game[] {
@@ -56,118 +138,90 @@ function normalizeGames(rows: any[]): Game[] {
     status: x.status ?? 'UPCOMING',
     home: {
       id: x.home?.id ?? x.home_team ?? x.homeTeamId ?? x.home_team_id,
+      abbr: x.home?.abbreviation ?? x.home_abbr ?? x.homeAbbr ?? x.home?.abbr ?? null,
       score: x.home_score ?? x.home?.score ?? null,
     },
     away: {
       id: x.away?.id ?? x.away_team ?? x.awayTeamId ?? x.away_team_id,
+      abbr: x.away?.abbreviation ?? x.away_abbr ?? x.awayAbbr ?? x.away?.abbr ?? null,
       score: x.away_score ?? x.away?.score ?? null,
     },
   }))
 }
 
-function isLocked(g?: Game) {
-  if (!g) return false
-  const s = (g.status || '').toUpperCase()
-  if (s === 'FINAL' || s === 'LIVE') return true
-  if (!g.game_utc) return false
-  return new Date(g.game_utc) <= new Date()
-}
-
-export default function ScoreboardPage() {
-  return (
-    <Suspense
-      fallback={
-        <main className="mx-auto max-w-6xl px-4 py-6">
-          <h1 className="mb-3 text-xl font-bold">Scoreboard</h1>
-          <div className="text-neutral-600">Loading…</div>
-        </main>
-      }
-    >
-      <ScoreboardInner />
-    </Suspense>
-  )
-}
-
 function ScoreboardInner() {
-  const [leagues, setLeagues] = useState<League[]>([])
-  const [leagueId, setLeagueId] = useState('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
   const [week, setWeek] = useState<number>(1)
 
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
-  const teamIndex = useMemo(() => buildTeamIndex(teamMap), [teamMap])
+  const teamIndex = useTeamIndex(teamMap)
 
   const [games, setGames] = useState<Game[]>([])
-  const [myPicks, setMyPicks] = useState<PickRow[]>([])
-  const [msg, setMsg] = useState<string>('')
+  const [msg, setMsg] = useState('')
 
-  // initial fetch
   useEffect(() => {
     ;(async () => {
-      try {
-        const lj = await fetch('/api/my-leagues', { cache: 'no-store' }).then(r => r.json())
-        const ls: League[] = lj?.leagues || []
-        setLeagues(ls)
-        if (!leagueId && ls[0]) {
-          setLeagueId(ls[0].id)
-          setSeason(ls[0].season)
-        }
-      } catch {}
       try {
         const tm = await fetch('/api/team-map', { cache: 'no-store' }).then(r => r.json())
         setTeamMap(tm?.teams || {})
       } catch {}
     })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // per-week loads
   useEffect(() => {
-    if (!leagueId || !season || !week) return
     ;(async () => {
       setMsg('')
       try {
-        const [g, p] = await Promise.all([
-          fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()),
-          fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()),
-        ])
+        const g = await fetch(`/api/games-for-week?season=${season}&week=${week}`, {
+          cache: 'no-store',
+        }).then(r => r.json())
         setGames(normalizeGames(g?.games || g || []))
-        setMyPicks((p?.picks || []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
       } catch (e: any) {
-        setMsg(e?.message || 'Failed to load data')
+        setMsg(e?.message || 'Failed to load games')
       }
     })()
-  }, [leagueId, season, week])
+  }, [season, week])
 
-  const gameById = useMemo(() => {
-    const m = new Map<string, Game>()
-    for (const g of games) m.set(g.id, g)
-    return m
-  }, [games])
+  // Responsive, UNIFORM-size team chip — abbr on mobile, full name on md+
+  function responsiveTeamChip(teamId?: string) {
+    if (!teamId)
+      return <Chip label="—" className="w-full h-10 md:h-12 justify-center" />
+    const t = teamIndex[teamId]
+    const abbr = t?.abbreviation || '—'
+    const full = t?.name || abbr
+    const primary = t?.color_primary || '#6b7280'
+    const secondary = t?.color_secondary || '#374151'
+    return (
+      <Chip
+        label={
+          <span className="truncate max-w-full">
+            <span className="md:hidden">{abbr}</span>
+            <span className="hidden md:inline">{full}</span>
+          </span>
+        }
+        primary={primary}
+        secondary={secondary}
+        subtle
+        className="w-full h-10 md:h-12 justify-center"
+      />
+    )
+  }
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
-      {/* Header (top nav handles page-level nav) */}
       <section className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">Scoreboard</h1>
 
         <div className="ml-auto flex items-center gap-3">
-          {leagues.length > 1 && (
-            <select
-              className="rounded border bg-transparent px-2 py-1"
-              value={leagueId}
-              onChange={(e) => setLeagueId(e.target.value)}
-            >
-              {leagues.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          )}
+          <Link className="underline text-sm" href="/">
+            Home
+          </Link>
+          <Link className="underline text-sm" href="/picks">
+            Picks
+          </Link>
 
           <select
-            className="rounded border bg-transparent px-2 py-1"
+            className="border rounded px-2 py-1 bg-transparent"
             value={season}
             onChange={(e) => setSeason(Number(e.target.value))}
           >
@@ -182,7 +236,7 @@ function ScoreboardInner() {
           </select>
 
           <select
-            className="rounded border bg-transparent px-2 py-1"
+            className="border rounded px-2 py-1 bg-transparent"
             value={week}
             onChange={(e) => setWeek(Number(e.target.value))}
           >
@@ -198,110 +252,72 @@ function ScoreboardInner() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* LEFT: games */}
-        <div className="grid gap-6 lg:col-span-8">
-          <Card title={`Week ${week} — Games`}>
-            {games.length === 0 ? (
-              <div className="text-sm text-neutral-500">No games.</div>
-            ) : (
-              <div className="grid gap-4">
-                {games.map((g) => {
-                  const locked = isLocked(g)
-                  const final = (g.status || '').toUpperCase() === 'FINAL'
-                  const homeWon = final && (Number(g.home.score) ?? -1) > (Number(g.away.score) ?? -1)
-                  const awayWon = final && (Number(g.away.score) ?? -1) > (Number(g.home.score) ?? -1)
+      <Card
+        title={`Week ${week} — Games`}
+        right={
+          <div className="flex items-center gap-3">
+            <Link href="/picks" className="text-sm underline">
+              Make picks →
+            </Link>
+          </div>
+        }
+      >
+        {games.length === 0 ? (
+          <div className="text-sm text-neutral-500">No games.</div>
+        ) : (
+          <div className="grid gap-4">
+            {games.map((g) => {
+              const kickoff = g.game_utc ? new Date(g.game_utc).toLocaleString() : ''
+              const scoreKnown =
+                typeof g.home.score === 'number' && typeof g.away.score === 'number'
+              return (
+                <article
+                  key={g.id}
+                  className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4"
+                >
+                  <div className="mb-2 flex items-center justify-between text-xs text-neutral-500">
+                    <span>
+                      {kickoff} • Week {g.week}
+                    </span>
+                    <StatusBadge s={g.status} />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1">{responsiveTeamChip(g.home.id)}</div>
+                    <div className="text-neutral-400">—</div>
+                    <div className="flex-1">{responsiveTeamChip(g.away.id)}</div>
+                  </div>
+                  <div className="mt-1 text-xs text-neutral-500">
+                    {scoreKnown ? (
+                      <span>
+                        Score: {g.home.score} — {g.away.score}
+                      </span>
+                    ) : (
+                      <span>— — —</span>
+                    )}
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </Card>
 
-                  return (
-                    <article
-                      key={g.id}
-                      className="rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
-                    >
-                      <div className="mb-2 flex items-center justify-between text-xs text-neutral-500">
-                        <span>
-                          {g.game_utc ? new Date(g.game_utc).toLocaleString() : ''} • Week {g.week}
-                        </span>
-                        <span className="text-[10px] uppercase tracking-wide">
-                          {(g.status || (locked ? 'LIVE' : 'UPCOMING')).toUpperCase()}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-3 md:gap-4">
-                        <div className="flex-1">
-                          <TeamPill
-                            teamId={g.home.id}
-                            teamIndex={teamIndex}
-                            size="sm"
-                            mdUpSize="xl"
-                            fluid
-                            variant="subtle"
-                            labelMode="abbrNick"
-                            selected={!!homeWon}
-                          />
-                        </div>
-
-                        <div className="text-neutral-400">—</div>
-
-                        <div className="flex-1">
-                          <TeamPill
-                            teamId={g.away.id}
-                            teamIndex={teamIndex}
-                            size="sm"
-                            mdUpSize="xl"
-                            fluid
-                            variant="subtle"
-                            labelMode="abbrNick"
-                            selected={!!awayWon}
-                          />
-                        </div>
-                      </div>
-
-                      {(g.home.score != null || g.away.score != null) && (
-                        <div className="mt-2 text-xs text-neutral-500">
-                          Score: {g.home.score ?? '—'} — {g.away.score ?? '—'}
-                        </div>
-                      )}
-                    </article>
-                  )
-                })}
-              </div>
-            )}
-          </Card>
-        </div>
-
-        {/* RIGHT: my picks (read-only, fixed-width pills to match Home) */}
-        <aside className="grid gap-6 lg:col-span-4">
-          <Card title={`My picks — Week ${week}`}>
-            {myPicks.length === 0 ? (
-              <div className="text-sm text-neutral-500">No picks yet.</div>
-            ) : (
-              <ul className="grid gap-2">
-                {myPicks.map((p) => {
-                  const g = p.game_id ? gameById.get(p.game_id) : undefined
-                  const status = (g?.status || (isLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase()
-                  return (
-                    <li key={p.id} className="flex items-center justify-between gap-3">
-                      <TeamPill
-                        teamId={p.team_id}
-                        teamIndex={teamIndex}
-                        size="sm"
-                        mdUpSize="lg"
-                        fixedWidth
-                        variant="subtle"
-                        labelMode="abbrNick"
-                        selected
-                      />
-                      <span className="text-xs text-neutral-500">{status}</span>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </Card>
-        </aside>
-      </div>
-
-      {msg && <div className="mt-2 text-xs">{msg}</div>}
+      {msg && <div className="text-xs mt-2">{msg}</div>}
     </main>
+  )
+}
+
+export default function ScoreboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto max-w-6xl px-4 py-6">
+          <h1 className="text-xl font-bold mb-3">Scoreboard</h1>
+          <div className="text-neutral-600">Loading…</div>
+        </main>
+      }
+    >
+      <ScoreboardInner />
+    </Suspense>
   )
 }
