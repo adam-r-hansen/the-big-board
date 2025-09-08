@@ -47,7 +47,6 @@ function Card({
   )
 }
 
-// ---------- helpers ----------
 function normalizeGames(rows: any[]): Game[] {
   return (rows || []).map((x: any) => ({
     id: x.id,
@@ -98,7 +97,6 @@ function SkeletonPill() {
   )
 }
 
-// ---------- page ----------
 export default function HomePage() {
   return (
     <Suspense
@@ -115,18 +113,15 @@ export default function HomePage() {
 }
 
 function HomeInner() {
-  // selectors
   const [leagues, setLeagues] = useState<League[]>([])
   const [leagueId, setLeagueId] = useState('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
   const [week, setWeek] = useState<number>(1)
 
-  // color system
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
   const teamIndex = useMemo(() => buildTeamIndex(teamMap), [teamMap])
   const colorsReady = useMemo(() => Object.keys(teamIndex).length > 0, [teamIndex])
 
-  // data
   const [games, setGames] = useState<Game[]>([])
   const [myPicks, setMyPicks] = useState<PickRow[]>([])
   const [lockedByMember, setLockedByMember] = useState<
@@ -138,7 +133,6 @@ function HomeInner() {
 
   const [msg, setMsg] = useState('')
 
-  // bootstrap
   useEffect(() => {
     let stop = false
     ;(async () => {
@@ -165,38 +159,30 @@ function HomeInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // per-week loads (leagueId optional; server can infer)
   useEffect(() => {
     let stop = false
     ;(async () => {
       try {
         setMsg('')
 
-        const [g, p, w, lp, st, meWeek] = await Promise.all([
+        // NOTE: cast the destructured results to any[] to avoid strict {} inference on fallbacks
+        const [g, p, w, lp, st, meWeek]: any[] = await Promise.all([
           fetch(url('/api/games-for-week', { season, week }), { cache: 'no-store' }).then(r => r.json()),
           fetch(url('/api/my-picks', { leagueId: leagueId || undefined, season, week }), { cache: 'no-store' }).then(
             r => r.json(),
           ),
-          fetch(url('/api/wrinkles/active', { leagueId: leagueId || undefined, season, week }), {
-            cache: 'no-store',
-          })
+          fetch(url('/api/wrinkles/active', { leagueId: leagueId || undefined, season, week }), { cache: 'no-store' })
             .then(r => (r.ok ? r.json() : {}))
             .catch(() => ({})),
-
-          // locked picks (try a couple of likely endpoints)
           tryJson([
             url('/api/league/locked-picks', { leagueId: leagueId || undefined, season, week }),
             url('/api/league/locked', { leagueId: leagueId || undefined, season, week }),
             url('/api/picks/locked', { leagueId: leagueId || undefined, season, week }),
           ]),
-
-          // standings snapshot
           tryJson([
             url('/api/standings', { leagueId: leagueId || undefined, season }),
             url('/api/leaderboard', { leagueId: leagueId || undefined, season }),
           ]),
-
-          // my week points summary (best-effort)
           tryJson([
             url('/api/stats/my-week', { leagueId: leagueId || undefined, season, week }),
             url('/api/stats/me', { leagueId: leagueId || undefined, season, week, scope: 'week' }),
@@ -216,12 +202,10 @@ function HomeInner() {
           : 0
         setWrinkleExtra(extra)
 
-        // locked picks: allow two shapes: flat rows or grouped
         const lpRows =
           (lp?.picks as any[]) ||
           (Array.isArray(lp) ? lp : []) ||
           []
-        // We want rows like {profile_id, display_name, team_id}
         const normalized = lpRows.map((r: any) => ({
           profile_id: r.profile_id || r.user_id || r.id || `${r.display_name}`,
           display_name: r.display_name || r.member || r.name || 'Member',
@@ -229,7 +213,6 @@ function HomeInner() {
         }))
         setLockedByMember(normalized)
 
-        // standings: try to unify to [{display_name, points_total}]
         const stRows =
           (st?.standings as any[]) ||
           (st?.members as any[]) ||
@@ -265,7 +248,6 @@ function HomeInner() {
     return m
   }, [games])
 
-  // overview numbers
   const picksAllowed = 2 + (wrinkleExtra || 0)
   const picksUsed = myPicks.length
   const picksLeft = Math.max(0, picksAllowed - picksUsed)
@@ -324,7 +306,6 @@ function HomeInner() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* LEFT ------------------------------------------------------------- */}
         <div className="grid gap-6 lg:col-span-8">
           <Card
             title="League overview"
@@ -440,7 +421,6 @@ function HomeInner() {
           </Card>
         </div>
 
-        {/* RIGHT ------------------------------------------------------------ */}
         <aside className="grid gap-6 lg:col-span-4">
           <Card
             title={`My picks — Week ${week}`}
