@@ -1,127 +1,101 @@
 'use client'
-import * as React from 'react'
-import type { TeamLike } from '@/lib/teamColors'
-import { resolveTeamUi } from '@/lib/teamColors'
+
+import React from 'react'
+import { resolveTeamUi, type Team as TeamRecord } from '@/lib/teamColors'
 
 type Size = 'sm' | 'md' | 'lg' | 'xl'
-type LabelMode = 'auto' | 'abbr' | 'full' | 'abbrNick' // back-compat
-
-const baseSize: Record<Size, string> = {
-  sm: 'h-8 px-3 text-sm',
-  md: 'h-10 px-4 text-sm md:text-base',
-  lg: 'h-12 px-5 text-base md:text-lg',
-  xl: 'h-12 px-6 text-lg',
-}
-
-const mdUpSize: Record<Size, string> = {
-  sm: 'md:h-8 md:px-3 md:text-sm',
-  md: 'md:h-10 md:px-4 md:text-base',
-  lg: 'md:h-12 md:px-5 md:text-lg',
-  xl: 'md:h-14 md:px-7 md:text-xl',
-}
+type Variant = 'pill' | 'chip'
+type LabelMode = 'abbr' | 'abbrNick' | 'full'
 
 type Props = {
-  /** New API */
-  team?: TeamLike
+  team?: TeamRecord
   size?: Size
-  selected?: boolean
-  className?: string
-  title?: string
-  /** when false (or omitted), md+ gets a fixed width; when true, always fluid */
-  fixedWidth?: boolean
-
-  /** --- Back-compat props still used on pages --- */
-  teamId?: string
-  teamIndex?: Record<string, TeamLike>
+  /** optional larger size applied at md+ (e.g. 'xl') */
   mdUpSize?: Size
-  fluid?: boolean
+  /** visual style; keep default 'pill' */
+  variant?: Variant
+  /** how to label: abbr on mobile, full name desktop for 'abbrNick' & 'full' */
   labelMode?: LabelMode
-  variant?: 'pill' | 'chip' | 'subtle' // accept legacy "subtle"
+  /** force consistent width */
+  fixedWidth?: boolean
+  /** stretch to container width */
+  fluid?: boolean
+  /** bold border + light shadow */
+  selected?: boolean
+  /** disables pointer/click; dims pill */
   disabled?: boolean
+  title?: string
+  className?: string
+  /** optional click handler (when present we render a <button>) */
+  onClick?: React.MouseEventHandler<HTMLButtonElement>
 }
 
-export default function TeamPill(props: Props) {
-  const {
-    // new
-    team: teamProp,
-    size = 'md',
-    selected = false,
-    className = '',
-    title,
-    fixedWidth,
+export default function TeamPill({
+  team,
+  size = 'md',
+  mdUpSize,
+  variant = 'pill',
+  labelMode = 'abbrNick',
+  fixedWidth = false,
+  fluid = false,
+  selected = false,
+  disabled = false,
+  title,
+  className = '',
+  onClick,
+}: Props) {
+  const ui = resolveTeamUi(team)
 
-    // back-compat
-    teamId,
-    teamIndex,
-    mdUpSize: mdSizeProp,
-    fluid,
-    labelMode = 'auto',
-    // variant is accepted for compatibility; current styling treats all as "pill/subtle"
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    variant,
-    disabled = false,
-  } = props
+  // When clickable, use <button> for a11y; otherwise <span>
+  const Component: any = onClick ? 'button' : 'span'
 
-  const team = teamProp ?? (teamId ? teamIndex?.[teamId] : undefined)
-  const { primary, secondary } = resolveTeamUi(team)
-  const abbr = team?.abbreviation || '—'
-  const nickname = team?.short_name || abbr
-  const full = team?.name || nickname
-
-  // width: legacy `fluid` overrides `fixedWidth`
-  const isFluid = typeof fluid === 'boolean' ? fluid : fixedWidth === false
-  const widthClasses = isFluid ? 'w-full' : 'w-full md:w-64'
-
-  const mdSize = mdSizeProp ?? 'xl'
-  const sizeClasses = [baseSize[size], mdUpSize[mdSize]].join(' ')
-
-  let label: React.ReactNode
-  switch (labelMode) {
-    case 'abbr':
-      label = <span className="truncate">{abbr}</span>
-      break
-    case 'full':
-      label = <span className="truncate">{full}</span>
-      break
-    case 'abbrNick':
-      // old behavior: abbr on mobile, nickname on md+
-      label = (
-        <span className="truncate">
-          <span className="md:hidden">{abbr}</span>
-          <span className="hidden md:inline">{nickname}</span>
-        </span>
-      )
-      break
-    default:
-      // auto: abbr on mobile, full name on md+
-      label = (
-        <span className="truncate">
-          <span className="md:hidden">{abbr}</span>
-          <span className="hidden md:inline">{full}</span>
-        </span>
-      )
+  const base =
+    'inline-flex items-center justify-center rounded-xl border px-3 py-2 font-semibold overflow-hidden text-ellipsis whitespace-nowrap transition-[transform,box-shadow]'
+  const heights: Record<Size, string> = {
+    sm: 'h-9 text-xs',
+    md: 'h-10 text-sm',
+    lg: 'h-12 text-base',
+    xl: 'h-14 text-lg',
+  }
+  const mdHeights = mdUpSize ? `md:${heights[mdUpSize]}` : ''
+  const width = fluid ? 'w-full' : fixedWidth ? 'w-[7.5rem] md:w-[9.5rem]' : ''
+  const border = selected ? 'border-2 shadow-sm' : 'border'
+  const state = disabled ? 'opacity-60 pointer-events-none' : onClick ? 'cursor-pointer' : ''
+  const styles: React.CSSProperties = {
+    borderColor: ui.primary,
+    color: ui.primary,
+  }
+  if (variant === 'pill') {
+    styles.background = `linear-gradient(0deg, ${ui.secondary}10, transparent)`
   }
 
+  const abbr = team?.abbreviation || '—'
+  const name = team?.name || abbr
+
   return (
-    <span
-      title={title || full}
-      aria-disabled={disabled || undefined}
-      className={[
-        'inline-flex items-center justify-center rounded-2xl border font-semibold whitespace-nowrap truncate',
-        widthClasses,
-        sizeClasses,
-        selected ? 'ring-2 ring-offset-0' : '',
-        disabled ? 'opacity-50 pointer-events-none' : '',
-        className,
-      ].join(' ')}
-      style={{
-        borderColor: primary,
-        color: primary,
-        background: `${secondary}10`, // subtle fill
-        boxShadow: selected ? `0 0 0 2px ${primary} inset` : undefined,
-      }}
+    <Component
+      type={onClick ? 'button' : undefined}
+      title={title || name}
+      className={[base, heights[size], mdHeights, width, border, state, className].join(' ')}
+      style={styles}
+      onClick={onClick}
+      disabled={onClick ? disabled : undefined}
     >
-      {label}
-    </span>
+      <span className="truncate max-w-full">
+        {labelMode === 'full' ? (
+          <>
+            <span className="md:hidden">{abbr}</span>
+            <span className="hidden md:inline">{name}</span>
+          </>
+        ) : labelMode === 'abbrNick' ? (
+          <>
+            <span className="md:hidden">{abbr}</span>
+            <span className="hidden md:inline">{name}</span>
+          </>
+        ) : (
+          <>{abbr}</>
+        )}
+      </span>
+    </Component>
   )
 }
