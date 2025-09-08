@@ -10,19 +10,23 @@ type Props = {
   team?: TeamLike
   teamId?: string
   teamIndex?: Record<string, TeamLike>
-  size?: Size            // base size (mobile)
-  mdUpSize?: Size        // ≥ md override
-  lgUpSize?: Size        // ≥ lg override
+  /** Base size used on mobile */
+  size?: Size
+  /** Overrides for larger breakpoints */
+  mdUpSize?: Size
+  lgUpSize?: Size
+  /** When true, pill uses full available width (great for scoreboard). */
+  fluid?: boolean
   variant?: 'outline' | 'subtle'
   status?: 'LIVE' | 'FINAL' | 'UPCOMING'
   points?: number | null
   /**
    * label rendering:
    *  - 'abbr'        = "PHI"
-   *  - 'short'       = "Los Angeles Chargers" (whatever short_name is)
-   *  - 'name'        = full team name
+   *  - 'short'       = "Philadelphia Eagles" (short_name/name)
+   *  - 'name'        = full name
    *  - 'abbrFull'    = "PHI" on mobile, short/name on md+
-   *  - 'abbrNick'    = "PHI" on mobile, **nickname** (last word) on md+  ← recommended
+   *  - 'abbrNick'    = "PHI" on mobile, nickname (last word) on md+
    */
   labelMode?: 'abbr' | 'short' | 'name' | 'abbrFull' | 'abbrNick'
   className?: string
@@ -35,22 +39,17 @@ function cls(...a: Array<string | false | null | undefined>) {
   return a.filter(Boolean).join(' ')
 }
 
-/** Fixed, UNIFORM widths. Wider on larger tokens. */
-function dimsTokens(sz: Size): string[] {
+function dims(sz: Size): { w: string; h: string; t: string } {
   switch (sz) {
     case 'xl':
-      // 192px wide — scoreboard pills on desktop
-      return ['w-48', 'h-12', 'text-base']
+      return { w: 'w-48', h: 'h-12', t: 'text-base' } // biggest
     case 'lg':
-      // 144px — My Picks pills on desktop
-      return ['w-36', 'h-11', 'text-base']
+      return { w: 'w-36', h: 'h-11', t: 'text-base' }
     case 'md':
-      // 112px
-      return ['w-28', 'h-10', 'text-sm']
+      return { w: 'w-28', h: 'h-10', t: 'text-sm' }
     case 'sm':
     default:
-      // 80px — compact mobile
-      return ['w-20', 'h-8', 'text-xs']
+      return { w: 'w-20', h: 'h-8', t: 'text-xs' } // compact
   }
 }
 
@@ -59,7 +58,7 @@ function nicknameFrom(team?: TeamLike): string | undefined {
   const src = team.short_name || team.name || team.abbreviation
   if (!src) return undefined
   const parts = String(src).trim().split(/\s+/)
-  return parts.length ? parts[parts.length - 1] : src
+  return parts[parts.length - 1] || src
 }
 
 export default function TeamPill({
@@ -67,6 +66,7 @@ export default function TeamPill({
   size = 'sm',
   mdUpSize,
   lgUpSize,
+  fluid = false,
   variant = 'outline',
   status,
   points = null,
@@ -95,11 +95,22 @@ export default function TeamPill({
 
   const color = resolveTeamHex(resolvedTeam, t)
 
-  // uniform dimensions with breakpoint upgrades
-  const base = dimsTokens(size)
-  const mdUp = mdUpSize ? dimsTokens(mdUpSize).map(c => `md:${c}`) : []
-  const lgUp = lgUpSize ? dimsTokens(lgUpSize).map(c => `lg:${c}`) : []
-  const dims = [...base, ...mdUp, ...lgUp].join(' ')
+  // sizing classes (width can become w-full if fluid)
+  const base = dims(size)
+  const mdD  = mdUpSize ? dims(mdUpSize) : undefined
+  const lgD  = lgUpSize ? dims(lgUpSize) : undefined
+
+  const widthClasses = [
+    fluid ? 'w-full' : base.w,
+    mdD && (fluid ? 'md:w-full' : `md:${mdD.w}`),
+    lgD && (fluid ? 'lg:w-full' : `lg:${lgD.w}`),
+  ].filter(Boolean).join(' ')
+
+  const heightTextClasses = [
+    base.h, base.t,
+    mdD && `md:${mdD.h}`, mdD && `md:${mdD.t}`,
+    lgD && `lg:${lgD.h}`, lgD && `lg:${lgD.t}`,
+  ].filter(Boolean).join(' ')
 
   const shell =
     'inline-flex items-center justify-center gap-1 rounded-xl font-semibold overflow-hidden text-ellipsis whitespace-nowrap'
@@ -144,7 +155,7 @@ export default function TeamPill({
 
   return (
     <span
-      className={cls(shell, border, dims, cursor, className)}
+      className={cls(shell, border, widthClasses, heightTextClasses, cursor, className)}
       style={{
         borderColor: color,
         color,

@@ -214,13 +214,14 @@ function HomeInner() {
     return sum
   }, [myPicks, gameById])
 
-  // pills — bigger on desktop, and now wider tokens
+  // pills
   const scoreboardPill = (teamId?: string) => (
     <TeamPill
       teamId={teamId}
       teamIndex={teamIndex}
-      size="sm"            // mobile
-      mdUpSize="xl"        // desktop: HUGE uniform width (w-48)
+      size="sm"         // mobile size
+      mdUpSize="xl"     // desktop height/typography
+      fluid             // <— fill the half-column
       variant="subtle"
       labelMode="abbrNick"
     />
@@ -231,7 +232,7 @@ function HomeInner() {
       teamId={teamId}
       teamIndex={teamIndex}
       size="sm"
-      mdUpSize="lg"        // desktop: larger than before (w-36)
+      mdUpSize="lg"     // fixed wider width for the My Picks sidebar
       variant="subtle"
       status={(opts?.status || '') as any}
       points={opts?.points ?? null}
@@ -367,11 +368,13 @@ function HomeInner() {
                           </span>
                           <StatusBadge s={g.status} />
                         </div>
+
                         <div className="flex items-center gap-3">
                           <div className="flex-1">{scoreboardPill(g.home.id)}</div>
                           <div className="text-neutral-400">—</div>
                           <div className="flex-1">{scoreboardPill(g.away.id)}</div>
                         </div>
+
                         <div className="mt-1 text-xs text-neutral-500">
                           {scoreKnown ? (
                             <span>
