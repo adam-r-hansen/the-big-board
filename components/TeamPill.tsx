@@ -1,72 +1,99 @@
+// components/TeamPill.tsx
 'use client'
+import * as React from 'react'
+import { resolveTeamUi, type TeamRecord } from '@/lib/teamColors'
 
-import { toToken, pickColor } from '@/ui/theme/teams'
-import type { Team } from '@/types/domain'
-import { useEffect, useMemo, useState } from 'react'
+type Size = 'sm' | 'md' | 'lg'
 
-type Props = {
-  team?: Team | null
-  disabled?: boolean
-  picked?: boolean
-  onClick?: () => void
+const sizeClasses: Record<Size, string> = {
+  sm: 'h-9 px-3 text-sm',
+  md: 'h-10 px-4 md:h-12 md:px-6 text-sm md:text-base',
+  lg: 'h-12 px-5 md:h-14 md:px-7 text-base md:text-lg',
 }
 
-function hexToRgb(hex?: string | null) {
-  if (!hex) return null
-  const s = hex.replace('#', '')
-  const v = s.length === 3 ? s.split('').map(c=>c+c).join('') : s
-  const r = parseInt(v.slice(0,2),16), g = parseInt(v.slice(2,4),16), b = parseInt(v.slice(4,6),16)
-  return { r, g, b }
-}
-function textOn(bgHex?: string | null) {
-  const c = hexToRgb(bgHex); if (!c) return '#111'
-  const lum = (0.2126*c.r + 0.7152*c.g + 0.0722*c.b)/255
-  return lum > 0.6 ? '#111' : '#fff'
-}
-
-export default function TeamPill({ team, disabled, picked, onClick }: Props) {
-  const token = useMemo(() => toToken(team ?? null), [team])
-  const bg = pickColor(token, 'light') // if you support dark mode, swap based on theme
-  const fg = textOn(bg)
-
-  const [src, setSrc] = useState<string | null>(token.logoUrl)
-  useEffect(() => { setSrc(token.logoUrl) }, [token.logoUrl])
-
-  const className = [
-    'w-full rounded-full border px-3 py-2 text-left',
-    'flex items-center gap-2',
-    disabled ? 'opacity-60 cursor-not-allowed' : '',
-    picked ? 'ring-2 ring-offset-0' : ''
-  ].filter(Boolean).join(' ')
+/**
+ * TeamPill
+ * - Uniform size
+ * - Abbr on mobile, full on md+
+ * - Heavier border when selected
+ */
+export function TeamPill({
+  team,
+  size = 'md',
+  selected = false,
+  className = '',
+  title,
+}: {
+  team?: TeamRecord
+  size?: Size
+  selected?: boolean
+  className?: string
+  title?: string
+}) {
+  const { primary, secondary } = resolveTeamUi(team)
+  const abbr = team?.abbreviation || '—'
+  const full = team?.name || team?.short_name || abbr
 
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={className}
-      style={{ backgroundColor: bg ?? undefined, color: fg }}
-      aria-pressed={picked ? 'true' : 'false'}
+    <span
+      title={title || full}
+      className={[
+        'inline-flex items-center justify-center rounded-2xl border font-semibold whitespace-nowrap truncate w-full md:w-64',
+        sizeClasses[size],
+        selected ? 'ring-2 ring-offset-0' : '',
+        className,
+      ].join(' ')}
+      style={{
+        borderColor: primary,
+        color: primary,
+        background: `${secondary}10`,
+        boxShadow: selected ? `0 0 0 2px ${primary} inset` : undefined,
+      }}
     >
-      <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-white/70">
-        {src ? (
-          <img
-            src={src}
-            alt={team?.abbreviation ?? team?.name ?? 'Team'}
-            className="h-5 w-5 object-contain"
-            onError={() => setSrc('/team-placeholder.svg')}
-          />
-        ) : (
-          <img
-            src="/team-placeholder.svg"
-            alt="Team"
-            className="h-5 w-5 object-contain"
-          />
-        )}
+      <span className="truncate max-w-full">
+        <span className="md:hidden">{abbr}</span>
+        <span className="hidden md:inline">{full}</span>
       </span>
+    </span>
+  )
+}
+
+/**
+ * TeamBadge — compact variant for lists / sidebars
+ * Supports optional status/points badge.
+ */
+export function TeamBadge({
+  team,
+  status,
+  points,
+  className = '',
+}: {
+  team?: TeamRecord
+  status?: string
+  points?: number | null
+  className?: string
+}) {
+  const { primary, secondary } = resolveTeamUi(team)
+  const abbr = team?.abbreviation || '—'
+  const full = team?.name || team?.short_name || abbr
+  const s = (status || '').toUpperCase()
+  const badge =
+    s === 'FINAL' ? (typeof points === 'number' ? `+${points}` : '') : s === 'LIVE' ? '• LIVE' : ''
+
+  return (
+    <span
+      title={full}
+      className={[
+        'inline-flex items-center gap-2 rounded-2xl border font-semibold whitespace-nowrap truncate px-3 h-9 md:h-10',
+        className,
+      ].join(' ')}
+      style={{ borderColor: primary, color: primary, background: `${secondary}10` }}
+    >
       <span className="truncate">
-        {team?.abbreviation ?? team?.name ?? '—'}
+        <span className="md:hidden">{abbr}</span>
+        <span className="hidden md:inline">{full}</span>
       </span>
-    </button>
+      {badge ? <span className="text-xs opacity-80">{badge}</span> : null}
+    </span>
   )
 }
