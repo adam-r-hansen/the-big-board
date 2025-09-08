@@ -1,17 +1,16 @@
 'use client'
 
 import { Suspense, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import TeamPill from '@/components/ui/TeamPill'
 import { buildTeamIndex, type Team as TeamType } from '@/lib/teamColors'
 
 type League = { id: string; name: string; season: number }
 type Team = TeamType
 
-type MyStats = {
+type MyStatsPayload = {
   picks_total?: number
   picks_correct?: number
-  win_pct?: number            // 0..100 or 0..1 depending on backend; we normalize below
+  win_pct?: number // can be 0..100 or 0..1; we normalize
   longest_streak?: number
   points_total?: number
   avg_points_per_pick?: number
@@ -19,17 +18,17 @@ type MyStats = {
   pick_log?: Array<{
     week?: number
     team_id?: string
-    result?: 'W'|'L'|'T'|null
-    score_str?: string | null // e.g. "24—20"
+    result?: 'W' | 'L' | 'T' | null
+    score_str?: string | null
     points?: number | null
     wrinkle?: boolean | null
   }>
 }
 
 type LeagueBoards = {
-  avg_points?: Array<{ profile_id: string; display_name: string; decided?: number; points?: number; avg?: number }>
-  accuracy?: Array<{ profile_id: string; display_name: string; correct?: number; decided?: number; pct?: number }>
-  streaks?: Array<{ profile_id: string; display_name: string; streak?: number }>
+  avg_points?: Array<{ display_name: string; decided?: number; points?: number; avg?: number }>
+  accuracy?: Array<{ display_name: string; correct?: number; decided?: number; pct?: number }>
+  streaks?: Array<{ display_name: string; streak?: number }>
 }
 
 function Card({
@@ -59,28 +58,27 @@ function Card({
   )
 }
 
-/** ---------- number safety helpers (prevents .toFixed on undefined) ---------- */
-const num = (v: unknown, fallback = 0): number => {
+/* ---------- number safety helpers ---------- */
+const asNumber = (v: unknown): number => {
   const n = typeof v === 'string' ? Number(v) : (v as number)
-  return Number.isFinite(n) ? n : fallback
+  return Number.isFinite(n) ? n : NaN
 }
-const safePctStr = (v: unknown, alreadyPercent = true): string => {
-  // backend may send 0..100 or 0..1; normalize to 0..100
-  let n = num(v, NaN)
-  if (!Number.isFinite(n)) return '—'
-  if (!alreadyPercent) n *= 100
-  return `${n.toFixed(1)}%`
-}
-const safeFixed = (v: unknown, dp = 2): string => {
-  const n = num(v, NaN)
-  return Number.isFinite(n) ? n.toFixed(dp) : '—'
-}
-const safeInt = (v: unknown): string => {
-  const n = num(v, NaN)
+const intStr = (v: unknown): string => {
+  const n = asNumber(v)
   return Number.isFinite(n) ? String(Math.trunc(n)) : '—'
 }
+const fixedStr = (v: unknown, dp = 2): string => {
+  const n = asNumber(v)
+  return Number.isFinite(n) ? n.toFixed(dp) : '—'
+}
+const pctStr = (v: unknown): string => {
+  let n = asNumber(v)
+  if (!Number.isFinite(n)) return '—'
+  if (n <= 1) n = n * 100
+  return `${n.toFixed(1)}%`
+}
 
-/** ---------- main page ---------- */
+/* ---------- main page ---------- */
 export default function StatsPage() {
   return (
     <Suspense
@@ -105,11 +103,11 @@ function StatsInner() {
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
   const teamIndex = useMemo(() => buildTeamIndex(teamMap), [teamMap])
 
-  const [mine, setMine] = useState<MyStats | null>(null)
+  const [mine, setMine] = useState<MyStatsPayload | null>(null)
   const [boards, setBoards] = useState<LeagueBoards | null>(null)
   const [msg, setMsg] = useState('')
 
-  // boot
+  // boot: leagues + team map
   useEffect(() => {
     ;(async () => {
       try {
@@ -129,29 +127,46 @@ function StatsInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // loads that depend on filters
+  // load "My Season" — IMPORTANT: include leagueId
   useEffect(() => {
-    if (!season) return
+    if (!leagueId || !season) return
     ;(async () => {
       setMsg('')
       try {
-        const my = await fetch(`/api/my-stats?season=${season}`, { cache: 'no-store' }).then(r => r.json())
-        setMine(my || {})
+        const res = await fetch(`/api/my-stats?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
+        const j = await res.json()
+
+        // accept several shapes: {…}, {stats:{…}}, {data:{…}}
+        const base: any = j?.stats ?? j?.data ?? j ?? {}
+        // pick log may live in base.pick_log or base.rows
+        const pick_log = Array.isArray(base.pick_log) ? base.pick_log : Array.isArray(base.rows) ? base.rows : []
+        const payload: MyStatsPayload = { ...base, pick_log }
+
+        setMine(payload)
       } catch (e: any) {
         setMine({})
         setMsg(e?.message || 'Failed to load my stats')
       }
     })()
-  }, [season])
+  }, [leagueId, season])
 
+  // load league leaderboards
   useEffect(() => {
     if (!leagueId || !season) return
     ;(async () => {
       try {
         const qs = new URLSearchParams({ leagueId, season: String(season) })
         if (includeLive) qs.set('includeLive', '1')
-        const lb = await fetch(`/api/league-stats?${qs.toString()}`, { cache: 'no-store' }).then(r => r.json())
-        setBoards(lb || {})
+        const j = await fetch(`/api/league-stats?${qs.toString()}`, { cache: 'no-store' }).then(r => r.json())
+
+        // accept shapes: top-level, or {data:{…}}
+        const root: any = j?.data ?? j ?? {}
+        const payload: LeagueBoards = {
+          avg_points: Array.isArray(root.avg_points) ? root.avg_points : [],
+          accuracy: Array.isArray(root.accuracy) ? root.accuracy : [],
+          streaks: Array.isArray(root.streaks) ? root.streaks : [],
+        }
+        setBoards(payload)
       } catch (e: any) {
         setBoards({})
         setMsg(e?.message || 'Failed to load league stats')
@@ -159,33 +174,28 @@ function StatsInner() {
     })()
   }, [leagueId, season, includeLive])
 
-  // derived (display-friendly) values
-  const picksTotal = safeInt(mine?.picks_total)
-  const picksCorrect = safeInt(mine?.picks_correct)
-  // try to detect if backend gave 0..100 or 0..1; assume <= 1 means ratio
-  const winPct = (() => {
-    const raw = num(mine?.win_pct, NaN)
-    if (!Number.isFinite(raw)) return '—'
-    return raw <= 1 ? safePctStr(raw, false) : safePctStr(raw, true)
-  })()
-  const longestStreak = safeInt(mine?.longest_streak)
-  const pointsTotal = safeInt(mine?.points_total)
-  const avgPerPick = safeFixed(mine?.avg_points_per_pick, 2)
-  const wrinklePts = safeInt(mine?.wrinkle_points)
+  // Render helpers
+  const my = mine || {}
 
-  const myLog = Array.isArray(mine?.pick_log) ? mine!.pick_log! : []
+  const metrics = [
+    { label: 'Picks', value: intStr(my.picks_total) },
+    { label: 'Correct', value: intStr(my.picks_correct) },
+    { label: 'Win %', value: pctStr(my.win_pct) },
+    { label: 'Longest Streak', value: intStr(my.longest_streak) },
+    { label: 'Points', value: intStr(my.points_total) },
+    { label: 'Avg / Pick', value: fixedStr(my.avg_points_per_pick, 2) },
+    { label: 'Wrinkle Points', value: intStr(my.wrinkle_points), wide: true },
+  ]
+
+  const pickLog = Array.isArray(my.pick_log) ? my.pick_log : []
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
+      {/* Page header (no extra nav links; SiteHeader handles top nav) */}
       <section className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">Stats</h1>
 
         <div className="ml-auto flex items-center gap-3">
-          {/* Primary nav already in SiteHeader; keep quick links if you like */}
-          <Link className="underline text-sm" href="/picks">Picks</Link>
-          <Link className="underline text-sm" href="/standings">Standings</Link>
-
-          {/* Season */}
           <select
             className="border rounded px-2 py-1 bg-transparent"
             value={season}
@@ -201,7 +211,6 @@ function StatsInner() {
             })}
           </select>
 
-          {/* League */}
           <select
             className="border rounded px-2 py-1 bg-transparent"
             value={leagueId}
@@ -231,13 +240,18 @@ function StatsInner() {
         <div className="lg:col-span-5">
           <Card title={`My Season (${season})`}>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <Metric label="Picks" value={picksTotal} />
-              <Metric label="Correct" value={picksCorrect} />
-              <Metric label="Win %" value={winPct} />
-              <Metric label="Longest Streak" value={longestStreak} />
-              <Metric label="Points" value={pointsTotal} />
-              <Metric label="Avg / Pick" value={avgPerPick} />
-              <Metric label="Wrinkle Points" value={wrinklePts} wide />
+              {metrics.map((m) => (
+                <div
+                  key={m.label}
+                  className={[
+                    'rounded-xl border px-4 py-3',
+                    m.wide ? 'sm:col-span-2' : '',
+                  ].join(' ')}
+                >
+                  <div className="text-xs text-neutral-500">{m.label}</div>
+                  <div className="text-2xl font-semibold">{m.value}</div>
+                </div>
+              ))}
             </div>
 
             <h3 className="mt-6 mb-2 font-medium">My Pick Log</h3>
@@ -254,12 +268,14 @@ function StatsInner() {
                   </tr>
                 </thead>
                 <tbody>
-                  {myLog.length === 0 ? (
+                  {pickLog.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-4 text-neutral-500">No picks yet.</td>
+                      <td colSpan={6} className="py-4 text-neutral-500">
+                        No picks yet.
+                      </td>
                     </tr>
                   ) : (
-                    myLog.map((r, i) => (
+                    pickLog.map((r, i) => (
                       <tr key={i} className="border-t">
                         <td className="py-2 pr-3">{r.week ?? '—'}</td>
                         <td className="py-2 pr-3">
@@ -276,7 +292,7 @@ function StatsInner() {
                         </td>
                         <td className="py-2 pr-3">{r.result ?? '—'}</td>
                         <td className="py-2 pr-3">{r.score_str ?? '—'}</td>
-                        <td className="py-2 pr-3">{safeInt(r.points)}</td>
+                        <td className="py-2 pr-3">{intStr(r.points)}</td>
                         <td className="py-2 pr-3">{r.wrinkle ? '✓' : '—'}</td>
                       </tr>
                     ))
@@ -296,9 +312,9 @@ function StatsInner() {
             <BoardTable
               rows={(boards?.avg_points || []).map((r) => ({
                 name: r.display_name,
-                col2: safeInt(r.decided),
-                col3: safeInt(r.points),
-                col4: safeFixed(r.avg, 2),
+                col2: intStr(r.decided),
+                col3: intStr(r.points),
+                col4: fixedStr(r.avg, 2),
               }))}
               headers={['#', 'Member', 'Decided', 'Points', 'Avg/Pick']}
             />
@@ -310,14 +326,14 @@ function StatsInner() {
           >
             <BoardTable
               rows={(boards?.accuracy || []).map((r) => {
-                const decided = num(r.decided, 0)
-                const correct = num(r.correct, 0)
-                const pct = decided > 0 ? (correct / decided) * 100 : NaN
+                const decided = asNumber(r.decided)
+                const correct = asNumber(r.correct)
+                const pct = Number.isFinite(decided) && decided > 0 ? (correct / decided) * 100 : NaN
                 return {
                   name: r.display_name,
-                  col2: safeInt(correct),
-                  col3: safeInt(decided),
-                  col4: safeFixed(pct, 1) === '—' ? '—' : `${safeFixed(pct, 1)}%`,
+                  col2: intStr(correct),
+                  col3: intStr(decided),
+                  col4: Number.isFinite(pct) ? `${pct.toFixed(1)}%` : '—',
                 }
               })}
               headers={['#', 'Member', 'Correct', 'Decided', 'Accuracy']}
@@ -328,7 +344,7 @@ function StatsInner() {
             <BoardTable
               rows={(boards?.streaks || []).map((r) => ({
                 name: r.display_name,
-                col2: safeInt(r.streak),
+                col2: intStr(r.streak),
               }))}
               headers={['#', 'Member', 'Streak']}
             />
@@ -338,17 +354,6 @@ function StatsInner() {
 
       {msg && <div className="text-xs mt-2">{msg}</div>}
     </main>
-  )
-}
-
-/** ---------- little UI helpers ---------- */
-
-function Metric({ label, value, wide = false }: { label: string; value: string | number; wide?: boolean }) {
-  return (
-    <div className={['rounded-xl border px-4 py-3', wide ? 'sm:col-span-2' : ''].join(' ')}>
-      <div className="text-xs text-neutral-500">{label}</div>
-      <div className="text-2xl font-semibold">{value}</div>
-    </div>
   )
 }
 
