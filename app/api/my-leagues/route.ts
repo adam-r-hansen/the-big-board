@@ -1,46 +1,78 @@
 // app/api/my-leagues/route.ts
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
+export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
-export async function GET(_req: NextRequest) {
-  const supabase = await createClient()
+type MemberRow = { league_id: string; role?: string | null }
+type LeagueRow = { id: string; name: string | null; season: number | null }
+
+function noStoreJson(data: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers)
+  headers.set('cache-control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  headers.set('pragma', 'no-cache')
+  headers.set('expires', '0')
+  headers.set('surrogate-control', 'no-store')
+  return new NextResponse(JSON.stringify(data), { ...init, headers, status: init.status ?? 200 })
+}
+
+export async function GET() {
+  const sb = await createClient()
 
   // Auth
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !user) {
-    return NextResponse.json({ error: 'unauthenticated' }, { status: 401, headers: { 'cache-control': 'no-store' } })
+  const { data: auth } = await sb.auth.getUser()
+  const user = auth?.user
+  if (!user) {
+    return noStoreJson({ error: 'unauthenticated' }, { status: 401 })
   }
 
-  // 1) Read *my* membership rows (works with the "select_own" policy above)
-  const { data: mems, error: mErr } = await supabase
-    .from('league_memberships')
-    .select('league_id')
+  // Member rows for this profile
+  const { data: mems, error: memErr } = await sb
+    .from('league_members')
+    .select('league_id, role')
     .eq('profile_id', user.id)
 
-  if (mErr) {
-    return NextResponse.json({ error: mErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
+  if (memErr) {
+    return noStoreJson({ error: memErr.message }, { status: 500 })
   }
 
-  const leagueIds = Array.from(new Set((mems ?? []).map(r => r.league_id))).filter(Boolean)
+  const leagueIds: string[] = Array.from(
+    new Set((mems ?? []).map((r: MemberRow) => r.league_id).filter(Boolean) as string[])
+  )
+
   if (leagueIds.length === 0) {
-    return NextResponse.json({ leagues: [] }, { headers: { 'cache-control': 'no-store' } })
+    return noStoreJson({ leagues: [] })
   }
 
-  // 2) Load those leagues (membership-scoped leagues policy lets this pass)
-  const { data: leagues, error: lErr } = await supabase
+  // Fetch leagues by id
+  const { data: leagues, error: lgErr } = await sb
     .from('leagues')
     .select('id, name, season')
     .in('id', leagueIds)
-    .order('name', { ascending: true })
 
-  if (lErr) {
-    return NextResponse.json({ error: lErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
+  if (lgErr) {
+    return noStoreJson({ error: lgErr.message }, { status: 500 })
   }
 
-  return NextResponse.json(
-    { leagues: leagues ?? [] },
-    { headers: { 'cache-control': 'no-store' } }
-  )
+  // Join role back onto each league (helpful for client UIs)
+  const roleByLeague = new Map<string, string | null>()
+  for (const m of mems as MemberRow[]) {
+    roleByLeague.set(m.league_id, m.role ?? null)
+  }
+
+  const payload = (leagues ?? []).map((l: LeagueRow) => ({
+    id: l.id,
+    name: l.name ?? '',
+    season: Number.isFinite(l.season as number) ? (l.season as number) : null,
+    role: roleByLeague.get(l.id) ?? null,
+  }))
+
+  return noStoreJson({ leagues: payload })
+}
+
+// Optional: preserve POST if your client calls it the same as GET
+export async function POST() {
+  return GET()
 }
