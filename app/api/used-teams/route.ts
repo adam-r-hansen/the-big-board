@@ -1,50 +1,77 @@
-import { NextRequest } from 'next/server'
+// app/api/used-teams/route.ts
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
 export const runtime = 'nodejs'
-export const revalidate = 0
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
-function jsonNoStore(data: any, init: ResponseInit = {}) {
-  const h = new Headers(init.headers)
-  h.set('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate')
-  h.set('Pragma','no-cache'); h.set('Expires','0'); h.set('Surrogate-Control','no-store')
-  return new Response(JSON.stringify(data), { ...init, headers: h, status: init.status ?? 200 })
+type PickRow = {
+  team_id: string | null
+  league_id?: string | null
+  season?: number | null
+  week?: number | null
+  profile_id?: string | null
+}
+
+function jsonNoStore(data: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers)
+  headers.set('cache-control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  headers.set('pragma', 'no-cache')
+  headers.set('expires', '0')
+  headers.set('surrogate-control', 'no-store')
+  return new NextResponse(JSON.stringify(data), { ...init, headers, status: init.status ?? 200 })
 }
 
 export async function GET(req: NextRequest) {
+  const sb = await createClient()
+
+  // Auth
+  const { data: auth } = await sb.auth.getUser()
+  const user = auth?.user
+  if (!user) return jsonNoStore({ error: 'unauthenticated' }, { status: 401 })
+
+  // Optional query params: leagueId, season, week
+  const { searchParams } = new URL(req.url)
+  const leagueId = searchParams.get('leagueId') || undefined
+  const seasonParam = searchParams.get('season')
+  const weekParam = searchParams.get('week')
+
+  const season = seasonParam && !Number.isNaN(Number(seasonParam)) ? Number(seasonParam) : undefined
+  const week = weekParam && !Number.isNaN(Number(weekParam)) ? Number(weekParam) : undefined
+
   try {
-    const url = new URL(req.url)
-    const leagueId = url.searchParams.get('leagueId') ?? ''
-    const seasonStr = url.searchParams.get('season') ?? ''
-    const weekStr = url.searchParams.get('week') ?? ''
-    const season = Number(seasonStr)
-    const week = Number(weekStr)
-
-    // If any param missing/invalid, don't block user—return empty set
-    if (!leagueId || !Number.isFinite(season) || !Number.isFinite(week)) {
-      return jsonNoStore({ used: [] })
-    }
-
-    const sb = await createClient()
-    const { data: auth } = await sb.auth.getUser()
-    const user = auth?.user
-    if (!user) return jsonNoStore({ error: 'unauthenticated' }, { status: 401 })
-
-    // Only teams used in PRIOR weeks count as "used so far"
-    const { data, error } = await sb
+    // Base query
+    let q = sb
       .from('picks')
-      .select('team_id, week')
-      .eq('league_id', leagueId)
-      .eq('season', season)
+      .select('team_id, league_id, season, week, profile_id')
       .eq('profile_id', user.id)
-      .lt('week', week)
+
+    if (leagueId) q = q.eq('league_id', leagueId)
+    if (typeof season === 'number') q = q.eq('season', season)
+    if (typeof week === 'number') q = q.eq('week', week)
+
+    const { data, error } = await q
 
     if (error) return jsonNoStore({ error: error.message }, { status: 500 })
-    const used = Array.from(new Set((data ?? []).map(r => r.team_id))).filter(Boolean)
+
+    const used: string[] = Array.from(
+      new Set(
+        (data ?? [])
+          .map((r: PickRow) => r.team_id)
+          .filter((v: string | null): v is string => Boolean(v))
+      )
+    )
+
     return jsonNoStore({ used })
-  } catch (e: any) {
-    console.error('used-teams error:', e?.message || e)
-    return jsonNoStore({ error: 'internal error' }, { status: 500 })
+  } catch (e: unknown) {
+    const msg = (e as any)?.message || 'unexpected error'
+    console.error('used-teams error:', msg)
+    return jsonNoStore({ error: msg }, { status: 500 })
   }
+}
+
+// Some clients may POST to fetch; mirror GET for idempotence
+export async function POST(req: NextRequest) {
+  return GET(req)
 }
