@@ -1,5 +1,5 @@
 'use client'
-import TeamPill from '@/components/TeamPill'
+import TeamPill from '@/components/ui/TeamPill'
 import type { Team } from '@/types/domain'
 import WrinkleBadge from '@/components/WrinkleBadge'
 
@@ -88,7 +88,7 @@ export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props
           <div className="flex-1">
             <TeamPill
               team={home}
-              picked={myPick?.team_id === home?.id}
+              selected={myPick?.team_id === home?.id}
               disabled={isLocked}
               onClick={() => pick(home!.id, g.game_id)}
             />
@@ -97,7 +97,7 @@ export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props
           <div className="flex-1">
             <TeamPill
               team={away}
-              picked={myPick?.team_id === away?.id}
+              selected={myPick?.team_id === away?.id}
               disabled={isLocked}
               onClick={() => pick(away!.id, g.game_id)}
             />
