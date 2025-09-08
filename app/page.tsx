@@ -1,6 +1,15 @@
 // app/page.tsx
 'use client'
 
+/**
+ * Home: overview + scoreboard (left 2/3), and
+ * My Picks / Standings mini (right 1/3).
+ *
+ * Team pills:
+ *  - Compact on mobile (abbr)
+ *  - Larger on desktop (full/short name) via labelMode="abbrFull" + mdUpSize
+ */
+
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import TeamPill from '@/components/ui/TeamPill'
@@ -18,18 +27,6 @@ type Game = {
   away: { id?: string; abbr?: string | null; score?: number | null }
 }
 type Pick = { id: string; team_id: string; game_id: string | null }
-
-type MemberLockedPicks = {
-  profile_id: string
-  display_name: string
-  points_week: number
-  picks: Array<{
-    game_id: string
-    team_id: string
-    status: 'LIVE' | 'FINAL'
-    points: number | null
-  }>
-}
 
 function Card({
   children,
@@ -143,13 +140,13 @@ function HomeInner() {
   const [myPicks, setMyPicks] = useState<Pick[]>([])
   const [wrinkleExtra, setWrinkleExtra] = useState<number>(0)
 
-  const [leagueLocked, setLeagueLocked] = useState<MemberLockedPicks[]>([])
   const [standRows, setStandRows] = useState<any[]>([])
   const [msg, setMsg] = useState('')
 
   const singleLeague = leagues.length === 1
   const noLeagues = leagues.length === 0
 
+  // base data
   useEffect(() => {
     ;(async () => {
       try {
@@ -172,17 +169,17 @@ function HomeInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // per-week data
   useEffect(() => {
     if (!leagueId || !season || !week) return
     ;(async () => {
       setMsg('')
       try {
-        const [g, p, w, s, L] = await Promise.all([
+        const [g, p, w, s] = await Promise.all([
           fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()),
           fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()),
           fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
           fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
-          fetch(`/api/league-picks-week?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()).catch(() => ({ members: [] })),
         ])
 
         setGames(normalizeGames(g?.games || g || []))
@@ -194,14 +191,13 @@ function HomeInner() {
 
         const rows = Array.isArray(s) ? s : (s?.standings || s?.rows || [])
         setStandRows(rows || [])
-
-        setLeagueLocked(Array.isArray(L?.members) ? L.members : [])
       } catch (e: any) {
         setMsg(e?.message || 'Failed to load data')
       }
     })()
   }, [leagueId, season, week])
 
+  // maps & computed
   const gameById = useMemo(() => {
     const m = new Map<string, Game>()
     for (const g of games) m.set(g.id, g)
@@ -231,15 +227,15 @@ function HomeInner() {
     return sum
   }, [myPicks, gameById])
 
-  // unified pills
+  // unified team pill helpers
   const scoreboardPill = (teamId?: string) => (
     <TeamPill
       teamId={teamId}
       teamIndex={teamIndex}
-      size="sm"
-      mdUpSize="xl"   // bigger on desktop
+      size="sm"           // mobile
+      mdUpSize="xl"       // desktop bigger
       variant="subtle"
-      labelMode="abbr"
+      labelMode="abbrFull" // abbr on mobile, short/full on md+
     />
   )
 
@@ -252,7 +248,7 @@ function HomeInner() {
       variant="subtle"
       status={(opts?.status || '') as any}
       points={opts?.points ?? null}
-      labelMode="abbr"
+      labelMode="abbrFull"
     />
   )
 
@@ -271,17 +267,21 @@ function HomeInner() {
           : 0,
     }))
     rows.sort((a, b) => (b.points_total || 0) - (a.points_total || 0))
-    return rows            // NO SLICE — show all
+    return rows
   }, [standRows])
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
+      {/* Header controls */}
       <section className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">NFL Pick’em</h1>
+
         <div className="ml-auto flex items-center gap-3">
           <Link className="underline text-sm" href="/picks">Picks</Link>
           <Link className="underline text-sm" href="/standings">Standings</Link>
-          {noLeagues ? null : (leagues.length === 1 ? (
+
+          {/* League control */}
+          {noLeagues ? null : leagues.length === 1 ? (
             <span className="text-sm text-neutral-600">
               League: <strong>{leagues[0].name}</strong>
             </span>
@@ -292,10 +292,14 @@ function HomeInner() {
               onChange={(e) => setLeagueId(e.target.value)}
             >
               {leagues.map((l) => (
-                <option key={l.id} value={l.id}>{l.name} · {l.season}</option>
+                <option key={l.id} value={l.id}>
+                  {l.name} · {l.season}
+                </option>
               ))}
             </select>
-          ))}
+          )}
+
+          {/* Season & Week */}
           <select
             className="border rounded px-2 py-1 bg-transparent"
             value={season}
@@ -303,9 +307,14 @@ function HomeInner() {
           >
             {Array.from({ length: 3 }).map((_, i) => {
               const yr = new Date().getFullYear() - 1 + i
-              return <option key={yr} value={yr}>{yr}</option>
+              return (
+                <option key={yr} value={yr}>
+                  {yr}
+                </option>
+              )
             })}
           </select>
+
           <select
             className="border rounded px-2 py-1 bg-transparent"
             value={week}
@@ -313,7 +322,11 @@ function HomeInner() {
           >
             {Array.from({ length: 18 }).map((_, i) => {
               const wk = i + 1
-              return <option key={wk} value={wk}>{wk}</option>
+              return (
+                <option key={wk} value={wk}>
+                  {wk}
+                </option>
+              )
             })}
           </select>
         </div>
@@ -327,41 +340,42 @@ function HomeInner() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* LEFT */}
+          {/* LEFT 2/3 */}
           <div className="lg:col-span-8 grid gap-6">
+            {/* Overview */}
             <Card
               title="League overview"
-              right={<Link href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`} className="text-sm underline">Make picks →</Link>}
+              right={
+                <Link
+                  href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`}
+                  className="text-sm underline"
+                >
+                  Make picks →
+                </Link>
+              }
             >
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Stat label="Picks used" value={myPicks.length} sub={`of ${2 + (wrinkleExtra || 0)}`} />
-                <Stat label="Points (wk)" value={(() => {
-                  let sum = 0
-                  for (const p of myPicks) {
-                    const g = p.game_id ? gameById.get(p.game_id) : undefined
-                    const pts = pickPointsForGame(p.team_id, g)
-                    if (typeof pts === 'number') sum += pts
-                  }
-                  return sum
-                })()} />
-                <Stat label="Remaining" value={Math.max(0, (2 + (wrinkleExtra || 0)) - myPicks.length)} />
-                <Stat label="Locked" value={(() => {
-                  let c = 0
-                  for (const p of myPicks) {
-                    const g = p.game_id ? gameById.get(p.game_id) : undefined
-                    if (gameLocked(g)) c++
-                  }
-                  return c
-                })()} />
+                <Stat label="Picks used" value={picksUsed} sub={`of ${picksAllowed}`} />
+                <Stat label="Points (wk)" value={weekPoints} />
+                <Stat label="Remaining" value={Math.max(0, picksAllowed - picksUsed)} />
+                <Stat label="Locked" value={picksLocked} />
               </div>
             </Card>
 
+            {/* Week N — Games */}
             <Card
               title={`Week ${week} — Games`}
               right={
                 <div className="flex items-center gap-3">
-                  <Link href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`} className="text-sm underline">Make picks →</Link>
-                  <Link href="/scoreboard" className="text-xs underline">Scoreboard →</Link>
+                  <Link
+                    href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`}
+                    className="text-sm underline"
+                  >
+                    Make picks →
+                  </Link>
+                  <Link href="/scoreboard" className="text-xs underline">
+                    Scoreboard →
+                  </Link>
                 </div>
               }
             >
@@ -371,11 +385,18 @@ function HomeInner() {
                 <div className="grid gap-4">
                   {games.map((g) => {
                     const kickoff = g.game_utc ? new Date(g.game_utc).toLocaleString() : ''
-                    const scoreKnown = typeof g.home.score === 'number' && typeof g.away.score === 'number'
+                    const scoreKnown =
+                      typeof g.home.score === 'number' && typeof g.away.score === 'number'
+
                     return (
-                      <article key={g.id} className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+                      <article
+                        key={g.id}
+                        className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4"
+                      >
                         <div className="mb-2 flex items-center justify-between text-xs text-neutral-500">
-                          <span>{kickoff} • Week {g.week}</span>
+                          <span>
+                            {kickoff} • Week {g.week}
+                          </span>
                           <StatusBadge s={g.status} />
                         </div>
                         <div className="flex items-center gap-3">
@@ -384,7 +405,13 @@ function HomeInner() {
                           <div className="flex-1">{scoreboardPill(g.away.id)}</div>
                         </div>
                         <div className="mt-1 text-xs text-neutral-500">
-                          {scoreKnown ? <span>Score: {g.home.score} — {g.away.score}</span> : <span>— — —</span>}
+                          {scoreKnown ? (
+                            <span>
+                              Score: {g.home.score} — {g.away.score}
+                            </span>
+                          ) : (
+                            <span>— — —</span>
+                          )}
                         </div>
                       </article>
                     )
@@ -394,11 +421,19 @@ function HomeInner() {
             </Card>
           </div>
 
-          {/* RIGHT */}
+          {/* RIGHT 1/3 */}
           <aside className="lg:col-span-4 grid gap-6">
+            {/* My Picks */}
             <Card
               title={`My picks — Week ${week}`}
-              right={<Link href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`} className="text-xs underline">Edit on Picks →</Link>}
+              right={
+                <Link
+                  href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`}
+                  className="text-xs underline"
+                >
+                  Edit on Picks →
+                </Link>
+              }
             >
               {myPicks.length === 0 ? (
                 <div className="text-sm text-neutral-500">No picks yet.</div>
@@ -407,10 +442,13 @@ function HomeInner() {
                   {myPicks.map((p) => {
                     const g = p.game_id ? gameById.get(p.game_id) : undefined
                     const s = (g?.status || (gameLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase() as any
+                    const pts = pickPointsForGame(p.team_id, g)
                     return (
                       <li key={p.id} className="flex items-center justify-between">
-                        {pickPill(p.team_id, { status: s })}
-                        <span className="text-[10px] uppercase tracking-wide text-neutral-500">{s}</span>
+                        {pickPill(p.team_id, { status: s, points: typeof pts === 'number' ? pts : null })}
+                        <span className="text-[10px] uppercase tracking-wide text-neutral-500">
+                          {s}
+                        </span>
                       </li>
                     )
                   })}
@@ -418,9 +456,17 @@ function HomeInner() {
               )}
             </Card>
 
+            {/* Standings mini (all members) */}
             <Card
               title="Standings"
-              right={<Link href={`/standings?leagueId=${leagueId}&season=${season}`} className="text-xs underline">Standings →</Link>}
+              right={
+                <Link
+                  href={`/standings?leagueId=${leagueId}&season=${season}`}
+                  className="text-xs underline"
+                >
+                  Standings →
+                </Link>
+              }
             >
               {miniStand.length === 0 ? (
                 <div className="text-sm text-neutral-500">No standings yet.</div>

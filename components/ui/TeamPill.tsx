@@ -10,16 +10,28 @@ type Props = {
   team?: TeamLike
   teamId?: string
   teamIndex?: Record<string, TeamLike>
-  size?: Size                 // base (mobile)
-  mdUpSize?: Size             // ≥ md breakpoint
-  lgUpSize?: Size             // ≥ lg breakpoint
+  /** base size (mobile) */
+  size?: Size
+  /** upgrade size ≥ md */
+  mdUpSize?: Size
+  /** upgrade size ≥ lg */
+  lgUpSize?: Size
   variant?: 'outline' | 'subtle'
   status?: 'LIVE' | 'FINAL' | 'UPCOMING'
   points?: number | null
-  labelMode?: 'abbr' | 'short' | 'name'
+  /**
+   * label rendering:
+   *  - 'abbr'        = "PHI"
+   *  - 'short'       = "Eagles"
+   *  - 'name'        = "Philadelphia Eagles"
+   *  - 'abbrFull'    = "PHI" on mobile, short/name on md+ (responsive)
+   */
+  labelMode?: 'abbr' | 'short' | 'name' | 'abbrFull'
   className?: string
+  /** makes border thicker */
   selected?: boolean
   disabled?: boolean
+  /** force theme if needed */
   theme?: 'light' | 'dark'
 }
 
@@ -27,17 +39,19 @@ function cls(...a: Array<string | false | null | undefined>) {
   return a.filter(Boolean).join(' ')
 }
 
+/** Fixed, uniform dimensions per token (w = fixed, ellipsis for overflow) */
 function dimsTokens(sz: Size): string[] {
   switch (sz) {
     case 'xl':
-      return ['w-32', 'h-12', 'text-base']    // NEW: very clear desktop size
+      // Big and obvious on desktop
+      return ['w-40', 'h-12', 'text-base']   // ~160px wide pill
     case 'lg':
-      return ['w-28', 'h-11', 'text-base']    // bumped up from previous
+      return ['w-28', 'h-11', 'text-base']
     case 'sm':
       return ['w-16', 'h-8', 'text-xs']
     case 'md':
     default:
-      return ['w-20', 'h-9', 'text-sm']
+      return ['w-24', 'h-10', 'text-sm']
   }
 }
 
@@ -60,8 +74,7 @@ export default function TeamPill({
   useEffect(() => {
     if (theme) return
     if (typeof window === 'undefined') return
-    const isDark = document.documentElement.classList.contains('dark')
-    setDetectedTheme(isDark ? 'dark' : 'light')
+    setDetectedTheme(document.documentElement.classList.contains('dark') ? 'dark' : 'light')
   }, [theme])
   const t = theme || detectedTheme
 
@@ -83,12 +96,29 @@ export default function TeamPill({
   const border = selected ? 'border-2' : 'border'
   const cursor = disabled ? 'opacity-60 cursor-not-allowed' : ''
 
-  const label = useMemo(() => {
+  // Build label (supports responsive abbr → full on md+)
+  const labelNode = useMemo(() => {
     const rt = resolvedTeam
-    if (!rt) return '—'
-    if (labelMode === 'name') return rt.name || rt.short_name || rt.abbreviation || '—'
-    if (labelMode === 'short') return rt.short_name || rt.name || rt.abbreviation || '—'
-    return (rt.abbreviation || '—').toUpperCase()
+    const abbr = (rt?.abbreviation || '—').toUpperCase()
+    const short = rt?.short_name || rt?.name || abbr
+    const full = rt?.name || short
+
+    switch (labelMode) {
+      case 'name':
+        return <span className="truncate max-w-full">{full}</span>
+      case 'short':
+        return <span className="truncate max-w-full">{short}</span>
+      case 'abbrFull':
+        return (
+          <span className="truncate max-w-full">
+            <span className="md:hidden">{abbr}</span>
+            <span className="hidden md:inline">{short}</span>
+          </span>
+        )
+      case 'abbr':
+      default:
+        return <span className="truncate max-w-full">{abbr}</span>
+    }
   }, [resolvedTeam, labelMode])
 
   return (
@@ -96,7 +126,7 @@ export default function TeamPill({
       className={cls(shell, border, dims, cursor, className)}
       style={{
         borderColor: color,
-        color: color,
+        color,
         background: variant === 'subtle'
           ? `color-mix(in srgb, ${color} 12%, transparent)`
           : 'transparent',
@@ -104,7 +134,7 @@ export default function TeamPill({
       title={status || undefined}
       aria-pressed={selected || undefined}
     >
-      <span className="truncate max-w-full">{label}</span>
+      {labelNode}
       {status === 'LIVE' && <span className="text-[10px]">• LIVE</span>}
       {status === 'FINAL' && typeof points === 'number' && (
         <span className="text-[10px]">{points >= 0 ? `+${points}` : `${points}`}</span>
