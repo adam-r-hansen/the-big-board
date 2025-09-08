@@ -4,7 +4,7 @@ import React from 'react'
 import { resolveTeamUi, type Team as TeamRecord } from '@/lib/teamColors'
 
 type Size = 'sm' | 'md' | 'lg' | 'xl'
-type Variant = 'pill' | 'chip'
+type Variant = 'pill' | 'chip' | 'subtle'  // 'subtle' allowed
 type LabelMode = 'abbr' | 'abbrNick' | 'full'
 
 type Props = {
@@ -12,9 +12,9 @@ type Props = {
   size?: Size
   /** optional larger size applied at md+ (e.g. 'xl') */
   mdUpSize?: Size
-  /** visual style; keep default 'pill' */
+  /** visual style */
   variant?: Variant
-  /** how to label: abbr on mobile, full name desktop for 'abbrNick' & 'full' */
+  /** label mode (abbr on mobile, full on desktop for abbrNick & full) */
   labelMode?: LabelMode
   /** force consistent width */
   fixedWidth?: boolean
@@ -46,7 +46,6 @@ export default function TeamPill({
 }: Props) {
   const ui = resolveTeamUi(team)
 
-  // When clickable, use <button> for a11y; otherwise <span>
   const Component: any = onClick ? 'button' : 'span'
 
   const base =
@@ -61,12 +60,23 @@ export default function TeamPill({
   const width = fluid ? 'w-full' : fixedWidth ? 'w-[7.5rem] md:w-[9.5rem]' : ''
   const border = selected ? 'border-2 shadow-sm' : 'border'
   const state = disabled ? 'opacity-60 pointer-events-none' : onClick ? 'cursor-pointer' : ''
+
+  // Style mapping
   const styles: React.CSSProperties = {
     borderColor: ui.primary,
     color: ui.primary,
   }
+
+  // Visual treatment by variant
+  // - 'pill' default light tint background
+  // - 'subtle' even lighter than 'pill'
+  // - 'chip' no bg, just border/text
   if (variant === 'pill') {
-    styles.background = `linear-gradient(0deg, ${ui.secondary}10, transparent)`
+    styles.background = `linear-gradient(0deg, ${ui.secondary}14, transparent)` // ~8% tint
+  } else if (variant === 'subtle') {
+    styles.background = `linear-gradient(0deg, ${ui.secondary}0D, transparent)` // ~5% tint
+  } else if (variant === 'chip') {
+    // keep plain
   }
 
   const abbr = team?.abbreviation || '—'
