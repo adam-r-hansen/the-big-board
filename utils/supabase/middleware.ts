@@ -1,34 +1,47 @@
-// utils/supabase/middleware.ts
+import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
-import { createServerClient } from '@supabase/ssr'
 
+/**
+ * Local-safe Supabase session refresher.
+ * - On Vercel (prod/preview): requires env and runs normally.
+ * - Off Vercel (local): if env missing, becomes a no-op so localhost can run.
+ */
 export async function updateSession(request: NextRequest) {
-  // Will hold refreshed cookies for the browser
-  let response = NextResponse.next({ request })
+  const response = NextResponse.next({ request })
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-    {
+  const isVercel = process.env.VERCEL === '1'
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const anon =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  // If we're NOT on Vercel and env is missing, skip Supabase entirely (local dev passthrough).
+  if (!isVercel && (!url || !anon)) {
+    return response
+  }
+
+  // On Vercel (or if env is set locally), try to refresh the session.
+  try {
+    const supabase = createServerClient(url!, anon!, {
       cookies: {
-        // Required "deprecated" methods for SSR middleware refresh:
-        getAll() {
-          return request.cookies.getAll()
+        get(name: string) {
+          return request.cookies.get(name)?.value
         },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            // set on both the request (Server Components) and the response (browser)
-            request.cookies.set({ name, value, ...options })
-            response.cookies.set({ name, value, ...options })
-          })
+        set(name: string, value: string, options: CookieOptions) {
+          response.cookies.set({ name, value, ...options })
+        },
+        remove(name: string, options: CookieOptions) {
+          response.cookies.set({ name, value: '', ...options, maxAge: 0 })
         },
       },
-    }
-  )
+    })
 
-  // Forces a token refresh if needed and syncs cookies
-  await supabase.auth.getUser()
+    await supabase.auth.getSession()
+  } catch (err) {
+    // If we're local, fail open (still allow page to render); on Vercel we rethrow to catch misconfig.
+    if (!isVercel) return response
+    throw err
+  }
 
   return response
 }
-
