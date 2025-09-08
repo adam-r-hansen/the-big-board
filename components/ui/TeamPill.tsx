@@ -1,20 +1,25 @@
 'use client'
 
-import React from 'react'
+import React, { useMemo } from 'react'
 import { resolveTeamUi, type Team as TeamRecord } from '@/lib/teamColors'
 
 type Size = 'sm' | 'md' | 'lg' | 'xl'
-type Variant = 'pill' | 'chip' | 'subtle'  // 'subtle' allowed
+type Variant = 'pill' | 'chip' | 'subtle'        // allow 'subtle'
 type LabelMode = 'abbr' | 'abbrNick' | 'full'
 
 type Props = {
+  /** New preferred shape */
   team?: TeamRecord
+  /** Back-compat: pages can pass teamId + teamIndex */
+  teamId?: string
+  teamIndex?: Record<string, TeamRecord>
+
   size?: Size
   /** optional larger size applied at md+ (e.g. 'xl') */
   mdUpSize?: Size
   /** visual style */
   variant?: Variant
-  /** label mode (abbr on mobile, full on desktop for abbrNick & full) */
+  /** label mode (abbr on mobile, full on desktop for abbrNick/full) */
   labelMode?: LabelMode
   /** force consistent width */
   fixedWidth?: boolean
@@ -26,12 +31,14 @@ type Props = {
   disabled?: boolean
   title?: string
   className?: string
-  /** optional click handler (when present we render a <button>) */
+  /** if present, we render a <button> */
   onClick?: React.MouseEventHandler<HTMLButtonElement>
 }
 
 export default function TeamPill({
   team,
+  teamId,
+  teamIndex,
   size = 'md',
   mdUpSize,
   variant = 'pill',
@@ -44,8 +51,12 @@ export default function TeamPill({
   className = '',
   onClick,
 }: Props) {
-  const ui = resolveTeamUi(team)
+  const resolvedTeam = useMemo(
+    () => team ?? (teamId && teamIndex ? teamIndex[teamId] : undefined),
+    [team, teamId, teamIndex]
+  )
 
+  const ui = resolveTeamUi(resolvedTeam)
   const Component: any = onClick ? 'button' : 'span'
 
   const base =
@@ -61,31 +72,26 @@ export default function TeamPill({
   const border = selected ? 'border-2 shadow-sm' : 'border'
   const state = disabled ? 'opacity-60 pointer-events-none' : onClick ? 'cursor-pointer' : ''
 
-  // Style mapping
+  // Style mapping driven by Admin colors via resolveTeamUi
   const styles: React.CSSProperties = {
     borderColor: ui.primary,
     color: ui.primary,
   }
 
-  // Visual treatment by variant
-  // - 'pill' default light tint background
-  // - 'subtle' even lighter than 'pill'
-  // - 'chip' no bg, just border/text
+  // Variant visuals
   if (variant === 'pill') {
     styles.background = `linear-gradient(0deg, ${ui.secondary}14, transparent)` // ~8% tint
   } else if (variant === 'subtle') {
     styles.background = `linear-gradient(0deg, ${ui.secondary}0D, transparent)` // ~5% tint
-  } else if (variant === 'chip') {
-    // keep plain
-  }
+  } // 'chip' => no background
 
-  const abbr = team?.abbreviation || '—'
-  const name = team?.name || abbr
+  const abbr = resolvedTeam?.abbreviation || '—'
+  const full = resolvedTeam?.name || abbr
 
   return (
     <Component
       type={onClick ? 'button' : undefined}
-      title={title || name}
+      title={title || full}
       className={[base, heights[size], mdHeights, width, border, state, className].join(' ')}
       style={styles}
       onClick={onClick}
@@ -95,12 +101,12 @@ export default function TeamPill({
         {labelMode === 'full' ? (
           <>
             <span className="md:hidden">{abbr}</span>
-            <span className="hidden md:inline">{name}</span>
+            <span className="hidden md:inline">{full}</span>
           </>
         ) : labelMode === 'abbrNick' ? (
           <>
             <span className="md:hidden">{abbr}</span>
-            <span className="hidden md:inline">{name}</span>
+            <span className="hidden md:inline">{full}</span>
           </>
         ) : (
           <>{abbr}</>
