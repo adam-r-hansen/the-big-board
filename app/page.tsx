@@ -18,34 +18,8 @@ type Game = {
   home: { id?: string; score?: number | null }
   away: { id?: string; score?: number | null }
 }
-type PickRow = { id: string; team_id: string; game_id: string | null }
 
-function Card({
-  children,
-  title,
-  right,
-  className = '',
-}: {
-  children: React.ReactNode
-  title: string
-  right?: React.ReactNode
-  className?: string
-}) {
-  return (
-    <section
-      className={[
-        'rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5',
-        className,
-      ].join(' ')}
-    >
-      <header className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        {right}
-      </header>
-      {children}
-    </section>
-  )
-}
+type PickRow = { id: string; team_id: string; game_id: string | null }
 
 function normalizeGames(rows: any[]): Game[] {
   return (rows || []).map((x: any) => ({
@@ -73,22 +47,35 @@ function isLocked(g?: Game) {
   return new Date(g.game_utc) <= new Date()
 }
 
-function url(path: string, params: Record<string, string | number | undefined>) {
-  const usp = new URLSearchParams()
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== '' && v !== null) usp.set(k, String(v))
-  })
-  return usp.toString() ? `${path}?${usp}` : path
-}
-
-async function tryJson(paths: string[]): Promise<any> {
-  for (const p of paths) {
-    try {
-      const r = await fetch(p, { cache: 'no-store' })
-      if (r.ok) return await r.json()
-    } catch {}
-  }
-  return null
+function Card({
+  children,
+  title,
+  right,
+  className = '',
+  dense = false,
+}: {
+  children: React.ReactNode
+  title: string
+  right?: React.ReactNode
+  className?: string
+  /** smaller padding for sidebar cards */
+  dense?: boolean
+}) {
+  return (
+    <section
+      className={[
+        'rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900',
+        dense ? 'p-4' : 'p-4 md:p-5',
+        className,
+      ].join(' ')}
+    >
+      <header className="mb-3 flex items-center justify-between">
+        <h2 className="text-lg font-semibold">{title}</h2>
+        {right}
+      </header>
+      {children}
+    </section>
+  )
 }
 
 function SkeletonPill() {
@@ -133,15 +120,14 @@ function HomeInner() {
 
   const [msg, setMsg] = useState('')
 
+  // bootstrap: leagues + team colors
   useEffect(() => {
-    let stop = false
     ;(async () => {
       try {
         const [lj, tm] = await Promise.all([
           fetch('/api/my-leagues', { cache: 'no-store' }).then(r => r.json()).catch(() => ({ leagues: [] })),
           fetch('/api/team-map', { cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
         ])
-        if (stop) return
         const ls: League[] = lj?.leagues || []
         setLeagues(ls)
         if (!leagueId && ls[0]) {
@@ -150,62 +136,61 @@ function HomeInner() {
         }
         setTeamMap(tm?.teams || {})
       } catch (e: any) {
-        if (!stop) setMsg(e?.message || 'Failed to bootstrap page')
+        setMsg(e?.message || 'Failed to load leagues')
       }
     })()
-    return () => {
-      stop = true
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // per week loads
   useEffect(() => {
-    let stop = false
+    if (!season || !week) return
     ;(async () => {
       try {
         setMsg('')
-
-        // NOTE: cast the destructured results to any[] to avoid strict {} inference on fallbacks
         const [g, p, w, lp, st, meWeek]: any[] = await Promise.all([
-          fetch(url('/api/games-for-week', { season, week }), { cache: 'no-store' }).then(r => r.json()),
-          fetch(url('/api/my-picks', { leagueId: leagueId || undefined, season, week }), { cache: 'no-store' }).then(
-            r => r.json(),
-          ),
-          fetch(url('/api/wrinkles/active', { leagueId: leagueId || undefined, season, week }), { cache: 'no-store' })
+          fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()),
+          fetch(`/api/my-picks?leagueId=${leagueId || ''}&season=${season}&week=${week}`, {
+            cache: 'no-store',
+          }).then(r => r.json()),
+          fetch(`/api/wrinkles/active?leagueId=${leagueId || ''}&season=${season}&week=${week}`, {
+            cache: 'no-store',
+          })
             .then(r => (r.ok ? r.json() : {}))
             .catch(() => ({})),
-          tryJson([
-            url('/api/league/locked-picks', { leagueId: leagueId || undefined, season, week }),
-            url('/api/league/locked', { leagueId: leagueId || undefined, season, week }),
-            url('/api/picks/locked', { leagueId: leagueId || undefined, season, week }),
-          ]),
-          tryJson([
-            url('/api/standings', { leagueId: leagueId || undefined, season }),
-            url('/api/leaderboard', { leagueId: leagueId || undefined, season }),
-          ]),
-          tryJson([
-            url('/api/stats/my-week', { leagueId: leagueId || undefined, season, week }),
-            url('/api/stats/me', { leagueId: leagueId || undefined, season, week, scope: 'week' }),
-          ]),
+          // several possible legacy endpoints people might hit
+          fetch(`/api/league/locked-picks?leagueId=${leagueId || ''}&season=${season}&week=${week}`, {
+            cache: 'no-store',
+          })
+            .then(r => (r.ok ? r.json() : null))
+            .catch(() => null),
+          fetch(`/api/standings?leagueId=${leagueId || ''}&season=${season}`, { cache: 'no-store' })
+            .then(r => (r.ok ? r.json() : null))
+            .catch(() => null),
+          fetch(`/api/stats/my-week?leagueId=${leagueId || ''}&season=${season}&week=${week}`, {
+            cache: 'no-store',
+          })
+            .then(r => (r.ok ? r.json() : null))
+            .catch(() => null),
         ])
 
-        if (stop) return
-
+        // games
         const gamesNorm = normalizeGames(g?.games || g || [])
         setGames(gamesNorm)
         if (gamesNorm[0]?.week && gamesNorm[0].week !== week) setWeek(gamesNorm[0].week)
 
+        // picks
         setMyPicks((p?.picks || []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
 
+        // wrinkles -> extra picks
         const extra = Array.isArray(w?.wrinkles)
           ? w.wrinkles.reduce((acc: number, it: any) => acc + (Number(it?.extra_picks) || 0), 0)
           : 0
         setWrinkleExtra(extra)
 
-        const lpRows =
-          (lp?.picks as any[]) ||
-          (Array.isArray(lp) ? lp : []) ||
-          []
+        // locked picks (normalize to profile_id/display_name/team_id)
+        const lpRows: any[] =
+          (lp?.picks as any[]) || (Array.isArray(lp) ? lp : []) || []
         const normalized = lpRows.map((r: any) => ({
           profile_id: r.profile_id || r.user_id || r.id || `${r.display_name}`,
           display_name: r.display_name || r.member || r.name || 'Member',
@@ -213,7 +198,8 @@ function HomeInner() {
         }))
         setLockedByMember(normalized)
 
-        const stRows =
+        // standings mini (stable sort)
+        const stRows: any[] =
           (st?.standings as any[]) ||
           (st?.members as any[]) ||
           (st?.rows as any[]) ||
@@ -225,7 +211,7 @@ function HomeInner() {
             name: r.display_name || r.name || r.member || 'Member',
             points: Number(r.points_total ?? r.points ?? 0),
           }))
-          .sort((a, b) => b.points - a.points)
+          .sort((a, b) => (b.points - a.points) || a.name.localeCompare(b.name))
           .slice(0, 5)
         setStandingsMini(mini)
 
@@ -234,14 +220,12 @@ function HomeInner() {
           (typeof meWeek?.points_total === 'number' ? meWeek.points_total : null)
         setWeekPoints(Number.isFinite(pts as number) ? (pts as number) : null)
       } catch (e: any) {
-        if (!stop) setMsg(e?.message || 'Failed to load data')
+        setMsg(e?.message || 'Failed to load data')
       }
     })()
-    return () => {
-      stop = true
-    }
   }, [leagueId, season, week])
 
+  // helpers
   const gameById = useMemo(() => {
     const m = new Map<string, Game>()
     for (const g of games) m.set(g.id, g)
@@ -306,6 +290,7 @@ function HomeInner() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        {/* LEFT: overview + games */}
         <div className="grid gap-6 lg:col-span-8">
           <Card
             title="League overview"
@@ -381,7 +366,7 @@ function HomeInner() {
                               size="sm"
                               mdUpSize="xl"
                               fluid
-                              variant="pill"
+                              variant="chip"        // filled “schedule” look (Admin colors)
                               labelMode="abbrNick"
                               selected={!!homeWon}
                             />
@@ -398,7 +383,7 @@ function HomeInner() {
                               size="sm"
                               mdUpSize="xl"
                               fluid
-                              variant="pill"
+                              variant="chip"
                               labelMode="abbrNick"
                               selected={!!awayWon}
                             />
@@ -421,7 +406,8 @@ function HomeInner() {
           </Card>
         </div>
 
-        <aside className="grid gap-6 lg:col-span-4">
+        {/* RIGHT: dense cards */}
+        <aside className="grid gap-4 lg:col-span-4">
           <Card
             title={`My picks — Week ${week}`}
             right={
@@ -429,6 +415,7 @@ function HomeInner() {
                 Edit on Picks →
               </Link>
             }
+            dense
           >
             {myPicks.length === 0 ? (
               <div className="text-sm text-neutral-500">No picks yet.</div>
@@ -461,11 +448,11 @@ function HomeInner() {
             )}
           </Card>
 
-          <Card title="League picks (locked)" right={<span className="text-xs opacity-70">Finals only</span>}>
+          <Card title="League picks (locked)" right={<span className="text-xs opacity-70">Finals only</span>} dense>
             {lockedByMember.length === 0 ? (
               <div className="text-sm text-neutral-500">No locked picks yet.</div>
             ) : (
-              <ul className="grid gap-3">
+              <ul className="grid gap-2">
                 {lockedByMember.map((row) => (
                   <li key={`${row.profile_id}-${row.team_id}`} className="flex items-center justify-between gap-3">
                     <div className="truncate text-sm font-medium">{row.display_name}</div>
@@ -489,7 +476,7 @@ function HomeInner() {
             )}
           </Card>
 
-          <Card title="Standings — Top 5">
+          <Card title="Standings — Mini" dense>
             {standingsMini.length === 0 ? (
               <div className="text-sm text-neutral-500">No standings yet.</div>
             ) : (
