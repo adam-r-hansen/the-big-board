@@ -20,6 +20,7 @@ type Game = {
 }
 
 type PickRow = { id: string; team_id: string; game_id: string | null }
+type MemberPick = { profile_id: string; display_name: string; team_id: string; game_id?: string | null }
 
 function normalizeGames(rows: any[]): Game[] {
   return (rows || []).map((x: any) => ({
@@ -28,14 +29,8 @@ function normalizeGames(rows: any[]): Game[] {
     week: x.week,
     game_utc: x.game_utc || x.start_time,
     status: x.status ?? 'UPCOMING',
-    home: {
-      id: x.home?.id ?? x.home_team ?? x.homeTeamId ?? x.home_team_id,
-      score: x.home_score ?? x.home?.score ?? null,
-    },
-    away: {
-      id: x.away?.id ?? x.away_team ?? x.awayTeamId ?? x.away_team_id,
-      score: x.away_score ?? x.away?.score ?? null,
-    },
+    home: { id: x.home?.id ?? x.home_team ?? x.homeTeamId ?? x.home_team_id, score: x.home_score ?? x.home?.score ?? null },
+    away: { id: x.away?.id ?? x.away_team ?? x.awayTeamId ?? x.away_team_id, score: x.away_score ?? x.away?.score ?? null },
   }))
 }
 
@@ -52,24 +47,19 @@ function Card({
   title,
   right,
   className = '',
-  dense = false,
+  dense,
 }: {
   children: React.ReactNode
   title: string
   right?: React.ReactNode
   className?: string
-  /** smaller padding for sidebar cards */
-  dense?: boolean
+  dense?: 'normal' | 'tight'
 }) {
+  const pad = dense === 'tight' ? 'p-3' : 'p-4 md:p-5'
+  const head = dense === 'tight' ? 'mb-2' : 'mb-3'
   return (
-    <section
-      className={[
-        'rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900',
-        dense ? 'p-4' : 'p-4 md:p-5',
-        className,
-      ].join(' ')}
-    >
-      <header className="mb-3 flex items-center justify-between">
+    <section className={`rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 ${pad} ${className}`}>
+      <header className={`flex items-center justify-between ${head}`}>
         <h2 className="text-lg font-semibold">{title}</h2>
         {right}
       </header>
@@ -79,9 +69,7 @@ function Card({
 }
 
 function SkeletonPill() {
-  return (
-    <div className="h-10 w-full rounded-full border border-neutral-200 dark:border-neutral-800 animate-pulse bg-neutral-50/40 dark:bg-neutral-800" />
-  )
+  return <div className="h-10 w-full rounded-full border border-neutral-200 dark:border-neutral-800 animate-pulse bg-neutral-50/40 dark:bg-neutral-800" />
 }
 
 export default function HomePage() {
@@ -111,16 +99,14 @@ function HomeInner() {
 
   const [games, setGames] = useState<Game[]>([])
   const [myPicks, setMyPicks] = useState<PickRow[]>([])
-  const [lockedByMember, setLockedByMember] = useState<
-    { profile_id: string; display_name: string; team_id: string }[]
-  >([])
+  const [lockedByMember, setLockedByMember] = useState<MemberPick[]>([])
   const [standingsMini, setStandingsMini] = useState<any[]>([])
   const [wrinkleExtra, setWrinkleExtra] = useState<number>(0)
   const [weekPoints, setWeekPoints] = useState<number | null>(null)
 
   const [msg, setMsg] = useState('')
 
-  // bootstrap: leagues + team colors
+  // bootstrap
   useEffect(() => {
     ;(async () => {
       try {
@@ -148,30 +134,12 @@ function HomeInner() {
     ;(async () => {
       try {
         setMsg('')
-        const [g, p, w, lp, st, meWeek]: any[] = await Promise.all([
+        const [g, p, w, st, meWeek] = await Promise.all([
           fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()),
-          fetch(`/api/my-picks?leagueId=${leagueId || ''}&season=${season}&week=${week}`, {
-            cache: 'no-store',
-          }).then(r => r.json()),
-          fetch(`/api/wrinkles/active?leagueId=${leagueId || ''}&season=${season}&week=${week}`, {
-            cache: 'no-store',
-          })
-            .then(r => (r.ok ? r.json() : {}))
-            .catch(() => ({})),
-          // several possible legacy endpoints people might hit
-          fetch(`/api/league/locked-picks?leagueId=${leagueId || ''}&season=${season}&week=${week}`, {
-            cache: 'no-store',
-          })
-            .then(r => (r.ok ? r.json() : null))
-            .catch(() => null),
-          fetch(`/api/standings?leagueId=${leagueId || ''}&season=${season}`, { cache: 'no-store' })
-            .then(r => (r.ok ? r.json() : null))
-            .catch(() => null),
-          fetch(`/api/stats/my-week?leagueId=${leagueId || ''}&season=${season}&week=${week}`, {
-            cache: 'no-store',
-          })
-            .then(r => (r.ok ? r.json() : null))
-            .catch(() => null),
+          fetch(`/api/my-picks?leagueId=${leagueId || ''}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json()),
+          fetch(`/api/wrinkles/active?leagueId=${leagueId || ''}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : {})).catch(() => ({})),
+          fetch(`/api/standings?leagueId=${leagueId || ''}&season=${season}`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).catch(() => null),
+          fetch(`/api/stats/my-week?leagueId=${leagueId || ''}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).catch(() => null),
         ])
 
         // games
@@ -179,32 +147,18 @@ function HomeInner() {
         setGames(gamesNorm)
         if (gamesNorm[0]?.week && gamesNorm[0].week !== week) setWeek(gamesNorm[0].week)
 
-        // picks
+        // my picks
         setMyPicks((p?.picks || []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
 
         // wrinkles -> extra picks
-        const extra = Array.isArray(w?.wrinkles)
-          ? w.wrinkles.reduce((acc: number, it: any) => acc + (Number(it?.extra_picks) || 0), 0)
+        const extra = Array.isArray((w as any)?.wrinkles)
+          ? (w as any).wrinkles.reduce((acc: number, it: any) => acc + (Number(it?.extra_picks) || 0), 0)
           : 0
         setWrinkleExtra(extra)
 
-        // locked picks (normalize to profile_id/display_name/team_id)
-        const lpRows: any[] =
-          (lp?.picks as any[]) || (Array.isArray(lp) ? lp : []) || []
-        const normalized = lpRows.map((r: any) => ({
-          profile_id: r.profile_id || r.user_id || r.id || `${r.display_name}`,
-          display_name: r.display_name || r.member || r.name || 'Member',
-          team_id: r.team_id || r.team || r.tid,
-        }))
-        setLockedByMember(normalized)
-
-        // standings mini (stable sort)
+        // standings (mini)
         const stRows: any[] =
-          (st?.standings as any[]) ||
-          (st?.members as any[]) ||
-          (st?.rows as any[]) ||
-          (Array.isArray(st) ? st : []) ||
-          []
+          (st?.standings as any[]) || (st?.members as any[]) || (st?.rows as any[]) || (Array.isArray(st) ? st : []) || []
         const mini = stRows
           .map((r: any) => ({
             id: r.profile_id || r.id || r.user_id || r.uid || r.display_name,
@@ -212,20 +166,64 @@ function HomeInner() {
             points: Number(r.points_total ?? r.points ?? 0),
           }))
           .sort((a, b) => (b.points - a.points) || a.name.localeCompare(b.name))
-          .slice(0, 5)
+          .slice(0, 10) // ← Top 10
         setStandingsMini(mini)
 
+        // week points (me)
         const pts =
           Number(meWeek?.summary?.points_total) ??
           (typeof meWeek?.points_total === 'number' ? meWeek.points_total : null)
         setWeekPoints(Number.isFinite(pts as number) ? (pts as number) : null)
+
+        // locked picks (robust)
+        const byId = new Map(gamesNorm.map(gm => [gm.id, gm]))
+        const finals = new Set(gamesNorm.filter(isLocked).map(gm => gm.id))
+
+        // 1) try dedicated endpoint
+        const direct = await fetch(`/api/league/locked-picks?leagueId=${leagueId || ''}&season=${season}&week=${week}`, { cache: 'no-store' })
+          .then(r => (r.ok ? r.json() : null))
+          .catch(() => null)
+
+        let locked: MemberPick[] = []
+        if (direct && Array.isArray(direct?.picks)) {
+          locked = (direct.picks as any[]).map(row => ({
+            profile_id: row.profile_id || row.user_id || row.id || `${row.display_name}`,
+            display_name: row.display_name || row.member || row.name || 'Member',
+            team_id: row.team_id || row.team || row.tid,
+            game_id: row.game_id ?? null,
+          }))
+        } else {
+          // 2) fallback: pull all league picks and filter to locked games
+          const all = await fetch(`/api/league/picks?leagueId=${leagueId || ''}&season=${season}&week=${week}`, { cache: 'no-store' })
+            .then(r => (r.ok ? r.json() : null))
+            .catch(() => null)
+
+          const rows: any[] =
+            (all?.picks as any[]) ||
+            (all?.rows as any[]) ||
+            (Array.isArray(all) ? all : []) ||
+            []
+
+          locked = rows
+            .filter(r => finals.has(r.game_id) || isLocked(byId.get(r.game_id)))
+            .map(r => ({
+              profile_id: r.profile_id || r.user_id || r.id || `${r.display_name}`,
+              display_name: r.display_name || r.member || r.name || 'Member',
+              team_id: r.team_id || r.team || r.tid,
+              game_id: r.game_id ?? null,
+            }))
+        }
+
+        // de-dupe by member (last pick shown)
+        const dedup = new Map<string, MemberPick>()
+        for (const row of locked) dedup.set(row.profile_id, row)
+        setLockedByMember([...dedup.values()])
       } catch (e: any) {
         setMsg(e?.message || 'Failed to load data')
       }
     })()
   }, [leagueId, season, week])
 
-  // helpers
   const gameById = useMemo(() => {
     const m = new Map<string, Game>()
     for (const g of games) m.set(g.id, g)
@@ -246,59 +244,31 @@ function HomeInner() {
         <h1 className="text-2xl font-bold">NFL Pick’em</h1>
         <div className="flex items-center gap-3">
           {leagues.length > 1 && (
-            <select
-              className="rounded border bg-transparent px-2 py-1"
-              value={leagueId}
-              onChange={(e) => setLeagueId(e.target.value)}
-            >
-              {leagues.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
+            <select className="rounded border bg-transparent px-2 py-1" value={leagueId} onChange={(e) => setLeagueId(e.target.value)}>
+              {leagues.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
           )}
-          <select
-            className="rounded border bg-transparent px-2 py-1"
-            value={season}
-            onChange={(e) => setSeason(Number(e.target.value))}
-          >
+          <select className="rounded border bg-transparent px-2 py-1" value={season} onChange={(e) => setSeason(Number(e.target.value))}>
             {Array.from({ length: 3 }).map((_, i) => {
               const yr = new Date().getFullYear() - 1 + i
-              return (
-                <option key={yr} value={yr}>
-                  {yr}
-                </option>
-              )
+              return <option key={yr} value={yr}>{yr}</option>
             })}
           </select>
-          <select
-            className="rounded border bg-transparent px-2 py-1"
-            value={week}
-            onChange={(e) => setWeek(Number(e.target.value))}
-          >
+          <select className="rounded border bg-transparent px-2 py-1" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
             {Array.from({ length: 18 }).map((_, i) => {
               const wk = i + 1
-              return (
-                <option key={wk} value={wk}>
-                  {wk}
-                </option>
-              )
+              return <option key={wk} value={wk}>{wk}</option>
             })}
           </select>
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* LEFT: overview + games */}
+        {/* LEFT */}
         <div className="grid gap-6 lg:col-span-8">
           <Card
             title="League overview"
-            right={
-              <Link href="/picks" className="text-sm underline">
-                Make picks →
-              </Link>
-            }
+            right={<Link href="/picks" className="text-sm underline">Make picks →</Link>}
           >
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-3">
@@ -325,12 +295,8 @@ function HomeInner() {
             title={`Week ${week} — Games`}
             right={
               <div className="flex items-center gap-4">
-                <Link href="/picks" className="text-sm underline">
-                  Make picks →
-                </Link>
-                <Link href="/scoreboard" className="text-sm underline">
-                  Scoreboard →
-                </Link>
+                <Link href="/picks" className="text-sm underline">Make picks →</Link>
+                <Link href="/scoreboard" className="text-sm underline">Scoreboard →</Link>
               </div>
             }
           >
@@ -344,17 +310,10 @@ function HomeInner() {
                   const awayWon = final && (Number(g.away.score) ?? -1) > (Number(g.home.score) ?? -1)
 
                   return (
-                    <article
-                      key={g.id}
-                      className="rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
-                    >
+                    <article key={g.id} className="rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
                       <div className="mb-2 flex items-center justify-between text-xs text-neutral-500">
-                        <span>
-                          {g.game_utc ? new Date(g.game_utc).toLocaleString() : ''} • Week {g.week}
-                        </span>
-                        <span className="text-[10px] uppercase tracking-wide">
-                          {(g.status || (isLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase()}
-                        </span>
+                        <span>{g.game_utc ? new Date(g.game_utc).toLocaleString() : ''} • Week {g.week}</span>
+                        <span className="text-[10px] uppercase tracking-wide">{(g.status || (isLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase()}</span>
                       </div>
 
                       <div className="flex items-center gap-3 md:gap-4">
@@ -366,13 +325,11 @@ function HomeInner() {
                               size="sm"
                               mdUpSize="xl"
                               fluid
-                              variant="chip"        // filled “schedule” look (Admin colors)
+                              variant="pill"     // use Admin palette in both light & dark
                               labelMode="abbrNick"
                               selected={!!homeWon}
                             />
-                          ) : (
-                            <SkeletonPill />
-                          )}
+                          ) : <SkeletonPill />}
                         </div>
                         <div className="text-neutral-400">—</div>
                         <div className="flex-1">
@@ -383,20 +340,16 @@ function HomeInner() {
                               size="sm"
                               mdUpSize="xl"
                               fluid
-                              variant="chip"
+                              variant="pill"
                               labelMode="abbrNick"
                               selected={!!awayWon}
                             />
-                          ) : (
-                            <SkeletonPill />
-                          )}
+                          ) : <SkeletonPill />}
                         </div>
                       </div>
 
                       {(g.home.score != null || g.away.score != null) && (
-                        <div className="mt-2 text-xs text-neutral-500">
-                          Score: {g.home.score ?? '—'} — {g.away.score ?? '—'}
-                        </div>
+                        <div className="mt-2 text-xs text-neutral-500">Score: {g.home.score ?? '—'} — {g.away.score ?? '—'}</div>
                       )}
                     </article>
                   )
@@ -406,16 +359,12 @@ function HomeInner() {
           </Card>
         </div>
 
-        {/* RIGHT: dense cards */}
-        <aside className="grid gap-4 lg:col-span-4">
+        {/* RIGHT — denser */}
+        <aside className="grid gap-3 lg:col-span-4">
           <Card
             title={`My picks — Week ${week}`}
-            right={
-              <Link href="/picks" className="text-sm underline">
-                Edit on Picks →
-              </Link>
-            }
-            dense
+            right={<Link href="/picks" className="text-sm underline">Edit on Picks →</Link>}
+            dense="tight"
           >
             {myPicks.length === 0 ? (
               <div className="text-sm text-neutral-500">No picks yet.</div>
@@ -437,9 +386,7 @@ function HomeInner() {
                           labelMode="abbrNick"
                           selected
                         />
-                      ) : (
-                        <SkeletonPill />
-                      )}
+                      ) : <SkeletonPill />}
                       <span className="text-xs text-neutral-500">{status}</span>
                     </li>
                   )
@@ -448,7 +395,7 @@ function HomeInner() {
             )}
           </Card>
 
-          <Card title="League picks (locked)" right={<span className="text-xs opacity-70">Finals only</span>} dense>
+          <Card title="League picks (locked)" right={<span className="text-xs opacity-70">Finals only</span>} dense="tight">
             {lockedByMember.length === 0 ? (
               <div className="text-sm text-neutral-500">No locked picks yet.</div>
             ) : (
@@ -467,30 +414,30 @@ function HomeInner() {
                         labelMode="abbrNick"
                         selected
                       />
-                    ) : (
-                      <SkeletonPill />
-                    )}
+                    ) : <SkeletonPill />}
                   </li>
                 ))}
               </ul>
             )}
           </Card>
 
-          <Card title="Standings — Mini" dense>
+          <Card title="Standings — Mini" dense="tight">
             {standingsMini.length === 0 ? (
               <div className="text-sm text-neutral-500">No standings yet.</div>
             ) : (
-              <ol className="grid gap-2 text-sm">
-                {standingsMini.map((r, i) => (
-                  <li key={r.id} className="flex items-center justify-between">
-                    <span className="truncate">
-                      <span className="mr-2 tabular-nums text-neutral-500">{i + 1}.</span>
-                      {r.name}
-                    </span>
-                    <span className="tabular-nums">{r.points} pts</span>
-                  </li>
-                ))}
-              </ol>
+              <div className="max-h-80 overflow-auto pr-1">
+                <ol className="grid gap-1.5 text-sm">
+                  {standingsMini.map((r, i) => (
+                    <li key={r.id} className="flex items-center justify-between">
+                      <span className="truncate">
+                        <span className="mr-2 tabular-nums text-neutral-500">{i + 1}.</span>
+                        {r.name}
+                      </span>
+                      <span className="tabular-nums">{r.points} pts</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
             )}
           </Card>
         </aside>
