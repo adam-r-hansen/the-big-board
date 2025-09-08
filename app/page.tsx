@@ -8,7 +8,6 @@ import { buildTeamIndex, type Team as TeamType } from '@/lib/teamColors'
 
 type League = { id: string; name: string; season: number }
 type Team = TeamType
-
 type Game = {
   id: string
   season: number
@@ -18,7 +17,6 @@ type Game = {
   home: { id?: string; score?: number | null }
   away: { id?: string; score?: number | null }
 }
-
 type PickRow = { id: string; team_id: string; game_id: string | null }
 type MemberPick = { profile_id: string; display_name: string; team_id: string; game_id?: string | null }
 
@@ -104,7 +102,7 @@ function HomeInner() {
   const [week, setWeek] = useState<number>(1)
 
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
-  const teamIndex = useMemo(() => buildTeamIndex(teamMap), [teamMap])
+  const teamIndex = useMemo(() => buildTeamIndex(teamMap as any), [teamMap])
   const colorsReady = useMemo(() => Object.keys(teamIndex).length > 0, [teamIndex])
 
   const [games, setGames] = useState<Game[]>([])
@@ -114,7 +112,6 @@ function HomeInner() {
   const [weekPoints, setWeekPoints] = useState<number | null>(null)
   const [msg, setMsg] = useState('')
 
-  // bootstrap
   useEffect(() => {
     ;(async () => {
       const lj = await safeJson<{ leagues: League[] }>(fetch('/api/my-leagues', { cache: 'no-store' }))
@@ -130,7 +127,6 @@ function HomeInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // per week loads
   useEffect(() => {
     if (!season || !week) return
     ;(async () => {
@@ -161,8 +157,6 @@ function HomeInner() {
 
         // locked picks (robust)
         const finals = new Set(gamesNorm.filter(isLocked).map((gm) => gm.id))
-
-        // 1) dedicated endpoint
         let locked: MemberPick[] = []
         const direct = await safeJson<any>(
           fetch(`/api/league/locked-picks?leagueId=${leagueId || ''}&season=${season}&week=${week}`, { cache: 'no-store' }),
@@ -175,7 +169,6 @@ function HomeInner() {
             game_id: row.game_id ?? null,
           }))
         } else {
-          // 2) fallback: all league picks, filtered to locked games
           const all = await safeJson<any>(
             fetch(`/api/league/picks?leagueId=${leagueId || ''}&season=${season}&week=${week}`, { cache: 'no-store' }),
           )
@@ -189,7 +182,6 @@ function HomeInner() {
               game_id: r.game_id ?? null,
             }))
         }
-        // de-dupe by member (latest wins)
         const dedup = new Map<string, MemberPick>()
         for (const row of locked) dedup.set(row.profile_id, row)
         setLockedByMember([...dedup.values()])
@@ -344,7 +336,7 @@ function HomeInner() {
           </Card>
         </div>
 
-        {/* RIGHT — very dense */}
+        {/* RIGHT — dense */}
         <aside className="grid gap-2 lg:col-span-4">
           <Card
             title={`My picks — Week ${week}`}

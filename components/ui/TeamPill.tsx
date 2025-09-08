@@ -1,117 +1,122 @@
+// components/ui/TeamPill.tsx
 'use client'
 
-import React, { useMemo } from 'react'
-import { resolveTeamUi, type Team as TeamRecord } from '@/lib/teamColors'
+import { useEffect, useMemo, useState } from 'react'
+import type { TeamRecord } from '@/lib/teamColors'
+import { resolveTeamUi } from '@/lib/teamColors'
 
 type Size = 'sm' | 'md' | 'lg' | 'xl'
-type Variant = 'pill' | 'chip' | 'subtle'        // allow 'subtle'
-type LabelMode = 'abbr' | 'abbrNick' | 'full'
+type Variant = 'subtle' | 'pill' | 'chip'
+type LabelMode = 'abbr' | 'name' | 'abbrNick' | 'cityNick'
 
 type Props = {
-  /** New preferred shape */
-  team?: TeamRecord
-  /** Back-compat: pages can pass teamId + teamIndex */
   teamId?: string
-  teamIndex?: Record<string, TeamRecord>
-
+  teamIndex: Record<string, TeamRecord>
+  team?: TeamRecord
   size?: Size
-  /** optional larger size applied at md+ (e.g. 'xl') */
   mdUpSize?: Size
-  /** visual style */
-  variant?: Variant
-  /** label mode (abbr on mobile, full on desktop for abbrNick/full) */
-  labelMode?: LabelMode
-  /** force consistent width */
-  fixedWidth?: boolean
-  /** stretch to container width */
   fluid?: boolean
-  /** bold border + light shadow */
+  fixedWidth?: boolean
+  variant?: Variant
   selected?: boolean
-  /** disables pointer/click; dims pill */
   disabled?: boolean
-  title?: string
+  labelMode?: LabelMode
   className?: string
-  /** if present, we render a <button> */
-  onClick?: React.MouseEventHandler<HTMLButtonElement>
+  title?: string
+  onClick?: () => void
+}
+
+function useIsDark() {
+  const [dark, setDark] = useState(false)
+  useEffect(() => {
+    const root = document.documentElement
+    const query = window.matchMedia('(prefers-color-scheme: dark)')
+    const sync = () => setDark(root.classList.contains('dark') || query.matches)
+    sync()
+    const cb = () => sync()
+    query.addEventListener?.('change', cb)
+    const obs = new MutationObserver(sync)
+    obs.observe(root, { attributes: true, attributeFilter: ['class'] })
+    return () => {
+      query.removeEventListener?.('change', cb)
+      obs.disconnect()
+    }
+  }, [])
+  return dark
 }
 
 export default function TeamPill({
-  team,
   teamId,
   teamIndex,
+  team,
   size = 'md',
   mdUpSize,
-  variant = 'pill',
+  fluid,
+  fixedWidth,
+  variant = 'subtle',
+  selected,
+  disabled,
   labelMode = 'abbrNick',
-  fixedWidth = false,
-  fluid = false,
-  selected = false,
-  disabled = false,
-  title,
   className = '',
+  title,
   onClick,
 }: Props) {
-  const resolvedTeam = useMemo(
-    () => team ?? (teamId && teamIndex ? teamIndex[teamId] : undefined),
-    [team, teamId, teamIndex]
-  )
+  const isDark = useIsDark()
+  const rec = useMemo(() => team || (teamId ? teamIndex[teamId] : undefined), [team, teamId, teamIndex])
 
-  const ui = resolveTeamUi(resolvedTeam)
-  const Component: any = onClick ? 'button' : 'span'
+  const ui = resolveTeamUi(rec)
+  const color = isDark ? ui.dark.color : ui.light.color
 
-  const base =
-    'inline-flex items-center justify-center rounded-xl border px-3 py-2 font-semibold overflow-hidden text-ellipsis whitespace-nowrap transition-[transform,box-shadow]'
-  const heights: Record<Size, string> = {
-    sm: 'h-9 text-xs',
-    md: 'h-10 text-sm',
-    lg: 'h-12 text-base',
-    xl: 'h-14 text-lg',
-  }
-  const mdHeights = mdUpSize ? `md:${heights[mdUpSize]}` : ''
-  const width = fluid ? 'w-full' : fixedWidth ? 'w-[7.5rem] md:w-[9.5rem]' : ''
-  const border = selected ? 'border-2 shadow-sm' : 'border'
-  const state = disabled ? 'opacity-60 pointer-events-none' : onClick ? 'cursor-pointer' : ''
+  // label
+  const abbr = rec?.abbr?.toUpperCase()
+  const nick = rec?.nickname
+  const city = rec?.city
+  const full = rec?.name || (city && nick ? `${city} ${nick}` : nick || abbr || '—')
 
-  // Style mapping driven by Admin colors via resolveTeamUi
-  const styles: React.CSSProperties = {
-    borderColor: ui.primary,
-    color: ui.primary,
-  }
+  const label =
+    labelMode === 'abbr'
+      ? abbr || full
+      : labelMode === 'name'
+      ? full
+      : labelMode === 'cityNick'
+      ? city && nick
+        ? `${city} ${nick}`
+        : full
+      : // abbrNick
+        abbr && nick
+      ? `${abbr} ${nick}`
+      : full
 
-  // Variant visuals
-  if (variant === 'pill') {
-    styles.background = `linear-gradient(0deg, ${ui.secondary}14, transparent)` // ~8% tint
-  } else if (variant === 'subtle') {
-    styles.background = `linear-gradient(0deg, ${ui.secondary}0D, transparent)` // ~5% tint
-  } // 'chip' => no background
+  // sizing
+  const baseH = { sm: 'h-8 text-sm', md: 'h-10 text-base', lg: 'h-12 text-lg', xl: 'h-14 text-xl' }[size]
+  const mdH = mdUpSize ? { sm: 'md:h-8 md:text-sm', md: 'md:h-10 md:text-base', lg: 'md:h-12 md:text-lg', xl: 'md:h-14 md:text-xl' }[mdUpSize] : ''
+  const width = fixedWidth ? 'w-[220px]' : fluid ? 'w-full' : 'w-auto'
+  const cursor = disabled ? 'cursor-not-allowed opacity-60' : onClick ? 'cursor-pointer' : ''
+  const sel = selected ? 'ring-1 ring-offset-0' : ''
 
-  const abbr = resolvedTeam?.abbreviation || '—'
-  const full = resolvedTeam?.name || abbr
+  // variant
+  const common =
+    'inline-flex items-center justify-center rounded-full border px-4 font-semibold transition-colors whitespace-nowrap overflow-hidden text-ellipsis'
+  const style = { borderColor: color, color } as React.CSSProperties
+
+  const vClass =
+    variant === 'pill'
+      ? 'bg-white dark:bg-neutral-950'
+      : variant === 'chip'
+      ? 'bg-transparent'
+      : // "subtle": faint fill
+        'bg-gradient-to-b from-white to-neutral-50 dark:from-neutral-950 dark:to-neutral-900'
 
   return (
-    <Component
-      type={onClick ? 'button' : undefined}
+    <button
+      type="button"
+      className={`${common} ${baseH} ${mdH} ${width} ${cursor} ${sel} ${vClass} ${className}`}
+      style={style}
       title={title || full}
-      className={[base, heights[size], mdHeights, width, border, state, className].join(' ')}
-      style={styles}
-      onClick={onClick}
-      disabled={onClick ? disabled : undefined}
+      disabled={disabled}
+      onClick={disabled ? undefined : onClick}
     >
-      <span className="truncate max-w-full">
-        {labelMode === 'full' ? (
-          <>
-            <span className="md:hidden">{abbr}</span>
-            <span className="hidden md:inline">{full}</span>
-          </>
-        ) : labelMode === 'abbrNick' ? (
-          <>
-            <span className="md:hidden">{abbr}</span>
-            <span className="hidden md:inline">{full}</span>
-          </>
-        ) : (
-          <>{abbr}</>
-        )}
-      </span>
-    </Component>
+      <span className="truncate">{label}</span>
+    </button>
   )
 }
