@@ -4,10 +4,6 @@
 /**
  * Home: overview + scoreboard (left 2/3), and
  * My Picks / Standings mini (right 1/3).
- *
- * Team pills:
- *  - Compact on mobile (abbr)
- *  - Larger on desktop (full/short name) via labelMode="abbrFull" + mdUpSize
  */
 
 import { Suspense, useEffect, useMemo, useState } from 'react'
@@ -146,7 +142,7 @@ function HomeInner() {
   const singleLeague = leagues.length === 1
   const noLeagues = leagues.length === 0
 
-  // base data
+  // load base data
   useEffect(() => {
     ;(async () => {
       try {
@@ -197,7 +193,7 @@ function HomeInner() {
     })()
   }, [leagueId, season, week])
 
-  // maps & computed
+  // maps for quick lookups
   const gameById = useMemo(() => {
     const m = new Map<string, Game>()
     for (const g of games) m.set(g.id, g)
@@ -232,10 +228,10 @@ function HomeInner() {
     <TeamPill
       teamId={teamId}
       teamIndex={teamIndex}
-      size="sm"           // mobile
-      mdUpSize="xl"       // desktop bigger
+      size="sm"            // mobile
+      mdUpSize="xl"        // desktop bigger
       variant="subtle"
-      labelMode="abbrFull" // abbr on mobile, short/full on md+
+      labelMode="abbrNick" // NEW: abbr on mobile, nickname on desktop
     />
   )
 
@@ -248,7 +244,7 @@ function HomeInner() {
       variant="subtle"
       status={(opts?.status || '') as any}
       points={opts?.points ?? null}
-      labelMode="abbrFull"
+      labelMode="abbrNick"
     />
   )
 
@@ -355,9 +351,9 @@ function HomeInner() {
               }
             >
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Stat label="Picks used" value={picksUsed} sub={`of ${picksAllowed}`} />
+                <Stat label="Picks used" value={picksUsed} sub={`of ${2 + (wrinkleExtra || 0)}`} />
                 <Stat label="Points (wk)" value={weekPoints} />
-                <Stat label="Remaining" value={Math.max(0, picksAllowed - picksUsed)} />
+                <Stat label="Remaining" value={Math.max(0, (2 + (wrinkleExtra || 0)) - picksUsed)} />
                 <Stat label="Locked" value={picksLocked} />
               </div>
             </Card>
@@ -456,7 +452,7 @@ function HomeInner() {
               )}
             </Card>
 
-            {/* Standings mini (all members) */}
+            {/* Standings mini (show all) */}
             <Card
               title="Standings"
               right={
@@ -510,3 +506,4 @@ function Stat({ label, value, sub }: { label: string; value: number | string; su
     </div>
   )
 }
+

@@ -22,11 +22,12 @@ type Props = {
   /**
    * label rendering:
    *  - 'abbr'        = "PHI"
-   *  - 'short'       = "Eagles"
-   *  - 'name'        = "Philadelphia Eagles"
+   *  - 'short'       = "Eagles" or "Los Angeles Chargers" (whatever is in short_name)
+   *  - 'name'        = full team name
    *  - 'abbrFull'    = "PHI" on mobile, short/name on md+ (responsive)
+   *  - 'abbrNick'    = "PHI" on mobile, **nickname** (last word) on md+  ← recommended
    */
-  labelMode?: 'abbr' | 'short' | 'name' | 'abbrFull'
+  labelMode?: 'abbr' | 'short' | 'name' | 'abbrFull' | 'abbrNick'
   className?: string
   /** makes border thicker */
   selected?: boolean
@@ -39,12 +40,11 @@ function cls(...a: Array<string | false | null | undefined>) {
   return a.filter(Boolean).join(' ')
 }
 
-/** Fixed, uniform dimensions per token (w = fixed, ellipsis for overflow) */
+/** Fixed, uniform dimensions per token (width is fixed; text truncates if too long) */
 function dimsTokens(sz: Size): string[] {
   switch (sz) {
     case 'xl':
-      // Big and obvious on desktop
-      return ['w-40', 'h-12', 'text-base']   // ~160px wide pill
+      return ['w-36', 'h-12', 'text-base']   // 144px
     case 'lg':
       return ['w-28', 'h-11', 'text-base']
     case 'sm':
@@ -53,6 +53,16 @@ function dimsTokens(sz: Size): string[] {
     default:
       return ['w-24', 'h-10', 'text-sm']
   }
+}
+
+function nicknameFrom(team?: TeamLike): string | undefined {
+  if (!team) return undefined
+  const src = team.short_name || team.name || team.abbreviation
+  if (!src) return undefined
+  const parts = String(src).trim().split(/\s+/)
+  // If there's just one token (e.g., "Rams"), use it; else use last token (e.g., "Buccaneers")
+  const nick = parts.length ? parts[parts.length - 1] : src
+  return nick
 }
 
 export default function TeamPill({
@@ -96,12 +106,13 @@ export default function TeamPill({
   const border = selected ? 'border-2' : 'border'
   const cursor = disabled ? 'opacity-60 cursor-not-allowed' : ''
 
-  // Build label (supports responsive abbr → full on md+)
+  // Build label
   const labelNode = useMemo(() => {
     const rt = resolvedTeam
     const abbr = (rt?.abbreviation || '—').toUpperCase()
     const short = rt?.short_name || rt?.name || abbr
     const full = rt?.name || short
+    const nick = nicknameFrom(rt) || abbr
 
     switch (labelMode) {
       case 'name':
@@ -115,11 +126,21 @@ export default function TeamPill({
             <span className="hidden md:inline">{short}</span>
           </span>
         )
+      case 'abbrNick':
+        return (
+          <span className="truncate max-w-full">
+            <span className="md:hidden">{abbr}</span>
+            <span className="hidden md:inline">{nick}</span>
+          </span>
+        )
       case 'abbr':
       default:
         return <span className="truncate max-w-full">{abbr}</span>
     }
   }, [resolvedTeam, labelMode])
+
+  const title =
+    (resolvedTeam?.name || resolvedTeam?.short_name || resolvedTeam?.abbreviation) || undefined
 
   return (
     <span
@@ -131,7 +152,7 @@ export default function TeamPill({
           ? `color-mix(in srgb, ${color} 12%, transparent)`
           : 'transparent',
       }}
-      title={status || undefined}
+      title={title}
       aria-pressed={selected || undefined}
     >
       {labelNode}
