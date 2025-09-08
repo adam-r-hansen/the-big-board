@@ -1,3 +1,4 @@
+// app/picks/page.tsx
 'use client'
 
 /**
@@ -8,7 +9,6 @@
  */
 
 import { Suspense, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import TeamPill from '@/components/ui/TeamPill'
 import { buildTeamIndex, type Team as TeamType } from '@/lib/teamColors'
 
@@ -85,7 +85,7 @@ export default function PicksPage() {
     <Suspense
       fallback={
         <main className="mx-auto max-w-6xl px-4 py-6">
-          <h1 className="text-xl font-bold mb-3">Picks</h1>
+          <h1 className="mb-3 text-xl font-bold">Picks</h1>
           <div className="text-neutral-600">Loading…</div>
         </main>
       }
@@ -231,55 +231,31 @@ function PicksInner() {
     }
   }
 
-  const scoreboardPill = (teamId?: string, selected?: boolean, disabled?: boolean) => (
-    <button
-      type="button"
-      className="w-full"
-      onClick={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        // find game by walking up in caller
-      }}
-      disabled={disabled}
-      // we wrap TeamPill below; handler wired per-row to know the game
-    >
-      <TeamPill
-        teamId={teamId}
-        teamIndex={teamIndex}
-        size="sm"
-        mdUpSize="xl"
-        fluid
-        variant="subtle"
-        labelMode="abbrNick"
-        selected={!!selected}
-        disabled={!!disabled}
-      />
-    </button>
-  )
-
-  const pickPill = (teamId?: string) => (
-    <TeamPill
-      teamId={teamId}
-      teamIndex={teamIndex}
-      size="sm"
-      mdUpSize="lg"  // fixed in sidebar
-      variant="subtle"
-      labelMode="abbrNick"
-    />
-  )
-
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
+      {/* Page header — no secondary nav; top app nav handles it */}
       <section className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">Picks</h1>
 
         <div className="ml-auto flex items-center gap-3">
-          <Link className="underline text-sm" href="/">Home</Link>
-          <Link className="underline text-sm" href="/standings">Standings</Link>
+          {/* League select (when multiple leagues exist) */}
+          {leagues.length > 1 && (
+            <select
+              className="rounded border bg-transparent px-2 py-1"
+              value={leagueId}
+              onChange={(e) => setLeagueId(e.target.value)}
+            >
+              {leagues.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          )}
 
-        {/* Season & Week controls */}
+          {/* Season */}
           <select
-            className="border rounded px-2 py-1 bg-transparent"
+            className="rounded border bg-transparent px-2 py-1"
             value={season}
             onChange={(e) => setSeason(Number(e.target.value))}
           >
@@ -293,8 +269,9 @@ function PicksInner() {
             })}
           </select>
 
+          {/* Week */}
           <select
-            className="border rounded px-2 py-1 bg-transparent"
+            className="rounded border bg-transparent px-2 py-1"
             value={week}
             onChange={(e) => setWeek(Number(e.target.value))}
           >
@@ -310,9 +287,9 @@ function PicksInner() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* LEFT: games */}
-        <div className="lg:col-span-8 grid gap-6">
+        <div className="grid gap-6 lg:col-span-8">
           <Card title={`Week ${week} — Games`}>
             {games.length === 0 ? (
               <div className="text-sm text-neutral-500">No games.</div>
@@ -326,7 +303,7 @@ function PicksInner() {
                   return (
                     <article
                       key={g.id}
-                      className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4"
+                      className="rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
                     >
                       <div className="mb-2 flex items-center justify-between text-xs text-neutral-500">
                         <span>
@@ -337,11 +314,14 @@ function PicksInner() {
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 md:gap-4">
                         <div className="flex-1">
-                          <div
+                          <button
+                            type="button"
+                            disabled={!canClickEither}
                             onClick={() => canClickEither && addPick(g, g.home.id)}
-                            className="cursor-pointer"
+                            className="w-full"
+                            aria-label="Pick home team"
                           >
                             <TeamPill
                               teamId={g.home.id}
@@ -354,15 +334,18 @@ function PicksInner() {
                               selected={pickedTeam === g.home.id}
                               disabled={!canClickEither}
                             />
-                          </div>
+                          </button>
                         </div>
 
                         <div className="text-neutral-400">—</div>
 
                         <div className="flex-1">
-                          <div
+                          <button
+                            type="button"
+                            disabled={!canClickEither}
                             onClick={() => canClickEither && addPick(g, g.away.id)}
-                            className="cursor-pointer"
+                            className="w-full"
+                            aria-label="Pick away team"
                           >
                             <TeamPill
                               teamId={g.away.id}
@@ -375,7 +358,7 @@ function PicksInner() {
                               selected={pickedTeam === g.away.id}
                               disabled={!canClickEither}
                             />
-                          </div>
+                          </button>
                         </div>
                       </div>
                     </article>
@@ -387,7 +370,7 @@ function PicksInner() {
         </div>
 
         {/* RIGHT: my picks */}
-        <aside className="lg:col-span-4 grid gap-6">
+        <aside className="grid gap-6 lg:col-span-4">
           <Card
             title={`My picks — Week ${week}`}
             right={<span className="text-xs opacity-70">{picksUsed} / {picksAllowed}</span>}
@@ -401,9 +384,18 @@ function PicksInner() {
                   const locked = gameLocked(g)
                   return (
                     <li key={p.id} className="flex items-center justify-between gap-3">
-                      {pickPill(p.team_id)}
+                      <TeamPill
+                        teamId={p.team_id}
+                        teamIndex={teamIndex}
+                        size="sm"
+                        mdUpSize="lg"
+                        fixedWidth
+                        variant="subtle"
+                        labelMode="abbrNick"
+                        selected
+                      />
                       <button
-                        className="text-xs rounded-md border px-2 py-1 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
+                        className="rounded-md border px-2 py-1 text-xs hover:bg-neutral-50 disabled:opacity-50 dark:hover:bg-neutral-900"
                         onClick={() => removePick(p)}
                         disabled={locked}
                         title={locked ? 'Locked' : 'Remove pick'}
@@ -419,8 +411,7 @@ function PicksInner() {
         </aside>
       </div>
 
-      {msg && <div className="text-xs mt-2">{msg}</div>}
+      {msg && <div className="mt-2 text-xs">{msg}</div>}
     </main>
   )
 }
-
