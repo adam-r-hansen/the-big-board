@@ -7,22 +7,24 @@ import { buildTeamIndex, type Team as TeamType } from '@/lib/teamColors'
 type League = { id: string; name: string; season: number }
 type Team = TeamType
 
+type PickRow = {
+  week?: number
+  team_id?: string
+  result?: 'W' | 'L' | 'T' | null
+  score_str?: string | null
+  points?: number | null
+  wrinkle?: boolean | null
+}
+
 type MyStatsPayload = {
   picks_total?: number
   picks_correct?: number
-  win_pct?: number // can be 0..100 or 0..1; we normalize
+  win_pct?: number // 0..100 or 0..1
   longest_streak?: number
   points_total?: number
   avg_points_per_pick?: number
   wrinkle_points?: number
-  pick_log?: Array<{
-    week?: number
-    team_id?: string
-    result?: 'W' | 'L' | 'T' | null
-    score_str?: string | null
-    points?: number | null
-    wrinkle?: boolean | null
-  }>
+  pick_log?: PickRow[]
 }
 
 type LeagueBoards = {
@@ -30,6 +32,8 @@ type LeagueBoards = {
   accuracy?: Array<{ display_name: string; correct?: number; decided?: number; pct?: number }>
   streaks?: Array<{ display_name: string; streak?: number }>
 }
+
+/* ------------------------ UI bits ------------------------ */
 
 function Card({
   children,
@@ -58,27 +62,89 @@ function Card({
   )
 }
 
-/* ---------- number safety helpers ---------- */
-const asNumber = (v: unknown): number => {
-  const n = typeof v === 'string' ? Number(v) : (v as number)
-  return Number.isFinite(n) ? n : NaN
+/* ------------------------ number safety ------------------------ */
+
+const n = (v: unknown): number => {
+  const x = typeof v === 'string' ? Number(v) : (v as number)
+  return Number.isFinite(x) ? x : NaN
 }
-const intStr = (v: unknown): string => {
-  const n = asNumber(v)
-  return Number.isFinite(n) ? String(Math.trunc(n)) : '—'
-}
-const fixedStr = (v: unknown, dp = 2): string => {
-  const n = asNumber(v)
-  return Number.isFinite(n) ? n.toFixed(dp) : '—'
-}
+const intStr = (v: unknown): string => (Number.isFinite(n(v)) ? String(Math.trunc(n(v))) : '—')
+const fixedStr = (v: unknown, dp = 2): string => (Number.isFinite(n(v)) ? n(v).toFixed(dp) : '—')
 const pctStr = (v: unknown): string => {
-  let n = asNumber(v)
-  if (!Number.isFinite(n)) return '—'
-  if (n <= 1) n = n * 100
-  return `${n.toFixed(1)}%`
+  let x = n(v)
+  if (!Number.isFinite(x)) return '—'
+  if (x <= 1) x *= 100
+  return `${x.toFixed(1)}%`
 }
 
-/* ---------- main page ---------- */
+/* ------------------------ helpers: derive stats ------------------------ */
+
+function deriveMyStats(base: Partial<MyStatsPayload>): MyStatsPayload {
+  const rows: PickRow[] = Array.isArray(base.pick_log) ? base.pick_log : []
+
+  const picks_total =
+    Number.isFinite(n(base.picks_total)) ? n(base.picks_total) : rows.length
+
+  const picks_correct =
+    Number.isFinite(n(base.picks_correct))
+      ? n(base.picks_correct)
+      : rows.reduce((acc, r) => acc + (r.result === 'W' ? 1 : 0), 0)
+
+  const points_total =
+    Number.isFinite(n(base.points_total))
+      ? n(base.points_total)
+      : rows.reduce((acc, r) => acc + (Number.isFinite(n(r.points)) ? n(r.points) : 0), 0)
+
+  const avg_points_per_pick =
+    Number.isFinite(n(base.avg_points_per_pick))
+      ? n(base.avg_points_per_pick)
+      : picks_total > 0
+      ? points_total / picks_total
+      : NaN
+
+  const wrinkle_points =
+    Number.isFinite(n(base.wrinkle_points))
+      ? n(base.wrinkle_points)
+      : rows.reduce((acc, r) => acc + (r.wrinkle && Number.isFinite(n(r.points)) ? n(r.points) : 0), 0)
+
+  // longest streak of consecutive W (simple pass; if ties should break streak, adjust here)
+  let longest = Number.isFinite(n(base.longest_streak)) ? n(base.longest_streak) : NaN
+  if (!Number.isFinite(longest)) {
+    let cur = 0
+    longest = 0
+    // sort by week if provided, else by insertion
+    const sorted = [...rows].sort((a, b) => (n(a.week) || 0) - (n(b.week) || 0))
+    for (const r of sorted) {
+      if (r.result === 'W') {
+        cur += 1
+        if (cur > longest) longest = cur
+      } else if (r.result === 'L' || r.result === 'T') {
+        cur = 0
+      }
+    }
+  }
+
+  let win_pct =
+    Number.isFinite(n(base.win_pct))
+      ? n(base.win_pct)
+      : picks_total > 0
+      ? (picks_correct / picks_total) * 100
+      : NaN
+
+  return {
+    picks_total,
+    picks_correct,
+    win_pct,
+    longest_streak: longest,
+    points_total,
+    avg_points_per_pick,
+    wrinkle_points,
+    pick_log: rows,
+  }
+}
+
+/* ------------------------ main page ------------------------ */
+
 export default function StatsPage() {
   return (
     <Suspense
@@ -127,30 +193,54 @@ function StatsInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // load "My Season" — IMPORTANT: include leagueId
+  // My Season — try (leagueId+season). If empty or fails, retry without leagueId.
   useEffect(() => {
-    if (!leagueId || !season) return
+    if (!season) return
     ;(async () => {
       setMsg('')
+      const tryOnce = async (url: string) => {
+        const res = await fetch(url, { cache: 'no-store' })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      }
       try {
-        const res = await fetch(`/api/my-stats?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
-        const j = await res.json()
+        const withLeague = leagueId ? `/api/my-stats?leagueId=${leagueId}&season=${season}` : `/api/my-stats?season=${season}`
+        let j: any
+        try {
+          j = await tryOnce(withLeague)
+        } catch {
+          // fallback: some installs only accept ?season
+          j = await tryOnce(`/api/my-stats?season=${season}`)
+        }
 
-        // accept several shapes: {…}, {stats:{…}}, {data:{…}}
-        const base: any = j?.stats ?? j?.data ?? j ?? {}
-        // pick log may live in base.pick_log or base.rows
-        const pick_log = Array.isArray(base.pick_log) ? base.pick_log : Array.isArray(base.rows) ? base.rows : []
-        const payload: MyStatsPayload = { ...base, pick_log }
+        // Normalize shape & keys
+        const root: any = j?.stats ?? j?.data ?? j ?? {}
+        const pick_log: PickRow[] =
+          (Array.isArray(root.pick_log) && root.pick_log) ||
+          (Array.isArray(root.rows) && root.rows) ||
+          []
 
-        setMine(payload)
+        const base: Partial<MyStatsPayload> = {
+          picks_total: root.picks_total ?? root.picks,
+          picks_correct: root.picks_correct ?? root.correct,
+          win_pct: root.win_pct ?? root.winPct,
+          longest_streak: root.longest_streak ?? root.longestStreak,
+          points_total: root.points_total ?? root.points,
+          avg_points_per_pick: root.avg_points_per_pick ?? root.avgPerPick,
+          wrinkle_points: root.wrinkle_points ?? root.wrinklePoints,
+          pick_log,
+        }
+
+        setMine(deriveMyStats(base))
       } catch (e: any) {
-        setMine({})
+        console.warn('my-stats load failed', e)
+        setMine(deriveMyStats({ pick_log: [] }))
         setMsg(e?.message || 'Failed to load my stats')
       }
     })()
   }, [leagueId, season])
 
-  // load league leaderboards
+  // League boards
   useEffect(() => {
     if (!leagueId || !season) return
     ;(async () => {
@@ -159,23 +249,22 @@ function StatsInner() {
         if (includeLive) qs.set('includeLive', '1')
         const j = await fetch(`/api/league-stats?${qs.toString()}`, { cache: 'no-store' }).then(r => r.json())
 
-        // accept shapes: top-level, or {data:{…}}
         const root: any = j?.data ?? j ?? {}
         const payload: LeagueBoards = {
-          avg_points: Array.isArray(root.avg_points) ? root.avg_points : [],
-          accuracy: Array.isArray(root.accuracy) ? root.accuracy : [],
-          streaks: Array.isArray(root.streaks) ? root.streaks : [],
+          avg_points: Array.isArray(root.avg_points) ? root.avg_points : Array.isArray(root.rows?.avg_points) ? root.rows.avg_points : [],
+          accuracy: Array.isArray(root.accuracy) ? root.accuracy : Array.isArray(root.rows?.accuracy) ? root.rows.accuracy : [],
+          streaks: Array.isArray(root.streaks) ? root.streaks : Array.isArray(root.rows?.streaks) ? root.rows.streaks : [],
         }
         setBoards(payload)
       } catch (e: any) {
-        setBoards({})
+        console.warn('league-stats load failed', e)
+        setBoards({ avg_points: [], accuracy: [], streaks: [] })
         setMsg(e?.message || 'Failed to load league stats')
       }
     })()
   }, [leagueId, season, includeLive])
 
-  // Render helpers
-  const my = mine || {}
+  const my = mine || { pick_log: [] }
 
   const metrics = [
     { label: 'Picks', value: intStr(my.picks_total) },
@@ -191,11 +280,12 @@ function StatsInner() {
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
-      {/* Page header (no extra nav links; SiteHeader handles top nav) */}
+      {/* Header (no extra in-page nav; SiteHeader has global nav) */}
       <section className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">Stats</h1>
 
         <div className="ml-auto flex items-center gap-3">
+          {/* Season */}
           <select
             className="border rounded px-2 py-1 bg-transparent"
             value={season}
@@ -211,6 +301,7 @@ function StatsInner() {
             })}
           </select>
 
+          {/* League */}
           <select
             className="border rounded px-2 py-1 bg-transparent"
             value={leagueId}
@@ -277,7 +368,7 @@ function StatsInner() {
                   ) : (
                     pickLog.map((r, i) => (
                       <tr key={i} className="border-t">
-                        <td className="py-2 pr-3">{r.week ?? '—'}</td>
+                        <td className="py-2 pr-3">{Number.isFinite(n(r.week)) ? Math.trunc(n(r.week)) : '—'}</td>
                         <td className="py-2 pr-3">
                           <div className="max-w-[8rem]">
                             <TeamPill
@@ -326,8 +417,8 @@ function StatsInner() {
           >
             <BoardTable
               rows={(boards?.accuracy || []).map((r) => {
-                const decided = asNumber(r.decided)
-                const correct = asNumber(r.correct)
+                const decided = n(r.decided)
+                const correct = n(r.correct)
                 const pct = Number.isFinite(decided) && decided > 0 ? (correct / decided) * 100 : NaN
                 return {
                   name: r.display_name,
