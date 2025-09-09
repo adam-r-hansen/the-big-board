@@ -9,11 +9,21 @@ export default function MePage() {
   const [loading, setLoading] = useState<boolean>(true)
 
   useEffect(() => {
-    const sb = createClient()
-    sb.auth.getUser().then((res) => {
-      const userEmail = res?.data?.user?.email ?? null
-      setEmail(userEmail)
-    }).finally(() => setLoading(false))
+    let mounted = true
+    ;(async () => {
+      try {
+        const sb = createClient()
+        const r = await sb.auth.getUser()
+        if (!mounted) return
+        const userEmail = r?.data?.user?.email ?? null
+        setEmail(userEmail)
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    })()
+    return () => {
+      mounted = false
+    }
   }, [])
 
   return (
