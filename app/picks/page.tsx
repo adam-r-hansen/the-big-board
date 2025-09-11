@@ -6,10 +6,51 @@ import Link from 'next/link'
 import SpecialPicksCard from '@/components/SpecialPicksCard'
 
 type League = { id: string; name: string; season: number }
-type Team = { id: string; abbreviation: string | null; name?: string | null; color_primary?: string | null; color_secondary?: string | null; logo?: string | null; logo_dark?: string | null }
+type Team = {
+  id: string
+  abbreviation: string | null
+  name?: string | null
+  color_primary?: string | null
+  color_secondary?: string | null
+  logo?: string | null
+  logo_dark?: string | null
+}
 type TeamLike = { id?: string; abbreviation?: string; name?: string; color_primary?: string; color_secondary?: string; logo?: string; logo_dark?: string }
-type Game = { id: string; season: number; week: number; game_utc: string; status?: string; home: { id?: string; abbr?: string | null }; away: { id?: string; abbr?: string | null } }
+type Game = {
+  id: string
+  season: number
+  week: number
+  game_utc: string
+  status?: string
+  home: { id?: string; abbr?: string | null }
+  away: { id?: string; abbr?: string | null }
+}
 type Pick = { id: string; team_id: string; game_id: string | null }
+
+/** NFL helper: Thursday after Labor Day (Labor Day = first Monday in September) */
+function nflWeek1ThursdayUTC(season: number) {
+  // Build date in local time then convert; precision is plenty for week calc
+  const d = new Date(Date.UTC(season, 8, 1, 0, 0, 0)) // Sept 1, <season> @ 00:00 UTC
+  // Find first Monday in September
+  const day = d.getUTCDay() // 0=Sun..6=Sat
+  const offsetToMonday = (8 - day) % 7 // days to next Monday (0 if already Monday)
+  d.setUTCDate(d.getUTCDate() + offsetToMonday)
+  // Now d is Labor Day (Monday). Week 1 starts Thursday after Labor Day.
+  d.setUTCDate(d.getUTCDate() + 3) // Thursday
+  d.setUTCHours(0, 0, 0, 0)
+  return d
+}
+
+/** Guess current NFL week: clamp 1..18 */
+function guessCurrentNflWeek(season: number): number {
+  const week1 = nflWeek1ThursdayUTC(season).getTime()
+  const now = Date.now()
+  if (now <= week1) return 1
+  const msPerWeek = 7 * 24 * 60 * 60 * 1000
+  const delta = now - week1
+  const w = 1 + Math.floor(delta / msPerWeek)
+  return Math.max(1, Math.min(18, w))
+}
 
 function TeamButton({ team, disabled, picked, onClick }: { team?: TeamLike; disabled?: boolean; picked?: boolean; onClick?: () => void }) {
   const abbr = team?.abbreviation ?? '—'
@@ -64,17 +105,18 @@ export default function PicksPage() {
   const [invite, setInvite] = useState('')
   const [joining, setJoining] = useState(false)
 
+  // --- Load leagues
   async function loadLeagues() {
     try {
       const j = await fetch('/api/my-leagues', { cache: 'no-store' }).then(r => r.json())
       const ls: League[] = j.leagues || []
       setLeagues(ls)
-      // Auto-select when 1 league; default to the first otherwise
-      if (ls.length === 1) {
+      // Select a league if needed
+      if (!leagueId && ls[0]) {
         setLeagueId(ls[0].id)
         setSeason(ls[0].season)
-      } else if (!leagueId && ls[0]) {
-        setLeagueId(ls[0].id)
+      } else if (ls.length === 1) {
+        // Keep selected but ensure season is synced to the league
         setSeason(ls[0].season)
       }
     } catch (e: any) {
@@ -87,6 +129,20 @@ export default function PicksPage() {
     fetch('/api/team-map').then(r => r.json()).then(j => setTeamMap(j.teams || {})).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // --- Auto-detect current week ONCE per season (do not fight the user)
+  useEffect(() => {
+    if (!season) return
+    try {
+      const ssKey = `picks-week-autoset-${season}`
+      const already = typeof window !== 'undefined' ? sessionStorage.getItem(ssKey) : '1' // default block on SSR
+      if (!already) {
+        const guess = guessCurrentNflWeek(season)
+        setWeek(guess)
+        sessionStorage.setItem(ssKey, '1')
+      }
+    } catch {}
+  }, [season])
 
   const singleLeague = leagues.length === 1
   const noLeagues = leagues.length === 0
@@ -109,6 +165,7 @@ export default function PicksPage() {
     return idx
   }, [teamMap])
 
+  // --- Load games + picks when league/season/week changes
   useEffect(() => {
     if (!leagueId || !season || !week) return
     ;(async () => {
@@ -172,8 +229,8 @@ export default function PicksPage() {
 
   function resolve(side: { id?: string; abbr?: string | null }) {
     const abbrKey = side?.abbr ? String(side.abbr).toUpperCase() : undefined
-    const byId = side?.id ? teamIndex[side.id] : undefined
-    const byAbbr = abbrKey ? teamIndex[abbrKey] : undefined
+    const byId = side?.id ? (teamIndex as any)[side.id] : undefined
+    const byAbbr = abbrKey ? (teamIndex as any)[abbrKey] : undefined
     const chosen = byId || byAbbr
     return { team: chosen, teamId: chosen?.id }
   }
@@ -244,26 +301,51 @@ export default function PicksPage() {
           <Image alt="" src="/favicon.ico" width={24} height={24} className="rounded" />
           <h1 className="text-xl font-bold">Make your picks</h1>
         </div>
-        <div className="ml-auto flex items-center gap-3">
-          <Link className="underline text-sm" href="/standings">Standings</Link>
 
-          
-          <Link className="opacity-80 hover:opacity-100" href="/stats">Stats</Link>
-{/* Only show selectors if >1 leagues. If 1 league, show a read-only label. If 0, nothing. */}
+        <div className="ml-auto flex flex-wrap items-center gap-3">
+          <Link className="underline text-sm" href="/standings">Standings</Link>
+          <Link className="opacity-80 hover:opacity-100 text-sm underline-offset-4 hover:underline" href="/stats">Stats</Link>
+
+          {/* League label / selector */}
           {noLeagues ? null : singleLeague ? (
             <span className="text-sm text-neutral-600">
               League: <strong>{leagues[0].name}</strong>
             </span>
           ) : (
+            <select
+              className="border rounded px-2 py-1 bg-transparent"
+              value={leagueId}
+              onChange={(e) => setLeagueId(e.target.value)}
+            >
+              {leagues.map((l) => (<option key={l.id} value={l.id}>{l.name}</option>))}
+            </select>
+          )}
+
+          {/* Always show Season + Week selectors when user has any league */}
+          {!noLeagues && (
             <>
-              <select className="border rounded px-2 py-1 bg-transparent" value={leagueId} onChange={(e) => setLeagueId(e.target.value)}>
-                {leagues.map((l) => (<option key={l.id} value={l.id}>{l.name}</option>))}
+              <select
+                className="border rounded px-2 py-1 bg-transparent"
+                value={season}
+                onChange={(e) => setSeason(Number(e.target.value))}
+                title="Season"
+              >
+                {Array.from({ length: 3 }).map((_, i) => {
+                  const yr = new Date().getFullYear() - 1 + i
+                  return (<option key={yr} value={yr}>{yr}</option>)
+                })}
               </select>
-              <select className="border rounded px-2 py-1 bg-transparent" value={season} onChange={(e) => setSeason(Number(e.target.value))}>
-                {Array.from({ length: 3 }).map((_, i) => { const yr = new Date().getFullYear() - 1 + i; return (<option key={yr} value={yr}>{yr}</option>) })}
-              </select>
-              <select className="border rounded px-2 py-1 bg-transparent" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
-                {Array.from({ length: 18 }).map((_, i) => { const wk = i + 1; return (<option key={wk} value={wk}>Week {wk}</option>) })}
+
+              <select
+                className="border rounded px-2 py-1 bg-transparent"
+                value={week}
+                onChange={(e) => setWeek(Number(e.target.value))}
+                title="Week"
+              >
+                {Array.from({ length: 18 }).map((_, i) => {
+                  const wk = i + 1
+                  return (<option key={wk} value={wk}>Week {wk}</option>)
+                })}
               </select>
             </>
           )}
@@ -316,11 +398,21 @@ export default function PicksPage() {
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="flex-1">
-                        <TeamButton team={homeTeam} picked={homeId ? picks.some((p) => p.team_id === homeId) : false} disabled={locked || weeklyQuotaFull || !homeId} onClick={() => homeId && togglePick(homeId, g.id)} />
+                        <TeamButton
+                          team={homeTeam}
+                          picked={homeId ? picks.some((p) => p.team_id === homeId) : false}
+                          disabled={locked || weeklyQuotaFull || !homeId}
+                          onClick={() => homeId && togglePick(homeId, g.id)}
+                        />
                       </div>
                       <div className="text-neutral-400">—</div>
                       <div className="flex-1">
-                        <TeamButton team={awayTeam} picked={awayId ? picks.some((p) => p.team_id === awayId) : false} disabled={locked || weeklyQuotaFull || !awayId} onClick={() => awayId && togglePick(awayId, g.id)} />
+                        <TeamButton
+                          team={awayTeam}
+                          picked={awayId ? picks.some((p) => p.team_id === awayId) : false}
+                          disabled={locked || weeklyQuotaFull || !awayId}
+                          onClick={() => awayId && togglePick(awayId, g.id)}
+                        />
                       </div>
                     </div>
                   </article>
@@ -337,7 +429,7 @@ export default function PicksPage() {
               ) : (
                 <ul className="text-sm grid gap-2">
                   {picks.map((p) => {
-                    const t = teamIndex[p.team_id] || teamIndex[(teamIndex[p.team_id]?.abbreviation || '').toUpperCase()]
+                    const t = (teamIndex as any)[p.team_id] || (teamIndex as any)[(teamIndex as any)[p.team_id]?.abbreviation?.toUpperCase() || '']
                     const locked = p.game_id ? isLocked(games.find((g) => g.id === p.game_id)?.game_utc) : false
                     return (
                       <li key={p.id} className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2">
