@@ -13,6 +13,7 @@
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
+import AdminNavLink from '@/components/AdminNavLink'  // ← added
 
 type League = { id: string; name: string; season: number }
 type Team = {
@@ -510,6 +511,7 @@ function HomeInner() {
         <div className="ml-auto flex items-center gap-3">
           <Link className="underline text-sm" href="/picks">Picks</Link>
           <Link className="underline text-sm" href="/standings">Standings</Link>
+          <AdminNavLink className="underline text-sm" /> {/* ← added */}
 
           {/* League control: label if 1 league, dropdown if >1 */}
           {noLeagues ? null : singleLeagueControls ? (
