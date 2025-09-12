@@ -3,12 +3,13 @@ import { cookies } from "next/headers"
 import { createServerClient as _createServerClient, type CookieOptions } from "@supabase/ssr"
 
 /**
- * Server-safe Supabase client.
- * - In Server Components/SSR: cookie writes are try/catch no-ops.
- * - In Server Actions/Route Handlers: cookie writes succeed.
+ * Safe server client for Next 15:
+ * - Works in Server Components/SSR (cookie writes are no-ops)
+ * - Works in Server Actions/Route Handlers (cookie writes succeed)
  */
 export async function createServerClient() {
-  const store = await cookies()
+  // Next 15 typings can be Promise-like in some contexts; normalize to an object
+  const store = (await (cookies() as unknown as Promise<ReturnType<typeof cookies>> | ReturnType<typeof cookies>)) as ReturnType<typeof cookies>
 
   return _createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -16,20 +17,25 @@ export async function createServerClient() {
     {
       cookies: {
         get(name: string) {
-          return store.get(name)?.value
+          try {
+            return store.get(name)?.value
+          } catch {
+            return undefined
+          }
         },
         set(name: string, value: string, options: CookieOptions) {
           try {
-            store.set({ name, value, ...options })
+            // In SSR this throws; in Actions/Route Handlers it works.
+            store.set({ name, value, ...options } as any)
           } catch {
-            // swallow to avoid “Cookies can only be modified…” crash
+            /* no-op in SSR */
           }
         },
         remove(name: string, options: CookieOptions) {
           try {
-            store.set({ name, value: "", expires: new Date(0), ...options })
+            store.set({ name, value: "", expires: new Date(0), ...options } as any)
           } catch {
-            // swallow in SSR
+            /* no-op in SSR */
           }
         },
       },
@@ -37,6 +43,5 @@ export async function createServerClient() {
   )
 }
 
-// Compat exports for existing call sites
-export { createServerClient as createClient }
+// Optional default export for existing default-import call sites
 export default createServerClient

@@ -1,5 +1,5 @@
-// app/page.tsx
 'use client'
+// app/page.tsx
 
 /**
  * Home: overview + scoreboard (left 2/3), and
@@ -14,6 +14,8 @@
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import AdminNavLink from '@/components/AdminNavLink'  // ← added
+import { createServerClient } from "@/utils/supabase/client"
+const supabase = createServerClient()
 
 type League = { id: string; name: string; season: number }
 type Team = {
