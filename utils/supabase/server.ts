@@ -3,14 +3,14 @@ import { cookies } from "next/headers"
 import { createServerClient as _createServerClient, type CookieOptions } from "@supabase/ssr"
 
 /**
- * Server-side Supabase client that's safe in:
- * - Server Components / SSR (cookie writes are no-ops)
- * - Server Actions / Route Handlers (cookie writes succeed)
- *
- * Continue importing from "@/utils/supabase/server".
+ * Server-safe Supabase client for App Router:
+ * - In Server Components/SSR: cookie writes are swallowed (avoid Next crash).
+ * - In Server Actions/Route Handlers: cookie writes succeed.
  */
 export function createServerClient() {
-  const store = cookies()
+  // Next 15 types can vary (edge/runtime) and appear as a Promise in some paths.
+  // Cast to any so we can call .get/.set without tripping TS during type-check.
+  const store: any = cookies() as any
 
   return _createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -18,21 +18,19 @@ export function createServerClient() {
     {
       cookies: {
         get(name: string) {
-          // Next 15 types sometimes widen `cookies()`—guard subtly without @ts-expect-error.
-          const v = (store as any)?.get?.(name)?.value
-          return typeof v === "string" ? v : undefined
+          return store?.get?.(name)?.value
         },
         set(name: string, value: string, options: CookieOptions) {
           try {
-            // Next's cookies() supports object form in Actions/Route Handlers
-            ;(store as any).set({ name, value, ...options })
+            // Next’s cookies() allows mutation in Actions/Route Handlers.
+            store?.set?.({ name, value, ...options })
           } catch {
-            // swallow to avoid “Cookies can only be modified…” crash during SSR
+            // swallow to avoid “Cookies can only be modified…” crash in SSR
           }
         },
         remove(name: string, options: CookieOptions) {
           try {
-            ;(store as any).set({ name, value: "", expires: new Date(0), ...options })
+            store?.set?.({ name, value: "", expires: new Date(0), ...options })
           } catch {
             // swallow in SSR
           }
@@ -42,7 +40,7 @@ export function createServerClient() {
   )
 }
 
-// Back-compat alias so routes that import `{ createClient }` keep working.
+// Historical alias so route handlers that import { createClient } keep working.
 export const createClient = createServerClient
 
 // Optional default export for existing default-import call sites
