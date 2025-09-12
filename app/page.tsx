@@ -14,8 +14,8 @@
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import AdminNavLink from '@/components/AdminNavLink'  // ← added
-import { createServerClient } from "@/utils/supabase/client"
-const supabase = createServerClient()
+import { createClient } from "@/utils/supabase/client"
+const supabase = createClient()
 
 type League = { id: string; name: string; season: number }
 type Team = {

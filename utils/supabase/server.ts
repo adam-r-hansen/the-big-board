@@ -45,3 +45,6 @@ export const createClient = createServerClient
 
 // Optional default export for existing default-import call sites
 export default createServerClient
+
+// Back-compat alias for existing server call sites
+export const createClient = createServerClient
