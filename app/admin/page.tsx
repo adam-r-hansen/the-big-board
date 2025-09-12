@@ -20,8 +20,9 @@ export default function AdminPage() {
   const [inviteMsg, setInviteMsg] = useState('')
 
   function inviteLink(id: string) {
-    if (typeof window === 'undefined') return ''
-    return `${window.location.origin}/join/${id}`
+  if (typeof window === 'undefined') return ''
+  return `/invite?leagueId=`
+}/join/${id}`
   }
   async function copyLink(id: string) {
     try {
