@@ -43,5 +43,8 @@ export function createServerClient() {
   )
 }
 
+// Back-compat: many routes import { createClient } from this module.
+export { createServerClient as createClient }
+
 // Optional default export for existing default-import call sites
 export default createServerClient
