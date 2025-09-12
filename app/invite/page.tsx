@@ -1,66 +1,194 @@
 // app/invite/page.tsx
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { Suspense, useEffect, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { createClient } from '@/utils/supabase/client'
 
-export default function InvitePage() {
-  const sp = useSearchParams()
+function InviteInner() {
   const router = useRouter()
-  const leagueId = sp.get('leagueId') || ''
-  const [msg, setMsg] = useState('Checking your invite…')
+  const sp = useSearchParams()
+  const [msg, setMsg] = useState('')
+
+  const leagueId = useMemo(() => (sp.get('leagueId') || '').trim(), [sp])
 
   useEffect(() => {
-    if (!leagueId) {
-      setMsg('Missing leagueId in the link.')
-      return
-    }
-    let canceled = false
+    let aborted = false
     ;(async () => {
+      setMsg('Checking session…')
+
+      if (!leagueId) {
+        setMsg('Missing leagueId in invite link.')
+        return
+      }
+
+      // Check auth
       try {
-        const r = await fetch(`/api/invite/accept?leagueId=${encodeURIComponent(leagueId)}`, { cache: 'no-store' })
-        const j = await r.json().catch(() => ({}))
-        if (canceled) return
+        const supabase = createClient()
+        const { data, error } = await supabase.auth.getUser()
+        if (error) {
+          // Not necessarily fatal; just treat as unauthenticated
+        }
+        const user = data?.user
 
-        if (r.status === 401) {
-          // Not logged in: send them to your auth page and boomerang back to this invite.
-          // If your auth route differs, change "/auth" below to your sign-in page.
-          const redirect = encodeURIComponent(`/invite?leagueId=${leagueId}`)
-          router.replace(`/auth?redirect=${redirect}`)
+        if (!user) {
+          // Send to /auth with redirect back to /invite
+          const redirect = `/invite?leagueId=${encodeURIComponent(leagueId)}`
+          router.replace(`/auth?redirect=${encodeURIComponent(redirect)}`)
           return
         }
+      } catch {
+        // If anything odd, still try to proceed to server (it will 401)
+      }
 
-        if (!r.ok) {
-          setMsg(j?.error || `Invite failed (HTTP ${r.status})`)
+      // Accept invite on server (joins league idempotently)
+      setMsg('Accepting invite…')
+      try {
+        const res = await fetch('/api/invite/accept', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ leagueId }),
+          cache: 'no-store',
+        })
+        const j = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          setMsg(j?.error || `Invite failed (HTTP ${res.status})`)
           return
         }
-
-        const to = j?.redirect || `/picks?leagueId=${encodeURIComponent(leagueId)}`
-        setMsg('All set — taking you to your league…')
-        router.replace(to)
+        if (aborted) return
+        setMsg('Joined! Redirecting…')
+        router.replace(`/picks?leagueId=${encodeURIComponent(leagueId)}`)
       } catch (e: any) {
-        if (!canceled) setMsg(e?.message || 'Something went wrong finishing your invite.')
+        if (aborted) return
+        setMsg(e?.message || 'Invite error')
       }
     })()
-    return () => { canceled = true }
+    return () => {
+      aborted = true
+    }
   }, [leagueId, router])
 
   return (
-    <main className="mx-auto max-w-xl px-4 py-10">
-      <h1 className="text-xl font-semibold mb-2">Joining your league…</h1>
-      <p className="text-sm text-neutral-600">{msg}</p>
-
-      {/* Fallback action if a user bookmarks this page while logged out */}
-      {msg.toLowerCase().includes('missing') && (
-        <div className="mt-4 text-sm">
-          Double-check the link you received from your commissioner.
-        </div>
-      )}
-      {msg.toLowerCase().includes('unauth') && (
-        <div className="mt-4 text-sm">
-          Please sign in and we’ll finish the invite automatically.
+    <main className="mx-auto max-w-md px-4 py-10">
+      <h1 className="text-2xl font-semibold mb-2">Joining league…</h1>
+      <div className="text-sm text-neutral-600">{msg || 'Working…'}</div>
+      {!leagueId && (
+        <div className="mt-4 text-xs">
+          Try opening the invite link again, or ask your commissioner to resend it.
         </div>
       )}
     </main>
+  )
+}
+
+export default function InvitePage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto max-w-md px-4 py-10">
+          <h1 className="text-2xl font-semibold mb-2">Joining league…</h1>
+          <div className="text-neutral-600">Loading…</div>
+        </main>
+      }
+    >
+      <InviteInner />
+    </Suspense>
+  )
+}
+// app/invite/page.tsx
+'use client'
+
+import { Suspense, useEffect, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { createClient } from '@/utils/supabase/client'
+
+function InviteInner() {
+  const router = useRouter()
+  const sp = useSearchParams()
+  const [msg, setMsg] = useState('')
+
+  const leagueId = useMemo(() => (sp.get('leagueId') || '').trim(), [sp])
+
+  useEffect(() => {
+    let aborted = false
+    ;(async () => {
+      setMsg('Checking session…')
+
+      if (!leagueId) {
+        setMsg('Missing leagueId in invite link.')
+        return
+      }
+
+      // Check auth
+      try {
+        const supabase = createClient()
+        const { data, error } = await supabase.auth.getUser()
+        if (error) {
+          // Not necessarily fatal; just treat as unauthenticated
+        }
+        const user = data?.user
+
+        if (!user) {
+          // Send to /auth with redirect back to /invite
+          const redirect = `/invite?leagueId=${encodeURIComponent(leagueId)}`
+          router.replace(`/auth?redirect=${encodeURIComponent(redirect)}`)
+          return
+        }
+      } catch {
+        // If anything odd, still try to proceed to server (it will 401)
+      }
+
+      // Accept invite on server (joins league idempotently)
+      setMsg('Accepting invite…')
+      try {
+        const res = await fetch('/api/invite/accept', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ leagueId }),
+          cache: 'no-store',
+        })
+        const j = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          setMsg(j?.error || `Invite failed (HTTP ${res.status})`)
+          return
+        }
+        if (aborted) return
+        setMsg('Joined! Redirecting…')
+        router.replace(`/picks?leagueId=${encodeURIComponent(leagueId)}`)
+      } catch (e: any) {
+        if (aborted) return
+        setMsg(e?.message || 'Invite error')
+      }
+    })()
+    return () => {
+      aborted = true
+    }
+  }, [leagueId, router])
+
+  return (
+    <main className="mx-auto max-w-md px-4 py-10">
+      <h1 className="text-2xl font-semibold mb-2">Joining league…</h1>
+      <div className="text-sm text-neutral-600">{msg || 'Working…'}</div>
+      {!leagueId && (
+        <div className="mt-4 text-xs">
+          Try opening the invite link again, or ask your commissioner to resend it.
+        </div>
+      )}
+    </main>
+  )
+}
+
+export default function InvitePage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto max-w-md px-4 py-10">
+          <h1 className="text-2xl font-semibold mb-2">Joining league…</h1>
+          <div className="text-neutral-600">Loading…</div>
+        </main>
+      }
+    >
+      <InviteInner />
+    </Suspense>
   )
 }
