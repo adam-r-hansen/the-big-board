@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 
 type League = { id: string; name: string; season: number }
-type AllowedEmail = { email: string; created_at?: string }
 
 export default function AdminPage() {
   const [name, setName] = useState('')
@@ -13,27 +12,10 @@ export default function AdminPage() {
   const [leagues, setLeagues] = useState<League[]>([])
   const [busyCreate, setBusyCreate] = useState(false)
 
-  // Invite manager state
-  const [emails, setEmails] = useState<AllowedEmail[]>([])
-  const [newEmail, setNewEmail] = useState('')
-  const [busyInvites, setBusyInvites] = useState(false)
-  const [inviteMsg, setInviteMsg] = useState('')
-
-  function inviteLink(id: string) {
-  if (typeof window === "undefined") return ""
-  return 
-}/join/${id}`
-  }
-  async function copyLink(id: string) {
-    try {
-      await navigator.clipboard.writeText(inviteLink(id))
-      setMsg('Invite link copied!')
-      setTimeout(() => setMsg(''), 1500)
-    } catch {
-      setMsg('Copy failed')
-      setTimeout(() => setMsg(''), 2000)
-    }
-  }
+  // Join existing by invite/id
+  const [joinInput, setJoinInput] = useState('')
+  const [busyJoin, setBusyJoin] = useState(false)
+  const [joinMsg, setJoinMsg] = useState('')
 
   async function loadLeagues() {
     try {
@@ -42,25 +24,20 @@ export default function AdminPage() {
     } catch {}
   }
 
-  async function loadInvites() {
-    setBusyInvites(true)
-    setInviteMsg('')
-    try {
-      const r = await fetch('/api/admin/invites', { cache: 'no-store' })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`)
-      setEmails(Array.isArray(j.emails) ? j.emails : [])
-    } catch (e: any) {
-      setInviteMsg(e?.message || 'Failed to load invites')
-    } finally {
-      setBusyInvites(false)
-    }
-  }
-
   useEffect(() => {
     loadLeagues()
-    loadInvites()
   }, [])
+
+  function extractLeagueId(input: string) {
+    const s = (input || '').trim()
+    if (!s) return ''
+    try {
+      const u = new URL(s)
+      const q = u.searchParams.get('leagueId')
+      if (q) return q
+    } catch { /* not a URL */ }
+    return s
+  }
 
   async function createLeague(e: React.FormEvent) {
     e.preventDefault()
@@ -75,8 +52,22 @@ export default function AdminPage() {
       })
       const j = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(j?.error || `HTTP ${res.status}`)
-      setName('')
+      const leagueId: string | undefined = j?.id
       setMsg('League created ✅')
+
+      // Belt + suspenders: ensure membership even if auto-join ever fails
+      if (leagueId) {
+        try {
+          await fetch('/api/leagues/join', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ leagueId }),
+            cache: 'no-store',
+          })
+        } catch {}
+      }
+
+      setName('')
       await loadLeagues()
     } catch (err: any) {
       setMsg(err?.message || 'Failed to create league')
@@ -85,91 +76,50 @@ export default function AdminPage() {
     }
   }
 
-  async function addInvite(e: React.FormEvent) {
+  async function joinExisting(e: React.FormEvent) {
     e.preventDefault()
-    const email = newEmail.trim().toLowerCase()
-    if (!email) return
-    setInviteMsg('')
-    setBusyInvites(true)
+    setJoinMsg('')
+    const leagueId = extractLeagueId(joinInput)
+    if (!leagueId) { setJoinMsg('Paste an invite link or league id'); return }
+    setBusyJoin(true)
     try {
-      const r = await fetch('/api/admin/invites', {
+      const res = await fetch('/api/leagues/join', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ leagueId }),
         cache: 'no-store',
       })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`)
-      setNewEmail('')
-      await loadInvites()
-      setInviteMsg('Added ✅')
-      setTimeout(() => setInviteMsg(''), 1200)
-    } catch (e: any) {
-      setInviteMsg(e?.message || 'Add failed')
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j?.error || `HTTP ${res.status}`)
+      setJoinMsg(j?.already ? 'You are already a member. ✅' : 'Joined! ✅')
+      setJoinInput('')
+      await loadLeagues()
+    } catch (err: any) {
+      setJoinMsg(err?.message || 'Join failed')
     } finally {
-      setBusyInvites(false)
+      setBusyJoin(false)
     }
   }
 
-  async function removeInvite(email: string) {
-    setInviteMsg('')
-    setBusyInvites(true)
+  function inviteLink(id: string) {
+    if (typeof window === 'undefined') return ''
+    return `${window.location.origin}/invite?leagueId=${id}`
+  }
+
+  async function copyLink(id: string) {
     try {
-      const r = await fetch(`/api/admin/invites?email=${encodeURIComponent(email)}`, {
-        method: 'DELETE',
-        cache: 'no-store',
-      })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`)
-      await loadInvites()
-      setInviteMsg('Removed ✅')
-      setTimeout(() => setInviteMsg(''), 1200)
-    } catch (e: any) {
-      setInviteMsg(e?.message || 'Remove failed')
-    } finally {
-      setBusyInvites(false)
+      await navigator.clipboard.writeText(inviteLink(id))
+      setMsg('Invite link copied!')
+      setTimeout(() => setMsg(''), 1500)
+    } catch {
+      setMsg('Copy failed')
+      setTimeout(() => setMsg(''), 2000)
     }
   }
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-6">
       <h1 className="text-2xl font-bold mb-4">Admin</h1>
-
-      {/* Invite Manager */}
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 mb-6">
-        <h2 className="text-lg font-semibold mb-3">Invite Manager (Allow-List)</h2>
-        <form onSubmit={addInvite} className="flex flex-col sm:flex-row gap-3 max-w-xl">
-          <input
-            className="border rounded px-3 py-2 bg-transparent flex-1"
-            placeholder="friend@example.com"
-            type="email"
-            value={newEmail}
-            onChange={e => setNewEmail(e.target.value)}
-            required
-          />
-          <button disabled={busyInvites} className="px-4 py-2 rounded-lg border">
-            {busyInvites ? 'Saving…' : 'Add'}
-          </button>
-        </form>
-        {inviteMsg && <div className="text-xs mt-2">{inviteMsg}</div>}
-
-        <div className="mt-4">
-          {busyInvites && emails.length === 0 ? (
-            <div className="text-sm text-neutral-500">Loading…</div>
-          ) : emails.length === 0 ? (
-            <div className="text-sm text-neutral-500">No invited emails yet.</div>
-          ) : (
-            <ul className="grid gap-2">
-              {emails.map((e) => (
-                <li key={e.email} className="flex items-center justify-between border rounded-lg px-3 py-2">
-                  <span className="text-sm">{e.email}</span>
-                  <button className="text-xs underline" onClick={() => removeInvite(e.email)}>Remove</button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
 
       {/* Create a league */}
       <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 mb-6">
@@ -206,7 +156,24 @@ export default function AdminPage() {
         </form>
       </section>
 
-      {/* Your leagues */}
+      {/* Join a league by invite/id (so commissioners can add themselves to legacy leagues) */}
+      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 mb-6">
+        <h2 className="text-lg font-semibold mb-3">Join a league</h2>
+        <form onSubmit={joinExisting} className="flex flex-col sm:flex-row gap-3 max-w-xl">
+          <input
+            className="border rounded px-3 py-2 bg-transparent flex-1"
+            placeholder="Paste invite link or league id…"
+            value={joinInput}
+            onChange={e => setJoinInput(e.target.value)}
+          />
+          <button disabled={busyJoin} className="px-4 py-2 rounded-lg border">
+            {busyJoin ? 'Joining…' : 'Join'}
+          </button>
+        </form>
+        {joinMsg && <div className="text-xs mt-2">{joinMsg}</div>}
+      </section>
+
+      {/* Your leagues (membership only) */}
       <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
         <h2 className="text-lg font-semibold mb-3">Your leagues</h2>
         {leagues.length === 0 ? (
