@@ -1,17 +1,21 @@
 // utils/supabase/server.ts
-import { cookies } from "next/headers"
-import { createServerClient as _createServerClient, type CookieOptions } from "@supabase/ssr"
+import {
+  createServerClient as _createServerClient,
+  type CookieOptions,
+} from "@supabase/ssr"
+import { createClient as _createClient } from "@supabase/supabase-js"
 
 /**
- * Drop-in safe server client:
- * - In Server Components/SSR: cookie writes are try/catch no-ops (avoids Next crash).
- * - In Server Actions/Route Handlers: cookie writes succeed (Next allows it there).
+ * Full server client (auth-aware). Safe in Server Components and Route Handlers.
+ * Lazy-imports next/headers so just importing this module won't break in pages/.
  *
- * Keep importing this the way you already do:
- *   import { createServerClient } from "@/utils/supabase/server"
+ * Usage:
+ *   const supabase = await createServerClient()
  */
-export function createServerClient() {
-  const store = cookies()
+export async function createServerClient() {
+  // Lazy import to avoid module-scope dependency on server-only APIs
+  const { cookies } = await import("next/headers")
+  const store = await cookies()
 
   return _createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -19,12 +23,16 @@ export function createServerClient() {
     {
       cookies: {
         get(name: string) {
-          return store.get(name)?.value
+          try {
+            return store.get(name)?.value
+          } catch {
+            return undefined
+          }
         },
         set(name: string, value: string, options: CookieOptions) {
           // In SSR this throws; in Actions/Route Handlers it works.
           try {
-            // @ts-expect-error next cookies API accepts this object form
+            // @ts-expect-error Next's cookies() mutates in Actions/Routes
             store.set({ name, value, ...options })
           } catch {
             // swallow to avoid “Cookies can only be modified…” crash
@@ -32,7 +40,7 @@ export function createServerClient() {
         },
         remove(name: string, options: CookieOptions) {
           try {
-            // @ts-expect-error next cookies API accepts this object form
+            // @ts-expect-error Next's cookies() mutates in Actions/Routes
             store.set({ name, value: "", expires: new Date(0), ...options })
           } catch {
             // swallow in SSR
@@ -43,5 +51,29 @@ export function createServerClient() {
   )
 }
 
-// Optional default export for existing default-import call sites
+/**
+ * Read-only client (no cookie writes). Synchronous and safe to import anywhere,
+ * including places where you just need public data and don’t want headers/cookies.
+ *
+ * Usage:
+ *   const supabase = createServerClientReadOnly()
+ */
+export function createServerClientReadOnly() {
+  return _createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    }
+  )
+}
+
+// Back-compat alias some callsites already use:
+export { createServerClient as createClient }
+
+// Optional default export
 export default createServerClient
