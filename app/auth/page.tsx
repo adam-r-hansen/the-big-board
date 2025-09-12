@@ -1,11 +1,11 @@
 // app/auth/page.tsx
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { Suspense, useCallback, useMemo, useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 
-export default function AuthPage() {
+function AuthInner() {
   const router = useRouter()
   const sp = useSearchParams()
   const [email, setEmail] = useState('')
@@ -15,11 +15,8 @@ export default function AuthPage() {
   // Carry a redirect back to where we want (usually /invite?leagueId=...)
   const redirectParam = sp.get('redirect') || ''
   const emailRedirectTo = useMemo(() => {
-    // If redirect is absolute, use as-is; otherwise prefix with origin
     const r = redirectParam || '/'
     try {
-      // SSR-safe: window may be undefined in theory,
-      // but this is a client component so it's fine.
       const origin = window.location.origin
       return r.startsWith('http') ? r : `${origin}${r.startsWith('/') ? r : `/${r}`}`
     } catch {
@@ -36,7 +33,7 @@ export default function AuthPage() {
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
         options: {
-          emailRedirectTo, // <- critical: this lands them back on /invite
+          emailRedirectTo, // land back on /invite (or whatever redirect was passed)
         },
       })
       if (error) throw error
@@ -74,7 +71,6 @@ export default function AuthPage() {
 
         {msg && <div className="text-xs text-neutral-700">{msg}</div>}
 
-        {/* Helpful: if user navigated here without redirect, explain */}
         {!redirectParam && (
           <div className="text-[11px] text-neutral-500 mt-2">
             Tip: If you came from an invite link, we’ll send you back to your league automatically after you click the email.
@@ -82,5 +78,20 @@ export default function AuthPage() {
         )}
       </form>
     </main>
+  )
+}
+
+export default function AuthPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto max-w-md px-4 py-10">
+          <h1 className="text-2xl font-semibold mb-2">Sign in</h1>
+          <div className="text-neutral-600">Loading…</div>
+        </main>
+      }
+    >
+      <AuthInner />
+    </Suspense>
   )
 }
