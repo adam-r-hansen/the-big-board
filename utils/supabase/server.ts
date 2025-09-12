@@ -41,10 +41,11 @@ export function createServerClient() {
 }
 
 // Historical alias so route handlers that import { createClient } keep working.
-export const createClient = createServerClient
 
 // Optional default export for existing default-import call sites
 export default createServerClient
 
 // Back-compat alias for existing server call sites
-export const createClient = createServerClient
+
+// Back-compat: allow `import { createClient } from "@/utils/supabase/server"`
+export { createServerClient as createClient };
