@@ -1,17 +1,22 @@
 // utils/supabase/server.ts
 import { cookies } from "next/headers"
-import { createServerClient as _createServerClient, type CookieOptions } from "@supabase/ssr"
+import {
+  createServerClient as _createServerClient,
+  type CookieOptions,
+} from "@supabase/ssr"
 
 /**
- * Drop-in safe server client:
- * - In Server Components/SSR: cookie writes are try/catch no-ops (avoids Next crash).
- * - In Server Actions/Route Handlers: cookie writes succeed (Next allows it there).
+ * Safe server client for App Router:
+ * - In SSR/server components: cookie writes are swallowed (avoid Next crash).
+ * - In Server Actions/Route Handlers: cookie writes succeed.
  *
- * Keep importing this the way you already do:
- *   import { createServerClient } from "@/utils/supabase/server"
+ * You can keep doing:
+ *   import { createClient } from "@/utils/supabase/server"
+ *   const supabase = await createClient()
  */
-export function createServerClient() {
-  const store = cookies()
+export async function createServerClient() {
+  // Next 15 makes cookies() async in some contexts
+  const store = await cookies()
 
   return _createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -19,12 +24,16 @@ export function createServerClient() {
     {
       cookies: {
         get(name: string) {
-          return store.get(name)?.value
+          try {
+            return store.get(name)?.value
+          } catch {
+            return undefined
+          }
         },
         set(name: string, value: string, options: CookieOptions) {
           // In SSR this throws; in Actions/Route Handlers it works.
           try {
-            // @ts-expect-error next cookies API accepts this object form
+            // @ts-expect-error Next's cookies() mutates in Actions/Routes
             store.set({ name, value, ...options })
           } catch {
             // swallow to avoid “Cookies can only be modified…” crash
@@ -32,7 +41,7 @@ export function createServerClient() {
         },
         remove(name: string, options: CookieOptions) {
           try {
-            // @ts-expect-error next cookies API accepts this object form
+            // @ts-expect-error Next's cookies() mutates in Actions/Routes
             store.set({ name, value: "", expires: new Date(0), ...options })
           } catch {
             // swallow in SSR
@@ -43,8 +52,8 @@ export function createServerClient() {
   )
 }
 
-// Back-compat: many routes import { createClient } from this module.
+// Back-compat for existing imports
 export { createServerClient as createClient }
 
-// Optional default export for existing default-import call sites
+// Optional default export for default-import call sites
 export default createServerClient
