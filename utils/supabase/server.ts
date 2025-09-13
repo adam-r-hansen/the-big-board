@@ -32,3 +32,6 @@ export function createServerClient() {
 
 // Keep default export for existing default imports
 export default createServerClient;
+
+// Back-compat: many API routes still import { createClient } from this module
+export { createServerClient as createClient };
