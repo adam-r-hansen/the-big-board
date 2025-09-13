@@ -1,8 +1,8 @@
 import { cookies } from "next/headers"
 import { createServerClient as _createServerClient, type CookieOptions } from "@supabase/ssr"
 
-export function createServerClient() {
-  const store = cookies()
+export async function createServerClient() {
+  const store = await cookies()
 
   return _createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -23,5 +23,6 @@ export function createServerClient() {
   )
 }
 
-// Back-compat for existing imports in API routes:
+// Back-compat: many API routes import { createClient } from '@/utils/supabase/server'
 export { createServerClient as createClient }
+
