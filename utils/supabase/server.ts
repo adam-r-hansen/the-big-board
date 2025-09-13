@@ -1,37 +1,27 @@
-// utils/supabase/server.ts
-import { cookies } from "next/headers";
-import { createServerClient as _createServerClient, type CookieOptions } from "@supabase/ssr";
+import { cookies } from "next/headers"
+import { createServerClient as _createServerClient, type CookieOptions } from "@supabase/ssr"
 
 export function createServerClient() {
-  const store = cookies();
+  const store = cookies()
+
   return _createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
         get(name: string) {
-          return store.get(name)?.value;
+          return store.get(name)?.value
         },
-        set(name: string, value: string, options: CookieOptions) {
-          try {
-            // Next’s cookies() is mutable in Actions/Routes; throws in SSR — swallow to avoid crash
-            // @ts-ignore
-            store.set({ name, value, ...options });
-          } catch {}
+        set(name: string, value: string, options?: CookieOptions) {
+          store.set({ name, value, ...options })
         },
-        remove(name: string, options: CookieOptions) {
-          try {
-            // @ts-ignore
-            store.set({ name, value: "", expires: new Date(0), ...options });
-          } catch {}
+        remove(name: string, options?: CookieOptions) {
+          store.set({ name, value: "", ...options, maxAge: 0 })
         },
       },
     }
-  );
+  )
 }
 
-// Keep default export for existing default imports
-export default createServerClient;
-
-// Back-compat: many API routes still import { createClient } from this module
-export { createServerClient as createClient };
+// Back-compat for existing imports in API routes:
+export { createServerClient as createClient }
