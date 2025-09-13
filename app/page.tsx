@@ -13,8 +13,8 @@
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import AdminNavLink from '@/components/AdminNavLink'
-import { createClient as createSupabaseClient } from '@/utils/supabase/client' // ← add: browser client
+import AdminNavLink from '@/components/AdminNavLink'  // ← added
+import { createClient as createSupabaseClient } from '@/utils/supabase/client' // ← for magic-link exchange
 
 type League = { id: string; name: string; season: number }
 type Team = {
@@ -215,23 +215,41 @@ function useGameByTeamId(games: Game[]) {
 }
 
 function HomeInner() {
+  const [leagues, setLeagues] = useState<League[]>([])
+  const [leagueId, setLeagueId] = useState('')
+  const [season, setSeason] = useState<number>(new Date().getFullYear())
+  const [week, setWeek] = useState<number>(1)
+
+  const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
+  const teamIndex = useTeamIndex(teamMap)
+
+  const [games, setGames] = useState<Game[]>([])
+  const gameByTeamId = useGameByTeamId(games)
+
+  const [myPicks, setMyPicks] = useState<Pick[]>([])
+  const [wrinkleExtra, setWrinkleExtra] = useState<number>(0)
+
+  const [leagueLocked, setLeagueLocked] = useState<MemberLockedPicks[]>([])
+  const [standRows, setStandRows] = useState<any[]>([])
+  const [msg, setMsg] = useState('')
+
+  const singleLeague = leagues.length === 1
+  const noLeagues = leagues.length === 0
+
   // —————————————————————————————————————————————————————————————
   // Auth: exchange magic-link code for a session on landing (/?code=…)
   // —————————————————————————————————————————————————————————————
   useEffect(() => {
     if (typeof window === 'undefined') return
     const url = new URL(window.location.href)
-    const hasAuthParams =
-      url.searchParams.has('code') ||
-      url.searchParams.has('error_description') ||
-      url.searchParams.get('type') === 'recovery' // handle password recovery too
-
-    if (!hasAuthParams) return
+    const code = url.searchParams.get('code')
+    if (!code) return
 
     ;(async () => {
       try {
         const supabase = createSupabaseClient()
-        const { error } = await supabase.auth.exchangeCodeForSession()
+        // pass the code from the URL
+        const { error } = await supabase.auth.exchangeCodeForSession(code)
 
         // Clean auth-related params from URL
         const AUTH_PARAMS = [
@@ -258,27 +276,6 @@ function HomeInner() {
       }
     })()
   }, [])
-
-  const [leagues, setLeagues] = useState<League[]>([])
-  const [leagueId, setLeagueId] = useState('')
-  const [season, setSeason] = useState<number>(new Date().getFullYear())
-  const [week, setWeek] = useState<number>(1)
-
-  const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
-  const teamIndex = useTeamIndex(teamMap)
-
-  const [games, setGames] = useState<Game[]>([])
-  const gameByTeamId = useGameByTeamId(games)
-
-  const [myPicks, setMyPicks] = useState<Pick[]>([])
-  const [wrinkleExtra, setWrinkleExtra] = useState<number>(0)
-
-  const [leagueLocked, setLeagueLocked] = useState<MemberLockedPicks[]>([])
-  const [standRows, setStandRows] = useState<any[]>([])
-  const [msg, setMsg] = useState('')
-
-  const singleLeague = leagues.length === 1
-  const noLeagues = leagues.length === 0
 
   // load base data
   useEffect(() => {
@@ -336,8 +333,10 @@ function HomeInner() {
 
         // league locked picks — support both response shapes
         if (Array.isArray(L?.members)) {
+          // Old shape already grouped
           setLeagueLocked(L.members as MemberLockedPicks[])
         } else if (Array.isArray(L?.rows)) {
+          // New shape: rows -> group by profile, compute points from our games
           const grouped = new Map<string, MemberLockedPicks>()
 
           const safeName = (r: any) =>
@@ -355,8 +354,10 @@ function HomeInner() {
             const team_id: string = r.team?.id || r.team_id || r.teamId || ''
             const statusRaw: string = r.status || r.game_status || ''
             const statusUpper = (statusRaw || '').toUpperCase()
+            // API returns only locked games; normalize to LIVE/FINAL only
             const lockedStatus: 'LIVE' | 'FINAL' = statusUpper === 'FINAL' ? 'FINAL' : 'LIVE'
 
+            // Derive the game for this team this week (unique per week)
             const gForTeam = team_id ? gameByTeamId.get(team_id) : undefined
             const points = lockedStatus === 'FINAL' ? pickPointsForGame(team_id, gForTeam) : null
 
@@ -424,6 +425,7 @@ function HomeInner() {
     return sum
   }, [myPicks, gameById])
 
+  // compact abbr chip used everywhere except scoreboard
   function teamChipForId(teamId?: string, opts?: { showPoints?: number | null; status?: string }) {
     if (!teamId) return <Chip label="—" />
     const t = teamIndex[teamId]
@@ -446,6 +448,7 @@ function HomeInner() {
     return <Chip label={label} primary={primary} secondary={secondary} subtle badge={badge} title={title} />
   }
 
+  // Responsive, UNIFORM-size chip for scoreboard — abbr on mobile, full name on md+
   function responsiveTeamChip(teamId?: string) {
     if (!teamId) return <Chip label="—" className="w-full h-10 md:h-12 justify-center" />
     const t = teamIndex[teamId]
@@ -470,13 +473,16 @@ function HomeInner() {
   }
 
   // —————————————————————————————————————————————————————————————
-  // Standings mini: show ALL members, sorted by league rules
+  // Standings mini: show ALL members, sorted by league rules:
+  // 1) total points desc, 2) correct picks desc, 3) longest streak desc,
+  // 4) wrinkle points desc, 5) name asc
   // —————————————————————————————————————————————————————————————
   const miniStand = useMemo(() => {
     const rows = (standRows || []).map((r: any) => {
       const profile_id = r.profile_id ?? r.user_id ?? r.id ?? ''
       const display_name = r.display_name ?? r.name ?? r.team ?? r.email ?? 'Member'
 
+      // Flexible numeric field mapping from /api/standings
       const points_total =
         typeof r.points_total === 'number'
           ? r.points_total
@@ -531,8 +537,10 @@ function HomeInner() {
       a.display_name.localeCompare(b.display_name)
     )
 
+    // IMPORTANT: no cap — show all members in the mini card
     return rows
   }, [standRows])
+  // —————————————————————————————————————————————————————————————
 
   const singleLeagueControls = !noLeagues && singleLeague
 
@@ -545,8 +553,9 @@ function HomeInner() {
         <div className="ml-auto flex items-center gap-3">
           <Link className="underline text-sm" href="/picks">Picks</Link>
           <Link className="underline text-sm" href="/standings">Standings</Link>
-          <AdminNavLink className="underline text-sm" />
+          <AdminNavLink className="underline text-sm" /> {/* ← added */}
 
+          {/* League control: label if 1 league, dropdown if >1 */}
           {noLeagues ? null : singleLeagueControls ? (
             <span className="text-sm text-neutral-600">
               League: <strong>{leagues[0].name}</strong>
@@ -565,6 +574,7 @@ function HomeInner() {
             </select>
           )}
 
+          {/* Season & Week (always shown) */}
           <select
             className="border rounded px-2 py-1 bg-transparent"
             value={season}
@@ -607,6 +617,7 @@ function HomeInner() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* LEFT 2/3 */}
           <div className="lg:col-span-8 grid gap-6">
+            {/* Overview */}
             <Card
               title="League overview"
               right={
@@ -622,7 +633,7 @@ function HomeInner() {
                 <div className="rounded-xl border px-4 py-3">
                   <div className="text-xs text-neutral-500">Picks used</div>
                   <div className="text-2xl font-semibold">{picksUsed}</div>
-                  <div className="text-xs text-neutral-500">of {2 + (wrinkleExtra || 0)}</div>
+                  <div className="text-xs text-neutral-500">of {picksAllowed}</div>
                 </div>
                 <div className="rounded-xl border px-4 py-3">
                   <div className="text-xs text-neutral-500">Points (wk)</div>
@@ -631,7 +642,7 @@ function HomeInner() {
                 <div className="rounded-xl border px-4 py-3">
                   <div className="text-xs text-neutral-500">Remaining</div>
                   <div className="text-2xl font-semibold">
-                    {Math.max(0, (2 + (wrinkleExtra || 0)) - picksUsed)}
+                    {Math.max(0, picksAllowed - picksUsed)}
                   </div>
                 </div>
                 <div className="rounded-xl border px-4 py-3">
@@ -641,6 +652,7 @@ function HomeInner() {
               </div>
             </Card>
 
+            {/* Week N — Games */}
             <Card
               title={`Week ${week} — Games`}
               right={
@@ -704,6 +716,7 @@ function HomeInner() {
 
           {/* RIGHT 1/3 */}
           <aside className="lg:col-span-4 grid gap-6">
+            {/* My Picks */}
             <Card
               title={`My picks — Week ${week}`}
               right={
@@ -739,6 +752,7 @@ function HomeInner() {
               )}
             </Card>
 
+            {/* League picks (locked only), grouped by member */}
             <Card title="League picks (locked)">
               {leagueLocked.length === 0 ? (
                 <div className="text-sm text-neutral-500">No locked picks yet.</div>
@@ -773,6 +787,7 @@ function HomeInner() {
               )}
             </Card>
 
+            {/* Standings mini — now shows ALL members, sorted by league rules */}
             <Card
               title="Standings"
               right={
