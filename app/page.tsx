@@ -13,8 +13,8 @@
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import AdminNavLink from '@/components/AdminNavLink'  // ← added
-import { createClient as createSupabaseClient } from '@/utils/supabase/client' // ← for magic-link exchange
+import AdminNavLink from '@/components/AdminNavLink'
+import { createClient as createSupabaseClient } from '@/utils/supabase/client' // for magic-link exchange
 
 type League = { id: string; name: string; season: number }
 type Team = {
@@ -233,6 +233,8 @@ function HomeInner() {
   const [standRows, setStandRows] = useState<any[]>([])
   const [msg, setMsg] = useState('')
 
+  const [authReady, setAuthReady] = useState(false) // ← NEW
+
   const singleLeague = leagues.length === 1
   const noLeagues = leagues.length === 0
 
@@ -243,42 +245,49 @@ function HomeInner() {
     if (typeof window === 'undefined') return
     const url = new URL(window.location.href)
     const code = url.searchParams.get('code')
-    if (!code) return
 
     ;(async () => {
       try {
-        const supabase = createSupabaseClient()
-        // pass the code from the URL
-        const { error } = await supabase.auth.exchangeCodeForSession(code)
+        if (code) {
+          const supabase = createSupabaseClient()
+          const { error } = await supabase.auth.exchangeCodeForSession(code)
 
-        // Clean auth-related params from URL
-        const AUTH_PARAMS = [
-          'code',
-          'type',
-          'scope',
-          'auth_callback',
-          'error',
-          'error_description',
-          'provider',
-        ]
-        AUTH_PARAMS.forEach((k) => url.searchParams.delete(k))
-        window.history.replaceState({}, document.title, url.pathname + (url.search || ''))
+          // Clean auth-related params from URL
+          const AUTH_PARAMS = [
+            'code',
+            'type',
+            'scope',
+            'auth_callback',
+            'error',
+            'error_description',
+            'provider',
+            'next',
+            'state',
+            'redirect',
+            'token',
+          ]
+          AUTH_PARAMS.forEach((k) => url.searchParams.delete(k))
+          const clean = url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : '')
+          window.history.replaceState({}, document.title, clean)
 
-        if (error) {
+          if (!error) {
+            // ensure server/API routes see the session cookie immediately
+            window.location.reload()
+            return
+          }
           console.error('Auth exchange error:', error)
-          return
         }
-
-        // Ensure server/API routes see the session cookie
-        window.location.reload()
       } catch (e) {
         console.error('Auth exchange threw:', e)
       }
+      // No code present OR we handled an error: allow data fetching to proceed
+      setAuthReady(true)
     })()
   }, [])
 
-  // load base data
+  // load base data (WAIT for authReady)
   useEffect(() => {
+    if (!authReady) return
     ;(async () => {
       try {
         const lj = await fetch('/api/my-leagues', { cache: 'no-store' }).then(r => r.json())
@@ -298,10 +307,11 @@ function HomeInner() {
       } catch {}
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [authReady])
 
   // load per-week data
   useEffect(() => {
+    if (!authReady) return
     if (!leagueId || !season || !week) return
     ;(async () => {
       setMsg('')
@@ -333,10 +343,8 @@ function HomeInner() {
 
         // league locked picks — support both response shapes
         if (Array.isArray(L?.members)) {
-          // Old shape already grouped
           setLeagueLocked(L.members as MemberLockedPicks[])
         } else if (Array.isArray(L?.rows)) {
-          // New shape: rows -> group by profile, compute points from our games
           const grouped = new Map<string, MemberLockedPicks>()
 
           const safeName = (r: any) =>
@@ -354,10 +362,8 @@ function HomeInner() {
             const team_id: string = r.team?.id || r.team_id || r.teamId || ''
             const statusRaw: string = r.status || r.game_status || ''
             const statusUpper = (statusRaw || '').toUpperCase()
-            // API returns only locked games; normalize to LIVE/FINAL only
             const lockedStatus: 'LIVE' | 'FINAL' = statusUpper === 'FINAL' ? 'FINAL' : 'LIVE'
 
-            // Derive the game for this team this week (unique per week)
             const gForTeam = team_id ? gameByTeamId.get(team_id) : undefined
             const points = lockedStatus === 'FINAL' ? pickPointsForGame(team_id, gForTeam) : null
 
@@ -393,7 +399,7 @@ function HomeInner() {
         setMsg(e?.message || 'Failed to load data')
       }
     })()
-  }, [leagueId, season, week, gameByTeamId])
+  }, [authReady, leagueId, season, week, gameByTeamId])
 
   // maps for quick lookups
   const gameById = useMemo(() => {
@@ -540,9 +546,18 @@ function HomeInner() {
     // IMPORTANT: no cap — show all members in the mini card
     return rows
   }, [standRows])
-  // —————————————————————————————————————————————————————————————
 
   const singleLeagueControls = !noLeagues && singleLeague
+
+  // Show a brief state while we’re exchanging the magic link
+  if (!authReady) {
+    return (
+      <main className="mx-auto max-w-6xl px-4 py-6">
+        <h1 className="text-xl font-bold mb-3">NFL Pick’em</h1>
+        <div className="text-neutral-600">Signing you in…</div>
+      </main>
+    )
+  }
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
@@ -553,7 +568,7 @@ function HomeInner() {
         <div className="ml-auto flex items-center gap-3">
           <Link className="underline text-sm" href="/picks">Picks</Link>
           <Link className="underline text-sm" href="/standings">Standings</Link>
-          <AdminNavLink className="underline text-sm" /> {/* ← added */}
+          <AdminNavLink className="underline text-sm" />
 
           {/* League control: label if 1 league, dropdown if >1 */}
           {noLeagues ? null : singleLeagueControls ? (
