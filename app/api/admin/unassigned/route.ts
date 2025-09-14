@@ -2,13 +2,13 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
 export async function GET() {
-  const supabase = createClient()
+  const supabase = await createClient()
 
   const { data: { user }, error: userErr } = await supabase.auth.getUser()
   if (userErr) return NextResponse.json({ error: userErr.message }, { status: 401 })
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // Prefer an RPC if you already have it. Fallback to left-join filter.
+  // If you have an RPC, use it; else fallback.
   const rpc = await supabase.rpc('profiles_without_league')
   if (!rpc.error) {
     const rows = (rpc.data || []).map((r: any) => ({

@@ -4,7 +4,7 @@ import { createClient } from '@/utils/supabase/server'
 const ALLOWED = new Set(['color_primary','color_secondary','color_tertiary','color_quaternary'])
 
 export async function POST(req: Request) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user }, error: userErr } = await supabase.auth.getUser()
   if (userErr) return NextResponse.json({ error: userErr.message }, { status: 401 })
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
