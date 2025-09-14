@@ -4,26 +4,28 @@ import { createClient } from '@/utils/supabase/server'
 export async function GET() {
   const supabase = await createClient()
 
-  const { data: { user }, error: userErr } = await supabase.auth.getUser()
-  if (userErr) return NextResponse.json({ error: userErr.message }, { status: 401 })
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr) return NextResponse.json({ error: authErr.message }, { status: 401 })
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // If you have an RPC, use it; else fallback.
-  const rpc = await supabase.rpc('profiles_without_league')
-  if (!rpc.error) {
-    const rows = (rpc.data || []).map((r: any) => ({
-      id: r.id, email: r.email, display_name: r.display_name ?? null
-    }))
-    return NextResponse.json({ rows })
-  }
+  // Pull all profile ids that appear in league_members
+  const { data: lmRows, error: lmErr } = await supabase
+    .from('league_members')
+    .select('profile_id')
+  if (lmErr) return NextResponse.json({ error: lmErr.message }, { status: 500 })
 
-  const { data: rows, error } = await supabase
+  const assigned = new Set((lmRows || []).map(r => r.profile_id as string))
+
+  // Fetch basic profile info
+  const { data: profiles, error: pErr } = await supabase
     .from('profiles')
-    .select('id, email, display_name, league_members:league_members(id)')
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    .select('id, email, display_name')
+  if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 })
 
-  const filtered = (rows || [])
-    .filter((r: any) => !r.league_members || r.league_members.length === 0)
-    .map((r: any) => ({ id: r.id, email: r.email, display_name: r.display_name ?? null }))
-  return NextResponse.json({ rows: filtered })
+  // Keep only profiles not present in league_members
+  const rows = (profiles || [])
+    .filter(p => !assigned.has(p.id))
+    .map(p => ({ id: p.id, email: p.email, display_name: p.display_name ?? null }))
+
+  return NextResponse.json({ rows })
 }
