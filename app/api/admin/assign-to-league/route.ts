@@ -12,11 +12,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'profileId and leagueId required' }, { status: 400 })
   }
 
-  // Idempotent upsert: if your schema enforces unique (league_id, profile_id) you can use upsert.
+  // already a member?
+  const { data: exists, error: chkErr } = await supabase
+    .from('league_members')
+    .select('id')
+    .eq('league_id', leagueId)
+    .eq('profile_id', profileId)
+    .maybeSingle()
+  if (chkErr) return NextResponse.json({ error: chkErr.message }, { status: 500 })
+  if (exists) return NextResponse.json({ ok: true, alreadyMember: true })
+
   const { error } = await supabase
     .from('league_members')
-    .upsert({ league_id: leagueId, profile_id: profileId }, { onConflict: 'league_id,profile_id' })
-
+    .insert({ league_id: leagueId, profile_id: profileId })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
   return NextResponse.json({ ok: true })
 }

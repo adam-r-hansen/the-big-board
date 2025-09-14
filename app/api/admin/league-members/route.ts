@@ -5,23 +5,24 @@ export async function GET(req: Request) {
   const supabase = await createClient()
   const { searchParams } = new URL(req.url)
   const leagueId = searchParams.get('leagueId') || ''
+
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr) return NextResponse.json({ error: authErr.message }, { status: 401 })
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!leagueId) return NextResponse.json({ error: 'leagueId required' }, { status: 400 })
 
-  const { data: { user }, error: userErr } = await supabase.auth.getUser()
-  if (userErr) return NextResponse.json({ error: userErr.message }, { status: 401 })
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
+  // join league_members -> profiles for display_name/email
   const { data, error } = await supabase
     .from('league_members')
-    .select('profile_id, profiles(id, email, display_name)')
+    .select('profile_id, profiles:profiles(id, email, display_name)')
     .eq('league_id', leagueId)
-
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const members = (data || []).map((r: any) => ({
+  const members = (data ?? []).map(r => ({
     id: r.profiles?.id ?? r.profile_id,
     email: r.profiles?.email ?? null,
     display_name: r.profiles?.display_name ?? null,
   }))
+
   return NextResponse.json({ members })
 }
