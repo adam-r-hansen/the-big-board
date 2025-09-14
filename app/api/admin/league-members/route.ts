@@ -16,12 +16,15 @@ export async function GET(req: Request) {
     .from('league_members')
     .select('profile_id, profiles:profiles(id, email, display_name)')
     .eq('league_id', leagueId)
+
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const members = (data ?? []).map(r => ({
-    id: r.profiles?.id ?? r.profile_id,
-    email: r.profiles?.email ?? null,
-    display_name: r.profiles?.display_name ?? null,
+  // Cast to any[] so TS doesn't infer a weird union/tuple
+  const rows = (data as any[]) ?? []
+  const members = rows.map((r: any) => ({
+    id: r?.profiles?.id ?? r?.profile_id,
+    email: r?.profiles?.email ?? null,
+    display_name: r?.profiles?.display_name ?? null,
   }))
 
   return NextResponse.json({ members })
