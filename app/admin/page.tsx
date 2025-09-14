@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import TeamPillColors from '@/components/admin/TeamPillColors' // ← NEW
 
 type League = { id: string; name: string; season: number }
 type Profile = { id: string; email?: string; display_name?: string | null }
@@ -172,15 +173,6 @@ export default function AdminPage() {
     } catch (e: any) { flash(e.message || 'Assignment failed') }
     finally { setBusy('') }
   }
-  async function saveAppPillColors() {
-    setBusy('pill-app')
-    try {
-      // Treat as global: omit leagueId in payload
-      await post('/api/admin/branding', { pill_light: pillLight, pill_dark: pillDark })
-      flash('App pill colors saved.')
-    } catch (e: any) { flash(e.message || 'Save failed') }
-    finally { setBusy('') }
-  }
 
   // League workspace
   async function sendInvite() {
@@ -334,24 +326,8 @@ export default function AdminPage() {
 
             {/* Right rail (App) */}
             <aside className="lg:col-span-4 grid gap-6">
-              {/* Pill Colors (App-wide) */}
-              <Card title="Team Pill Colors (App-wide)">
-                <div className="grid grid-cols-2 gap-3 items-center">
-                  <label className="text-sm">Light</label>
-                  <input type="color" value={pillLight} onChange={e => setPillLight(e.target.value)} className="w-16 h-9 p-0 border rounded"/>
-                  <label className="text-sm">Dark</label>
-                  <input type="color" value={pillDark} onChange={e => setPillDark(e.target.value)} className="w-16 h-9 p-0 border rounded"/>
-                </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <span className="px-3 py-2 rounded-full border" style={{ background: pillLight }}>Light preview</span>
-                  <span className="px-3 py-2 rounded-full border" style={{ background: pillDark }}>Dark preview</span>
-                </div>
-                <div className="mt-3">
-                  <Button disabled={busy==='pill-app'} onClick={saveAppPillColors}>
-                    {busy==='pill-app' ? 'Saving…' : 'Save colors'}
-                  </Button>
-                </div>
-              </Card>
+              {/* Team Pill Colors (App-wide, per-team via DB keys) */}
+              <TeamPillColors />
             </aside>
           </div>
         </>
