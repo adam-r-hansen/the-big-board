@@ -1,23 +1,38 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { createServerClient } from '@supabase/ssr'
+
+// NOTE: This endpoint is admin-only UI. Use the service role key on the server to bypass RLS safely.
+function getAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY! // server-only
+  return createServerClient(url, key, {
+    cookies: {
+      get() { return undefined }, set() {}, remove() {},
+    },
+  })
+}
 
 export async function GET() {
-  const supabase = await createClient()
+  try {
+    const supabase = getAdminClient()
 
-  // Profiles with no league_memberships
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('id, email, display_name, league_memberships!left(id)')
-    .is('league_memberships.id', null)
-    .order('created_at', { ascending: true })
+    // Pull minimal columns
+    const { data: profiles, error: pErr } = await supabase
+      .from('profiles')
+      .select('id,email,display_name')
+    if (pErr) throw pErr
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    const { data: memberships, error: mErr } = await supabase
+      .from('league_memberships')
+      .select('profile_id')
+    if (mErr) throw mErr
 
-  const rows = (data as any[]).map(r => ({
-    id: r.id,
-    email: r.email,
-    display_name: r.display_name ?? null,
-  }))
+    const assigned = new Set<string>((memberships || []).map((m: any) => m.profile_id))
+    const rows = (profiles || []).filter((p: any) => !assigned.has(p.id))
 
-  return NextResponse.json({ rows })
+    return NextResponse.json({ rows })
+  } catch (e: any) {
+    console.error('unassigned GET failed:', e)
+    return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 })
+  }
 }
