@@ -1,6 +1,6 @@
 'use client'
 
-// app/page.tsx — Home using PickPill, same data sources as Scoreboard
+// app/page.tsx — Home with robust Locked Picks + Mini-Standings
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -14,18 +14,18 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-// Tue→Mon helper (same as scoreboard logic)
+/** Tue→Mon NFL week helper */
 function tuesdayToMondayWeekIndex(d: Date) {
   const year = d.getFullYear();
   const sept1 = new Date(year, 8, 1);
-  const day = sept1.getDay();
-  const offsetToTue = (9 - day) % 7;
+  const day = sept1.getDay(); // 0..6
+  const offsetToTue = (9 - day) % 7; // Tue=2
   const firstTue = new Date(year, 8, 1 + offsetToTue);
   const diffDays = Math.floor((d.getTime() - firstTue.getTime()) / (1000 * 60 * 60 * 24));
   return Math.max(1, Math.floor(diffDays / 7) + 1);
 }
 
-// Types
+/** Types */
 type League = { id: string; name: string; season: number };
 type TeamMap = Record<string, TeamShape>;
 type Pick = {
@@ -42,7 +42,7 @@ type MemberLockedPicks = {
   picks?: Array<{ team_id: string; status?: string; points?: number | null }>;
 };
 
-// Reusable card
+/** Reusable card */
 function Card(props: { title: string; right?: ReactNode; className?: string; children: ReactNode }) {
   const { title, right, className, children } = props;
   return (
@@ -61,10 +61,10 @@ function Card(props: { title: string; right?: ReactNode; className?: string; chi
   );
 }
 
-// Small helpers
+/** Helpers */
 function gameLocked(g?: GameCardGame | null) {
   if (!g) return false;
-  const s = (g.status || "").toUpperCase();
+  const s = (g?.status || "").toUpperCase();
   return s === "LIVE" || s === "FINAL";
 }
 function pickPointsForGame(pickTeamId: string, g?: GameCardGame): number | null {
@@ -83,7 +83,7 @@ function pickPointsForGame(pickTeamId: string, g?: GameCardGame): number | null 
   return g.away.id === pickTeamId ? as : 0;
 }
 
-// EXACTLY the normalizer from Scoreboard
+/** EXACT scoreboard normalizer */
 function normalizeGamesForCard(rows: any[]): GameCardGame[] {
   return (rows || []).map((x) => ({
     id: x.id,
@@ -107,6 +107,64 @@ function normalizeGamesForCard(rows: any[]): GameCardGame[] {
   }));
 }
 
+/** Try a list of URLs until one returns OK JSON */
+async function tryJson<T = any>(urls: string[]): Promise<T | null> {
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) continue;
+      return (await r.json()) as T;
+    } catch {
+      // ignore and try next
+    }
+  }
+  return null;
+}
+
+/** Normalize many possible locked-picks payload shapes into MemberLockedPicks[] */
+function normalizeLocked(raw: any): MemberLockedPicks[] {
+  const arr =
+    (Array.isArray(raw) && raw) ||
+    raw?.rows ||
+    raw?.members ||
+    raw?.locked ||
+    raw?.data ||
+    [];
+  if (!Array.isArray(arr)) return [];
+
+  return arr.map((m: any) => {
+    const picks = Array.isArray(m?.picks)
+      ? m.picks.map((p: any) => ({
+          team_id: p.team_id ?? p.team ?? p.teamId ?? p.abbr ?? p.abbreviation ?? null,
+          status: p.status ?? p.state ?? undefined,
+          points: p.points ?? p.pts ?? undefined,
+        }))
+      : [];
+    return {
+      profile_id: m.profile_id ?? m.user_id ?? m.id ?? String(Math.random()),
+      display_name: m.display_name ?? m.name ?? m.username ?? null,
+      points_week: m.points_week ?? m.week_points ?? m.points ?? 0,
+      picks,
+    } as MemberLockedPicks;
+  });
+}
+
+/** Normalize many possible standings payload shapes into rows with {display_name, points_total} */
+function normalizeStandings(raw: any): Array<{ profile_id?: string; display_name?: string; points_total?: number }> {
+  const arr =
+    (Array.isArray(raw) && raw) ||
+    raw?.standings ||
+    raw?.rows ||
+    raw?.data ||
+    [];
+  if (!Array.isArray(arr)) return [];
+  return arr.map((r: any) => ({
+    profile_id: r.profile_id ?? r.user_id ?? r.id,
+    display_name: r.display_name ?? r.name ?? r.username ?? r.email ?? "Member",
+    points_total: r.points_total ?? r.total_points ?? r.points ?? 0,
+  }));
+}
+
 function HomeInner() {
   const [season, setSeason] = useState<number>(new Date().getFullYear());
   const [week, setWeek] = useState<number>(tuesdayToMondayWeekIndex(new Date()));
@@ -123,7 +181,7 @@ function HomeInner() {
   const [authReady, setAuthReady] = useState(false);
 
   const picksUsed = myPicks.length;
-  const picksAllowed = 2; // no wrinkles here
+  const picksAllowed = 2; // (wrinkles removed here)
   const picksLocked = myPicks.filter((p) => p.status === "FINAL" || p.status === "LIVE").length;
   const weekPoints = myPicks.reduce((acc, p) => acc + (typeof p.points === "number" ? p.points : 0), 0);
 
@@ -147,7 +205,7 @@ function HomeInner() {
     })();
   }, []);
 
-  // Teams (same source as Scoreboard)
+  // Team map (same as Scoreboard)
   useEffect(() => {
     if (!authReady) return;
     (async () => {
@@ -192,7 +250,7 @@ function HomeInner() {
     })();
   }, [authReady, season, week]);
 
-  // My Picks (needs league)
+  // My picks (needs league)
   useEffect(() => {
     if (!authReady || !leagueId) { setMyPicks([]); return; }
     (async () => {
@@ -205,42 +263,36 @@ function HomeInner() {
     })();
   }, [authReady, leagueId, season, week]);
 
-  // Standings (needs league)
+  // Standings (try several names; normalize)
   useEffect(() => {
     if (!authReady || !leagueId) { setStandRows([]); return; }
     (async () => {
-      try {
-        const r = await fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: "no-store" });
-        if (r.ok) {
-          const s = await r.json();
-          setStandRows(Array.isArray(s) ? s : s?.standings || s?.rows || []);
-        } else setStandRows([]);
-      } catch { setStandRows([]); }
+      const base = `leagueId=${leagueId}&season=${season}`;
+      const raw = await tryJson([
+        `/api/standings?${base}`,
+        `/api/league-standings?${base}`,
+        `/api/mini-standings?${base}`,
+      ]);
+      setStandRows(normalizeStandings(raw));
     })();
   }, [authReady, leagueId, season]);
 
-  // Locked picks (guarded — tries two common endpoints; no crash if 404)
+  // Locked picks (try several names; normalize)
   useEffect(() => {
     if (!authReady || !leagueId) { setLocked([]); return; }
     (async () => {
-      const urls = [
-        `/api/league-locked?leagueId=${leagueId}&season=${season}&week=${week}`,
-        `/api/league-locked-picks?leagueId=${leagueId}&season=${season}&week=${week}`,
-      ];
-      for (const u of urls) {
-        try {
-          const r = await fetch(u, { cache: "no-store" });
-          if (!r.ok) continue;
-          const data = await r.json();
-          const arr = Array.isArray(data) ? data : (data?.rows || data?.members || data?.locked || []);
-          if (Array.isArray(arr)) { setLocked(arr as MemberLockedPicks[]); return; }
-        } catch {}
-      }
-      setLocked([]);
+      const base = `leagueId=${leagueId}&season=${season}&week=${week}`;
+      const raw = await tryJson([
+        `/api/league-locked?${base}`,
+        `/api/league-locked-picks?${base}`,
+        `/api/locked-picks?${base}`,
+        `/api/picks-locked?${base}`,
+      ]);
+      setLocked(normalizeLocked(raw));
     })();
   }, [authReady, leagueId, season, week]);
 
-  // Keep Tue→Mon default when season changes unless the user picked manually
+  // Keep Tue→Mon default unless user picked manually
   useEffect(() => {
     if (userPickedWeek) return;
     setWeek(tuesdayToMondayWeekIndex(new Date()));
@@ -337,7 +389,7 @@ function HomeInner() {
               </div>
               <div className="rounded-xl border px-4 py-3">
                 <div className="text-xs text-neutral-500">Remaining</div>
-                <div className="text-2xl font-semibold">{Math.max(0, 2 - picksUsed)}</div>
+                <div className="text-2xl font-semibold">{Math.max(0, picksAllowed - picksUsed)}</div>
               </div>
               <div className="rounded-xl border px-4 py-3">
                 <div className="text-xs text-neutral-500">Locked</div>
@@ -427,7 +479,9 @@ function HomeInner() {
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {m.picks && m.picks.length > 0 ? (
-                        m.picks.map((pk, idx) => <PickPill key={`${m.profile_id}-${idx}`} teamId={pk.team_id} teamMap={teamMap} size="xs" />)
+                        m.picks.map((pk, idx) => (
+                          <PickPill key={`${m.profile_id}-${idx}`} teamId={pk.team_id} teamMap={teamMap} size="xs" />
+                        ))
                       ) : (
                         <span className="text-xs text-neutral-500">No locked picks yet.</span>
                       )}
@@ -457,7 +511,7 @@ function HomeInner() {
               <ol className="grid gap-2">
                 {standRows.map((r: any, idx: number) => (
                   <li key={r.profile_id || r.id || idx} className="flex items-center justify-between">
-                    <span className="truncate">{r.display_name || r.name || r.email || "Member"}</span>
+                    <span className="truncate">{r.display_name || "Member"}</span>
                     <span className="text-sm font-semibold">{r.points_total ?? 0} pts</span>
                   </li>
                 ))}
