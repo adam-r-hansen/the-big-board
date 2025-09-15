@@ -56,8 +56,8 @@ export default function GameCard({ game, teamIndex, right }: Props) {
   const homeTeam: TeamShape | undefined = game.home.id ? teamIndex?.[game.home.id] : undefined;
   const awayTeam: TeamShape | undefined = game.away.id ? teamIndex?.[game.away.id] : undefined;
 
-  const homeBg = pickTeamColor(homeTeam, "light");
-  const awayBg = pickTeamColor(awayTeam, "light");
+  const homeBg = pickTeamColor("light", homeTeam); 
+  const awayBg = pickTeamColor("light", awayTeam);
 
   const homeText = readableOn(homeBg);
   const awayText = readableOn(awayBg);
