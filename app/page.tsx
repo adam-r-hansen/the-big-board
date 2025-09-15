@@ -1,11 +1,16 @@
 'use client'
 
-// app/page.tsx — Home (stabilized)
+// app/page.tsx — Home (stabilized & minimal)
 /**
- * - Defaults NFL week by Tue→Mon boundaries.
- * - Auto-selects a league if the user has any.
- * - Never blocks UI on optional endpoints (teams, locked picks).
- * - Falls back to game-derived team index so GameCard shows labels/scores even without /api/teams.
+ * - Auto-selects the first league (no blank state).
+ * - Uses only working endpoints:
+ *     /api/leagues
+ *     /api/games-for-week?season=&week=
+ *     /api/my-picks?leagueId=&season=&week=
+ *     /api/standings?leagueId=&season=
+ * - No calls to /api/teams*, /api/wrinkles, /api/league-locked-picks.
+ * - Robust game label inference so GameCard always renders.
+ * - Week defaults to NFL Tue→Mon boundaries.
  */
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -14,39 +19,20 @@ import GameCard, { type GameCardGame } from '@/components/ui/GameCard'
 import AdminNavLink from '@/components/AdminNavLink'
 import { createClient as createSupabaseClient } from '@/utils/supabase/client'
 
-// —————————————————————————————————————————————————————
-// Tiny util
-// —————————————————————————————————————————————————————
 function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(' ')
 }
-const isAllCapsAbbr = (s?: string | null) =>
-  !!s && /^[A-Z]{2,4}$/.test(s.trim())
+const isLikelyAbbr = (s?: string | null) => !!s && /^[A-Za-z]{2,4}$/.test(s.trim())
 
-// —————————————————————————————————————————————————————
-// Types (defensive)
-// —————————————————————————————————————————————————————
+// ——— Types (defensive) ———
 type League = { id: string; name: string; season: number }
-type Team = {
-  id: string
-  abbreviation: string | null
-  name?: string | null
-  color_primary?: string | null
-  color_secondary?: string | null
-  logo?: string | null
-  logo_dark?: string | null
-}
-type TeamLike = Partial<Team> & {
-  ui_light_color_key?: string | null
-  ui_dark_color_key?: string | null
-}
 type Game = {
   id: string
   week: number
   game_utc?: string | null
   status?: 'UPCOMING' | 'LIVE' | 'FINAL' | string
-  home: { id?: string; abbr?: string | null; abbreviation?: string | null; score?: number | null; name?: string | null; logo?: string | null }
-  away: { id?: string; abbr?: string | null; abbreviation?: string | null; score?: number | null; name?: string | null; logo?: string | null }
+  home: { id?: string; abbr?: string | null; abbreviation?: string | null; name?: string | null; score?: number | null; logo?: string | null }
+  away: { id?: string; abbr?: string | null; abbreviation?: string | null; name?: string | null; score?: number | null; logo?: string | null }
 }
 type Pick = {
   id: string
@@ -55,25 +41,12 @@ type Pick = {
   status?: 'UPCOMING' | 'LIVE' | 'FINAL' | string
   points?: number | null
 }
-type MemberLockedPicks = {
-  profile_id: string
-  display_name?: string | null
-  points_week?: number | null
-  picks?: Array<{ team_id: string; status?: string; points?: number | null }>
-}
 
-// —————————————————————————————————————————————————————
-// Small UI: Card
-// —————————————————————————————————————————————————————
+// ——— Small UI ———
 function Card(props: { title: string; right?: ReactNode; className?: string; children: ReactNode }) {
   const { title, right, className, children } = props
   return (
-    <section
-      className={cn(
-        'rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5',
-        className
-      )}
-    >
+    <section className={cn('rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5', className)}>
       <header className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold">{title}</h2>
         {right}
@@ -83,15 +56,12 @@ function Card(props: { title: string; right?: ReactNode; className?: string; chi
   )
 }
 
-// —————————————————————————————————————————————————————
-// Helpers
-// —————————————————————————————————————————————————————
+// ——— Helpers ———
 function gameLocked(g?: Game | null) {
   if (!g) return false
   const s = (g.status || '').toUpperCase()
   return s === 'LIVE' || s === 'FINAL'
 }
-
 function pickPointsForGame(pickTeamId: string, g?: Game): number | null {
   if (!g) return null
   const s = (g.status || '').toUpperCase()
@@ -108,67 +78,45 @@ function pickPointsForGame(pickTeamId: string, g?: Game): number | null {
   return g.away.id === pickTeamId ? as : 0
 }
 
+// Normalize games; aggressively infer abbreviations from any hint
 function normalizeGames(arr: any[]): Game[] {
   return (arr || []).map((x) => {
-    // Resolve plausible abbreviations even if teams endpoint is missing
-    const homeId = x.home_id ?? x.home?.id ?? x.homeTeamId ?? x.home_abbr ?? x.home?.abbr ?? x.home?.abbreviation ?? null
-    const awayId = x.away_id ?? x.away?.id ?? x.awayTeamId ?? x.away_abbr ?? x.away?.abbr ?? x.away?.abbreviation ?? null
-    const homeAbbrRaw = x.home_abbr ?? x.home?.abbr ?? x.home?.abbreviation ?? (isAllCapsAbbr(homeId) ? homeId : null)
-    const awayAbbrRaw = x.away_abbr ?? x.away?.abbr ?? x.away?.abbreviation ?? (isAllCapsAbbr(awayId) ? awayId : null)
+    const homeId = x.home_id ?? x.home?.id ?? x.homeTeamId ?? null
+    const awayId = x.away_id ?? x.away?.id ?? x.awayTeamId ?? null
+
+    const homeAb =
+      x.home_abbr ?? x.home?.abbr ?? x.home?.abbreviation ??
+      (isLikelyAbbr(homeId) ? String(homeId).toUpperCase() : null)
+    const awayAb =
+      x.away_abbr ?? x.away?.abbr ?? x.away?.abbreviation ??
+      (isLikelyAbbr(awayId) ? String(awayId).toUpperCase() : null)
 
     return {
-      id:
-        x.id ||
-        x.game_id ||
-        `${x.season}-${x.week}-${homeAbbrRaw ?? ''}-${awayAbbrRaw ?? ''}`,
+      id: x.id || x.game_id || `${x.season}-${x.week}-${homeAb ?? ''}-${awayAb ?? ''}`,
       week: Number(x.week ?? x.game_week ?? 0),
       game_utc: x.game_utc ?? x.kickoff ?? x.date ?? null,
       status: (x.status || x.state || 'UPCOMING').toUpperCase(),
       home: {
-        id: homeId,
-        abbr: homeAbbrRaw,
-        abbreviation: homeAbbrRaw ?? null,
-        score: x.home_score ?? x.home?.score ?? null,
+        id: homeId ?? homeAb ?? undefined,
+        abbr: homeAb ?? null,
+        abbreviation: homeAb ?? null,
         name: x.home?.name ?? null,
+        score: x.home_score ?? x.home?.score ?? null,
         logo: x.home?.logo ?? null,
       },
       away: {
-        id: awayId,
-        abbr: awayAbbrRaw,
-        abbreviation: awayAbbrRaw ?? null,
-        score: x.away_score ?? x.away?.score ?? null,
+        id: awayId ?? awayAb ?? undefined,
+        abbr: awayAb ?? null,
+        abbreviation: awayAb ?? null,
         name: x.away?.name ?? null,
+        score: x.away_score ?? x.away?.score ?? null,
         logo: x.away?.logo ?? null,
       },
     }
   })
 }
 
-// Use teams map for right-side pills
-function useTeamIndex(teamMap: Record<string, Team>) {
-  return useMemo(() => {
-    const m: Record<string, TeamLike> = {}
-    for (const t of Object.values(teamMap || {})) {
-      const v: TeamLike = {
-        id: t.id,
-        abbreviation: t.abbreviation,
-        name: t.name,
-        color_primary: t.color_primary,
-        color_secondary: t.color_secondary,
-        logo: t.logo,
-        logo_dark: t.logo_dark,
-      }
-      if (t.id) m[t.id] = v
-      if (t.abbreviation) {
-        m[t.abbreviation] = v
-        m[t.abbreviation.toUpperCase()] = v
-      }
-    }
-    return m
-  }, [teamMap])
-}
-
-// Minimal team index for GameCard (works without /api/teams)
+// Build a minimal teamIndex for GameCard from the games themselves
 type TeamForCard = {
   id: string
   abbreviation: string | null
@@ -178,39 +126,16 @@ type TeamForCard = {
   logo: string | null
   logo_dark: string | null
 }
-function buildTeamIndexForCard(teamMap: Record<string, Team>, games: Game[]): Record<string, TeamForCard> {
+function buildTeamIndexForCard(games: Game[]): Record<string, TeamForCard> {
   const m: Record<string, TeamForCard> = {}
-
-  // 1) seed from teams (when available)
-  for (const t of Object.values(teamMap || {})) {
-    if (!t?.id) continue
-    const v: TeamForCard = {
-      id: t.id,
-      abbreviation: t.abbreviation ?? null,
-      name: t.name ?? null,
-      color_primary: t.color_primary ?? null,
-      color_secondary: t.color_secondary ?? null,
-      logo: t.logo ?? null,
-      logo_dark: t.logo_dark ?? null,
-    }
-    m[t.id] = v
-    if (t.abbreviation) {
-      m[t.abbreviation] = v
-      m[t.abbreviation.toUpperCase()] = v
-    }
-  }
-
-  // 2) augment from games (if teams endpoint is missing)
   for (const g of games || []) {
     for (const side of [g.home, g.away]) {
-      const id = side.id || ''
-      const ab = (side.abbr || side.abbreviation || '') as string
-      const key = id || ab
-      if (!key) continue
-      if (m[key]) continue
+      const id = (side.id || side.abbr || side.abbreviation || '') as string
+      if (!id) continue
+      if (m[id]) continue
       const v: TeamForCard = {
-        id: id || ab || '',
-        abbreviation: (ab || null) as string | null,
+        id,
+        abbreviation: (side.abbr || side.abbreviation || (isLikelyAbbr(id) ? id.toUpperCase() : null)) as string | null,
         name: (side.name ?? null) as string | null,
         color_primary: null,
         color_secondary: null,
@@ -224,59 +149,48 @@ function buildTeamIndexForCard(teamMap: Record<string, Team>, games: Game[]): Re
       }
     }
   }
-
   return m
 }
 
-// —————————————————————————————————————————————————————
-// NFL week calc (Tuesday→Monday) by season
-// —————————————————————————————————————————————————————
+// NFL week calc (Tue→Mon)
 function firstTuesdayOnOrAfterSept1(seasonYear: number) {
   const d = new Date(seasonYear, 8 /* Sept */, 1, 0, 0, 0, 0)
-  const day = d.getDay() // 0=Sun..2=Tue
+  const day = d.getDay()
   const delta = (9 - day) % 7
   d.setDate(d.getDate() + delta)
   return d
 }
-function stripTime(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
-}
+function stripTime(d: Date): Date { return new Date(d.getFullYear(), d.getMonth(), d.getDate()) }
 function currentNflWeekForSeason(seasonYear: number, today = new Date()): number {
   const anchor = firstTuesdayOnOrAfterSept1(seasonYear)
   if (today.getTime() < anchor.getTime()) return 1
-  const MS_PER_DAY = 24 * 60 * 60 * 1000
-  const diffDays = Math.floor((stripTime(today).getTime() - stripTime(anchor).getTime()) / MS_PER_DAY)
+  const MS = 24 * 60 * 60 * 1000
+  const diffDays = Math.floor((stripTime(today).getTime() - stripTime(anchor).getTime()) / MS)
   const week = 1 + Math.floor(diffDays / 7)
   return Math.min(18, Math.max(1, week))
 }
 
-// —————————————————————————————————————————————————————
+// ——— Component ———
 function HomeInner() {
   const [leagues, setLeagues] = useState<League[]>([])
-  const [leagueId, setLeagueId] = useState('')
+  const [leagueId, setLeagueId] = useState<string>('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
   const [week, setWeek] = useState<number>(1)
   const [userPickedWeek, setUserPickedWeek] = useState(false)
 
-  const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
   const [games, setGames] = useState<Game[]>([])
   const [myPicks, setMyPicks] = useState<Pick[]>([])
-  const [wrinkleExtra, setWrinkleExtra] = useState<number>(0)
-
-  const [leagueLocked, setLeagueLocked] = useState<MemberLockedPicks[]>([])
   const [standRows, setStandRows] = useState<any[]>([])
-
   const [authReady, setAuthReady] = useState(false)
 
-  const teamIndexLoose = useTeamIndex(teamMap) // right side chips, etc.
-  const teamIndexForCard = useMemo(() => buildTeamIndexForCard(teamMap, games), [teamMap, games])
+  const teamIndexForCard = useMemo(() => buildTeamIndexForCard(games), [games])
 
   const picksUsed = myPicks.length
-  const picksAllowed = 2 + (wrinkleExtra || 0)
+  const picksAllowed = 2 // wrinkles removed (endpoint 404)
   const picksLocked = myPicks.filter((p) => p.status === 'FINAL' || p.status === 'LIVE').length
   const weekPoints = myPicks.reduce((acc, p) => acc + (typeof p.points === 'number' ? p.points : 0), 0)
 
-  // ——— Auth callback cleanup + ready flag ———
+  // Auth callback cleanup + ready flag
   useEffect(() => {
     const url = new URL(window.location.href)
     const code = url.searchParams.get('code')
@@ -298,7 +212,7 @@ function HomeInner() {
     })()
   }, [])
 
-  // 1) Leagues (always) — auto-select first league if any
+  // 1) Leagues — auto-select the first immediately
   useEffect(() => {
     if (!authReady) return
     ;(async () => {
@@ -309,7 +223,7 @@ function HomeInner() {
           const L: League[] = Array.isArray(data?.leagues) ? data.leagues : data?.rows || data || []
           setLeagues(L)
           if (L.length > 0) {
-            setLeagueId((prev) => prev || L[0].id) // auto-select immediately
+            setLeagueId((prev) => prev || L[0].id)
             setSeason(L[0].season || new Date().getFullYear())
           }
         } else {
@@ -321,7 +235,7 @@ function HomeInner() {
     })()
   }, [authReady])
 
-  // 2) Games (by season/week) — independent of league
+  // 2) Games — by season/week
   useEffect(() => {
     if (!authReady) return
     ;(async () => {
@@ -341,47 +255,9 @@ function HomeInner() {
     })()
   }, [authReady, season, week])
 
-  // 3) Teams (optional) — try a couple of likely endpoints; never block UI
+  // 3) My Picks — only when leagueId exists
   useEffect(() => {
-    if (!authReady) return
-    ;(async () => {
-      const tryEndpoints = ['/api/teams', '/api/team-index', '/api/teams-index']
-      for (const url of tryEndpoints) {
-        try {
-          const r = await fetch(url, { cache: 'no-store' })
-          if (!r.ok) {
-            console.warn(`${url} failed`, r.status)
-            continue
-          }
-          const data = await r.json()
-          const teamsArr = Array.isArray(data?.teams) ? data.teams : Array.isArray(data) ? data : []
-          if (teamsArr.length === 0) continue
-          const map: Record<string, Team> = {}
-          for (const it of teamsArr) {
-            if (!it?.id) continue
-            map[it.id] = it
-            const ab = it.abbreviation || (it as any).abbr
-            if (ab) {
-              map[ab] = it as Team
-              map[ab.toUpperCase()] = it as Team
-            }
-          }
-          setTeamMap(map)
-          return
-        } catch (e) {
-          console.warn('teams fetch error', e)
-        }
-      }
-      setTeamMap((m) => m || {}) // leave empty -> GameCard uses game-derived fallback
-    })()
-  }, [authReady])
-
-  // 4) My Picks (ONLY when leagueId exists; include leagueId)
-  useEffect(() => {
-    if (!authReady || !leagueId) {
-      setMyPicks([])
-      return
-    }
+    if (!authReady || !leagueId) { setMyPicks([]); return }
     ;(async () => {
       try {
         const url = `/api/my-picks?leagueId=${encodeURIComponent(leagueId)}&season=${season}&week=${week}`
@@ -401,61 +277,26 @@ function HomeInner() {
     })()
   }, [authReady, leagueId, season, week])
 
-  // 5) Wrinkles + Standings + Locked Picks (ONLY with leagueId)
+  // 4) Standings — only when leagueId exists
   useEffect(() => {
-    if (!authReady || !leagueId) {
-      setWrinkleExtra(0)
-      setStandRows([])
-      setLeagueLocked([])
-      return
-    }
+    if (!authReady || !leagueId) { setStandRows([]); return }
     ;(async () => {
       try {
-        const [wRes, sRes] = await Promise.all([
-          fetch(`/api/wrinkles?leagueId=${leagueId}`, { cache: 'no-store' }),
-          fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }),
-        ])
-
-        if (wRes.ok) {
-          const w = await wRes.json()
-          const extra = Array.isArray(w?.wrinkles)
-            ? w.wrinkles.reduce((acc: number, it: any) => acc + (Number(it?.extra_picks) || 0), 0)
-            : 0
-          setWrinkleExtra(extra)
-        } else {
-          setWrinkleExtra(0)
-        }
-
-        if (sRes.ok) {
-          const s = await sRes.json()
+        const res = await fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
+        if (res.ok) {
+          const s = await res.json()
           const rows = Array.isArray(s) ? s : (s?.standings || s?.rows || [])
           setStandRows(rows || [])
         } else {
           setStandRows([])
         }
-      } catch (e) {
-        console.error('Load wrinkles/standings failed', e)
-        setWrinkleExtra(0)
+      } catch {
         setStandRows([])
       }
-
-      // Locked picks (best-guess endpoint; safe no-op if 404)
-      try {
-        const lp = await fetch(`/api/league-locked-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' })
-        if (lp.ok) {
-          const data = await lp.json()
-          const arr = Array.isArray(data) ? data : (data?.rows || data?.members || [])
-          if (Array.isArray(arr)) setLeagueLocked(arr as MemberLockedPicks[])
-        } else {
-          setLeagueLocked([])
-        }
-      } catch {
-        setLeagueLocked([])
-      }
     })()
-  }, [authReady, leagueId, season, week])
+  }, [authReady, leagueId, season])
 
-  // Default the week based on NFL Tue→Mon boundaries (don’t override manual pick)
+  // Default NFL week (Tue→Mon), don’t override manual choice
   useEffect(() => {
     if (userPickedWeek) return
     const computed = currentNflWeekForSeason(season, new Date())
@@ -463,7 +304,6 @@ function HomeInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season])
 
-  // ——— Render ———
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
       <header className="mb-6 flex items-center justify-between">
@@ -600,19 +440,19 @@ function HomeInner() {
             ) : myPicks.length === 0 ? (
               <div className="text-sm text-neutral-500">No picks yet.</div>
             ) : (
-              <ul className="grid gap-2 max-h-64 overflow-auto pr-1"> {/* cap height so it can’t take over */}
+              <ul className="grid gap-2 max-h-64 overflow-auto pr-1">
                 {myPicks.map((p) => {
                   const g = games.find((gg) => gg.id === p.game_id)
                   const s = (g?.status || (gameLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase()
                   const pts = pickPointsForGame(p.team_id, g)
-                  const teamMeta = teamIndexLoose[p.team_id]
-                  const abbr = (teamMeta?.abbreviation as string) || '—'
+                  const abbr =
+                    (g?.home.id === p.team_id ? (g.home.abbr || g.home.abbreviation) : undefined) ||
+                    (g?.away.id === p.team_id ? (g.away.abbr || g.away.abbreviation) : undefined) ||
+                    (isLikelyAbbr(p.team_id) ? p.team_id.toUpperCase() : '—')
                   return (
                     <li key={p.id} className="flex items-center justify-between">
-                      <span>
-                        <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
-                          <span className="font-semibold">{abbr}</span>
-                        </span>
+                      <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
+                        <span className="font-semibold">{abbr || '—'}</span>
                       </span>
                       <span className="flex items-center gap-2">
                         {typeof pts === 'number' && <span className="text-[10px] font-bold">{pts} pts</span>}
@@ -621,39 +461,6 @@ function HomeInner() {
                     </li>
                   )
                 })}
-              </ul>
-            )}
-          </Card>
-
-          <Card title="League picks (locked)">
-            {!leagueId ? (
-              <div className="text-sm text-neutral-500">Select a league to view locked picks.</div>
-            ) : leagueLocked.length === 0 ? (
-              <div className="text-sm text-neutral-500">No locked picks yet.</div>
-            ) : (
-              <ul className="grid gap-3">
-                {leagueLocked.map((m) => (
-                  <li key={m.profile_id} className="border rounded-xl px-3 py-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium">{m.display_name || 'Member'}</span>
-                      <span className="text-neutral-600">{m.points_week ?? 0} pts</span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {m.picks && m.picks.length > 0 ? (
-                        m.picks.map((pk, idx) => {
-                          const ab = (teamIndexLoose[pk.team_id]?.abbreviation as string) || '—'
-                          return (
-                            <span key={`${m.profile_id}-${idx}`} className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
-                              <span className="font-semibold">{ab}</span>
-                            </span>
-                          )
-                        })
-                      ) : (
-                        <span className="text-xs text-neutral-500">No locked picks yet.</span>
-                      )}
-                    </div>
-                  </li>
-                ))}
               </ul>
             )}
           </Card>
