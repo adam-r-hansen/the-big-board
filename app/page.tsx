@@ -1,11 +1,11 @@
 'use client'
 
-// app/page.tsx
+// app/page.tsx — Home (stabilized)
 /**
- * Home:
- *  - Defaults NFL week by Tue→Mon boundaries.
- *  - Never blocks UI on optional endpoints.
- *  - Renders games even if /api/teams is missing.
+ * - Defaults NFL week by Tue→Mon boundaries.
+ * - Auto-selects a league if the user has any.
+ * - Never blocks UI on optional endpoints (teams, locked picks).
+ * - Falls back to game-derived team index so GameCard shows labels/scores even without /api/teams.
  */
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -15,14 +15,16 @@ import AdminNavLink from '@/components/AdminNavLink'
 import { createClient as createSupabaseClient } from '@/utils/supabase/client'
 
 // —————————————————————————————————————————————————————
-// Tiny util (replaces '@/lib/utils')
+// Tiny util
 // —————————————————————————————————————————————————————
 function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(' ')
 }
+const isAllCapsAbbr = (s?: string | null) =>
+  !!s && /^[A-Z]{2,4}$/.test(s.trim())
 
 // —————————————————————————————————————————————————————
-// Types (kept loose / defensive around API responses)
+// Types (defensive)
 // —————————————————————————————————————————————————————
 type League = { id: string; name: string; season: number }
 type Team = {
@@ -107,31 +109,39 @@ function pickPointsForGame(pickTeamId: string, g?: Game): number | null {
 }
 
 function normalizeGames(arr: any[]): Game[] {
-  return (arr || []).map((x) => ({
-    id:
-      x.id ||
-      x.game_id ||
-      `${x.season}-${x.week}-${x.home_abbr ?? x.home?.abbr ?? ''}-${x.away_abbr ?? x.away?.abbr ?? ''}`,
-    week: Number(x.week ?? x.game_week ?? 0),
-    game_utc: x.game_utc ?? x.kickoff ?? x.date ?? null,
-    status: (x.status || x.state || 'UPCOMING').toUpperCase(),
-    home: {
-      id: x.home_id ?? x.home?.id ?? x.homeTeamId ?? x.home_abbr ?? x.home?.abbr ?? x.home?.abbreviation ?? null,
-      abbr: x.home_abbr ?? x.home?.abbr ?? x.home?.abbreviation ?? null,
-      abbreviation: x.home?.abbreviation ?? x.home_abbr ?? null,
-      score: x.home_score ?? x.home?.score ?? null,
-      name: x.home?.name ?? null,
-      logo: x.home?.logo ?? null,
-    },
-    away: {
-      id: x.away_id ?? x.away?.id ?? x.awayTeamId ?? x.away_abbr ?? x.away?.abbr ?? x.away?.abbreviation ?? null,
-      abbr: x.away_abbr ?? x.away?.abbr ?? x.away?.abbreviation ?? null,
-      abbreviation: x.away?.abbreviation ?? x.away_abbr ?? null,
-      score: x.away_score ?? x.away?.score ?? null,
-      name: x.away?.name ?? null,
-      logo: x.away?.logo ?? null,
-    },
-  }))
+  return (arr || []).map((x) => {
+    // Resolve plausible abbreviations even if teams endpoint is missing
+    const homeId = x.home_id ?? x.home?.id ?? x.homeTeamId ?? x.home_abbr ?? x.home?.abbr ?? x.home?.abbreviation ?? null
+    const awayId = x.away_id ?? x.away?.id ?? x.awayTeamId ?? x.away_abbr ?? x.away?.abbr ?? x.away?.abbreviation ?? null
+    const homeAbbrRaw = x.home_abbr ?? x.home?.abbr ?? x.home?.abbreviation ?? (isAllCapsAbbr(homeId) ? homeId : null)
+    const awayAbbrRaw = x.away_abbr ?? x.away?.abbr ?? x.away?.abbreviation ?? (isAllCapsAbbr(awayId) ? awayId : null)
+
+    return {
+      id:
+        x.id ||
+        x.game_id ||
+        `${x.season}-${x.week}-${homeAbbrRaw ?? ''}-${awayAbbrRaw ?? ''}`,
+      week: Number(x.week ?? x.game_week ?? 0),
+      game_utc: x.game_utc ?? x.kickoff ?? x.date ?? null,
+      status: (x.status || x.state || 'UPCOMING').toUpperCase(),
+      home: {
+        id: homeId,
+        abbr: homeAbbrRaw,
+        abbreviation: homeAbbrRaw ?? null,
+        score: x.home_score ?? x.home?.score ?? null,
+        name: x.home?.name ?? null,
+        logo: x.home?.logo ?? null,
+      },
+      away: {
+        id: awayId,
+        abbr: awayAbbrRaw,
+        abbreviation: awayAbbrRaw ?? null,
+        score: x.away_score ?? x.away?.score ?? null,
+        name: x.away?.name ?? null,
+        logo: x.away?.logo ?? null,
+      },
+    }
+  })
 }
 
 // Use teams map for right-side pills
@@ -261,10 +271,6 @@ function HomeInner() {
   const teamIndexLoose = useTeamIndex(teamMap) // right side chips, etc.
   const teamIndexForCard = useMemo(() => buildTeamIndexForCard(teamMap, games), [teamMap, games])
 
-  const singleLeague = leagues.length === 1
-  const noLeagues = leagues.length === 0
-
-  // derived
   const picksUsed = myPicks.length
   const picksAllowed = 2 + (wrinkleExtra || 0)
   const picksLocked = myPicks.filter((p) => p.status === 'FINAL' || p.status === 'LIVE').length
@@ -279,7 +285,6 @@ function HomeInner() {
         if (code) {
           const supabase = createSupabaseClient()
           await supabase.auth.exchangeCodeForSession(code)
-          // strip auth params
           const AUTH_PARAMS = ['code','type','scope','auth_callback','next','redirect_to','provider','refresh_token','access_token']
           const clean = new URL(window.location.href)
           AUTH_PARAMS.forEach((p) => clean.searchParams.delete(p))
@@ -293,22 +298,22 @@ function HomeInner() {
     })()
   }, [])
 
-  // 1) Leagues (always)
+  // 1) Leagues (always) — auto-select first league if any
   useEffect(() => {
     if (!authReady) return
     ;(async () => {
       try {
-        const leaguesRes = await fetch('/api/leagues', { cache: 'no-store' })
-        if (leaguesRes.ok) {
-          const data = await leaguesRes.json()
-          const L = Array.isArray(data?.leagues) ? data.leagues : data?.rows || data || []
+        const res = await fetch('/api/leagues', { cache: 'no-store' })
+        if (res.ok) {
+          const data = await res.json()
+          const L: League[] = Array.isArray(data?.leagues) ? data.leagues : data?.rows || data || []
           setLeagues(L)
-          if (L.length === 1) {
-            setLeagueId(L[0].id)
-            setSeason(L[0].season)
+          if (L.length > 0) {
+            setLeagueId((prev) => prev || L[0].id) // auto-select immediately
+            setSeason(L[0].season || new Date().getFullYear())
           }
         } else {
-          console.warn('/api/leagues failed', leaguesRes.status)
+          console.warn('/api/leagues failed', res.status)
         }
       } catch (e) {
         console.error('Load leagues failed', e)
@@ -336,7 +341,7 @@ function HomeInner() {
     })()
   }, [authReady, season, week])
 
-  // 3) Teams (optional) — try a couple of likely endpoints, but NEVER block UI
+  // 3) Teams (optional) — try a couple of likely endpoints; never block UI
   useEffect(() => {
     if (!authReady) return
     ;(async () => {
@@ -367,8 +372,7 @@ function HomeInner() {
           console.warn('teams fetch error', e)
         }
       }
-      // If all endpoints fail, leave teamMap empty (GameCard will use game-derived fallback).
-      setTeamMap((m) => m || {})
+      setTeamMap((m) => m || {}) // leave empty -> GameCard uses game-derived fallback
     })()
   }, [authReady])
 
@@ -397,7 +401,7 @@ function HomeInner() {
     })()
   }, [authReady, leagueId, season, week])
 
-  // 5) Wrinkles + Standings (ONLY with leagueId)
+  // 5) Wrinkles + Standings + Locked Picks (ONLY with leagueId)
   useEffect(() => {
     if (!authReady || !leagueId) {
       setWrinkleExtra(0)
@@ -426,7 +430,6 @@ function HomeInner() {
           const s = await sRes.json()
           const rows = Array.isArray(s) ? s : (s?.standings || s?.rows || [])
           setStandRows(rows || [])
-          // If your standings payload includes per-member locked picks, you can wire them here.
         } else {
           setStandRows([])
         }
@@ -435,8 +438,22 @@ function HomeInner() {
         setWrinkleExtra(0)
         setStandRows([])
       }
+
+      // Locked picks (best-guess endpoint; safe no-op if 404)
+      try {
+        const lp = await fetch(`/api/league-locked-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' })
+        if (lp.ok) {
+          const data = await lp.json()
+          const arr = Array.isArray(data) ? data : (data?.rows || data?.members || [])
+          if (Array.isArray(arr)) setLeagueLocked(arr as MemberLockedPicks[])
+        } else {
+          setLeagueLocked([])
+        }
+      } catch {
+        setLeagueLocked([])
+      }
     })()
-  }, [authReady, leagueId, season])
+  }, [authReady, leagueId, season, week])
 
   // Default the week based on NFL Tue→Mon boundaries (don’t override manual pick)
   useEffect(() => {
@@ -506,143 +523,168 @@ function HomeInner() {
         </div>
       </section>
 
-      {noLeagues ? (
-        <Card title="Join a league">
-          <p className="text-sm text-neutral-600">
-            Ask your commissioner for an invite link and visit <code>/join?leagueId=…</code>.
-          </p>
-        </Card>
-      ) : (
-        <div className="grid lg:grid-cols-12 gap-6">
-          {/* LEFT 2/3 */}
-          <div className="lg:col-span-8 grid gap-6">
-            <Card
-              title="League overview"
-              right={
-                leagueId ? (
+      <div className="grid lg:grid-cols-12 gap-6">
+        {/* LEFT 2/3 */}
+        <div className="lg:col-span-8 grid gap-6">
+          <Card
+            title="League overview"
+            right={
+              leagueId ? (
+                <Link href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`} className="text-sm underline">
+                  Make picks →
+                </Link>
+              ) : null
+            }
+          >
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="rounded-xl border px-4 py-3">
+                <div className="text-xs text-neutral-500">Picks used</div>
+                <div className="text-2xl font-semibold">{picksUsed}</div>
+              </div>
+              <div className="rounded-xl border px-4 py-3">
+                <div className="text-xs text-neutral-500">Points (wk)</div>
+                <div className="text-2xl font-semibold">{weekPoints}</div>
+              </div>
+              <div className="rounded-xl border px-4 py-3">
+                <div className="text-xs text-neutral-500">Remaining</div>
+                <div className="text-2xl font-semibold">{Math.max(0, picksAllowed - picksUsed)}</div>
+              </div>
+              <div className="rounded-xl border px-4 py-3">
+                <div className="text-xs text-neutral-500">Locked</div>
+                <div className="text-2xl font-semibold">{picksLocked}</div>
+              </div>
+            </div>
+          </Card>
+
+          <Card
+            title={`Week ${week} — Games`}
+            right={
+              <div className="flex items-center gap-3">
+                {leagueId && (
                   <Link href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`} className="text-sm underline">
                     Make picks →
                   </Link>
-                ) : null
-              }
-            >
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="rounded-xl border px-4 py-3">
-                  <div className="text-xs text-neutral-500">Picks used</div>
-                  <div className="text-2xl font-semibold">{picksUsed}</div>
-                </div>
-                <div className="rounded-xl border px-4 py-3">
-                  <div className="text-xs text-neutral-500">Points (wk)</div>
-                  <div className="text-2xl font-semibold">{weekPoints}</div>
-                </div>
-                <div className="rounded-xl border px-4 py-3">
-                  <div className="text-xs text-neutral-500">Remaining</div>
-                  <div className="text-2xl font-semibold">{Math.max(0, picksAllowed - picksUsed)}</div>
-                </div>
-                <div className="rounded-xl border px-4 py-3">
-                  <div className="text-xs text-neutral-500">Locked</div>
-                  <div className="text-2xl font-semibold">{picksLocked}</div>
-                </div>
+                )}
+                <Link href="/scoreboard" className="text-xs underline">
+                  Scoreboard →
+                </Link>
               </div>
-            </Card>
-
-            <Card
-              title={`Week ${week} — Games`}
-              right={
-                <div className="flex items-center gap-3">
-                  {leagueId && (
-                    <Link href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`} className="text-sm underline">
-                      Make picks →
-                    </Link>
-                  )}
-                  <Link href="/scoreboard" className="text-xs underline">
-                    Scoreboard →
-                  </Link>
-                </div>
-              }
-            >
-              {games.length === 0 ? (
-                <div className="text-sm text-neutral-500">No games.</div>
-              ) : (
-                <div className="grid gap-4">
-                  {games.map((g) => (
-                    <GameCard key={g.id} game={g as unknown as GameCardGame} teamIndex={teamIndexForCard as any} />
-                  ))}
-                </div>
-              )}
-            </Card>
-          </div>
-
-          {/* RIGHT 1/3 */}
-          <aside className="lg:col-span-4 grid gap-6">
-            <Card
-              title={`My picks — Week ${week}`}
-              right={
-                leagueId ? (
-                  <Link href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`} className="text-xs underline">
-                    Edit on Picks →
-                  </Link>
-                ) : null
-              }
-            >
-              {!leagueId ? (
-                <div className="text-sm text-neutral-500">Select a league to view your picks.</div>
-              ) : myPicks.length === 0 ? (
-                <div className="text-sm text-neutral-500">No picks yet.</div>
-              ) : (
-                <ul className="grid gap-2">
-                  {myPicks.map((p) => {
-                    const g = games.find((gg) => gg.id === p.game_id)
-                    const s = (g?.status || (gameLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase()
-                    const pts = pickPointsForGame(p.team_id, g)
-                    const teamMeta = teamIndexLoose[p.team_id]
-                    const abbr = (teamMeta?.abbreviation as string) || '—'
-                    return (
-                      <li key={p.id} className="flex items-center justify-between">
-                        <span>
-                          <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
-                            <span className="font-semibold">{abbr}</span>
-                          </span>
-                        </span>
-                        <span className="flex items-center gap-2">
-                          {typeof pts === 'number' && <span className="text-[10px] font-bold">{pts} pts</span>}
-                          <span className="text-[10px] uppercase tracking-wide text-neutral-500">{s}</span>
-                        </span>
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-            </Card>
-
-            <Card
-              title="Standings (mini)"
-              right={
-                leagueId ? (
-                  <Link href={`/standings?leagueId=${leagueId}&season=${season}`} className="text-xs underline">
-                    Full standings →
-                  </Link>
-                ) : null
-              }
-            >
-              {!leagueId ? (
-                <div className="text-sm text-neutral-500">Select a league to view standings.</div>
-              ) : standRows.length === 0 ? (
-                <div className="text-sm text-neutral-500">No standings yet.</div>
-              ) : (
-                <ol className="grid gap-2">
-                  {standRows.map((r: any, idx: number) => (
-                    <li key={r.profile_id || r.id || idx} className="flex items-center justify-between">
-                      <span className="truncate">{r.display_name || r.name || r.email || 'Member'}</span>
-                      <span className="text-sm font-semibold">{r.points_total ?? 0} pts</span>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </Card>
-          </aside>
+            }
+          >
+            {games.length === 0 ? (
+              <div className="text-sm text-neutral-500">No games.</div>
+            ) : (
+              <div className="grid gap-4">
+                {games.map((g) => (
+                  <GameCard key={g.id} game={g as unknown as GameCardGame} teamIndex={teamIndexForCard as any} />
+                ))}
+              </div>
+            )}
+          </Card>
         </div>
-      )}
+
+        {/* RIGHT 1/3 */}
+        <aside className="lg:col-span-4 grid gap-6">
+          <Card
+            title={`My picks — Week ${week}`}
+            right={
+              leagueId ? (
+                <Link href={`/picks?leagueId=${leagueId}&season=${season}&week=${week}`} className="text-xs underline">
+                  Edit on Picks →
+                </Link>
+              ) : null
+            }
+          >
+            {!leagueId ? (
+              <div className="text-sm text-neutral-500">Select a league to view your picks.</div>
+            ) : myPicks.length === 0 ? (
+              <div className="text-sm text-neutral-500">No picks yet.</div>
+            ) : (
+              <ul className="grid gap-2 max-h-64 overflow-auto pr-1"> {/* cap height so it can’t take over */}
+                {myPicks.map((p) => {
+                  const g = games.find((gg) => gg.id === p.game_id)
+                  const s = (g?.status || (gameLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase()
+                  const pts = pickPointsForGame(p.team_id, g)
+                  const teamMeta = teamIndexLoose[p.team_id]
+                  const abbr = (teamMeta?.abbreviation as string) || '—'
+                  return (
+                    <li key={p.id} className="flex items-center justify-between">
+                      <span>
+                        <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
+                          <span className="font-semibold">{abbr}</span>
+                        </span>
+                      </span>
+                      <span className="flex items-center gap-2">
+                        {typeof pts === 'number' && <span className="text-[10px] font-bold">{pts} pts</span>}
+                        <span className="text-[10px] uppercase tracking-wide text-neutral-500">{s}</span>
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </Card>
+
+          <Card title="League picks (locked)">
+            {!leagueId ? (
+              <div className="text-sm text-neutral-500">Select a league to view locked picks.</div>
+            ) : leagueLocked.length === 0 ? (
+              <div className="text-sm text-neutral-500">No locked picks yet.</div>
+            ) : (
+              <ul className="grid gap-3">
+                {leagueLocked.map((m) => (
+                  <li key={m.profile_id} className="border rounded-xl px-3 py-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium">{m.display_name || 'Member'}</span>
+                      <span className="text-neutral-600">{m.points_week ?? 0} pts</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {m.picks && m.picks.length > 0 ? (
+                        m.picks.map((pk, idx) => {
+                          const ab = (teamIndexLoose[pk.team_id]?.abbreviation as string) || '—'
+                          return (
+                            <span key={`${m.profile_id}-${idx}`} className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
+                              <span className="font-semibold">{ab}</span>
+                            </span>
+                          )
+                        })
+                      ) : (
+                        <span className="text-xs text-neutral-500">No locked picks yet.</span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
+          <Card
+            title="Standings (mini)"
+            right={
+              leagueId ? (
+                <Link href={`/standings?leagueId=${leagueId}&season=${season}`} className="text-xs underline">
+                  Full standings →
+                </Link>
+              ) : null
+            }
+          >
+            {!leagueId ? (
+              <div className="text-sm text-neutral-500">Select a league to view standings.</div>
+            ) : standRows.length === 0 ? (
+              <div className="text-sm text-neutral-500">No standings yet.</div>
+            ) : (
+              <ol className="grid gap-2">
+                {standRows.map((r: any, idx: number) => (
+                  <li key={r.profile_id || r.id || idx} className="flex items-center justify-between">
+                    <span className="truncate">{r.display_name || r.name || r.email || 'Member'}</span>
+                    <span className="text-sm font-semibold">{r.points_total ?? 0} pts</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </Card>
+        </aside>
+      </div>
     </main>
   )
 }
