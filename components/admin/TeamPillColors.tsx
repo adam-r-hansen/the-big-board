@@ -4,25 +4,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import TeamPill, { TeamShape } from '@/components/ui/TeamPill'
 
-type TeamRow = {
-  id: string
-  abbreviation?: string | null
-  name?: string | null
+type ColorKey = 'color_primary' | 'color_secondary' | 'color_tertiary' | 'color_quaternary'
+
+type TeamRow = TeamShape & {
+  // all the color fields may be null in some rows
   color_primary?: string | null
   color_secondary?: string | null
   color_tertiary?: string | null
   color_quaternary?: string | null
-  ui_light_color_key?: string | null
-  ui_dark_color_key?: string | null
-  color_pref_light?: string | null
-  color_pref_dark?: string | null
 }
-
-type ColorKey =
-  | 'color_primary'
-  | 'color_secondary'
-  | 'color_tertiary'
-  | 'color_quaternary'
 
 function cx(...xs: (string | false | null | undefined)[]) {
   return xs.filter(Boolean).join(' ')
@@ -40,9 +30,9 @@ async function post<T = any>(url: string, body: any): Promise<T> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
-  const text = await res.text()
+  const txt = await res.text()
   let data: any = {}
-  try { data = text ? JSON.parse(text) : {} } catch { data = { raw: text } }
+  try { data = txt ? JSON.parse(txt) : {} } catch { data = { raw: txt } }
   if (!res.ok) throw new Error(data?.error || `${res.status} ${res.statusText}`)
   return data
 }
@@ -51,6 +41,7 @@ export default function TeamPillColors() {
   const [teams, setTeams] = useState<TeamRow[]>([])
   const [teamId, setTeamId] = useState<string>('')
 
+  // the selected keys to *preview* and to *save*
   const [lightKey, setLightKey] = useState<ColorKey | ''>('')
   const [darkKey, setDarkKey] = useState<ColorKey | ''>('')
 
@@ -59,73 +50,84 @@ export default function TeamPillColors() {
 
   function flash(s: string) {
     setMsg(s)
-    setTimeout(() => setMsg(''), 2500)
+    setTimeout(() => setMsg(''), 2200)
   }
 
-  async function loadTeams(preserveId?: string) {
-    const tm = await get<any>('/api/team-map')
-    const arr = Object.values<TeamRow>(tm?.teams || {})
-    arr.sort((a, b) => (a.abbreviation || '').localeCompare(b.abbreviation || ''))
-    setTeams(arr)
-    if (preserveId) {
-      setTeamId(preserveId)
-    } else if (!teamId && arr[0]) {
-      setTeamId(arr[0].id)
-    }
-  }
-
-  // fetch team map once
+  // Load all teams (palette colors) one time
   useEffect(() => {
     ;(async () => {
       try {
-        await loadTeams()
+        // team-map already returns every team + colors (your existing endpoint)
+        const tm = await get<any>('/api/team-map')
+        const arr = Object.values<TeamRow>(tm?.teams || {})
+        arr.sort((a, b) => (a.abbreviation || '').localeCompare(b.abbreviation || ''))
+        setTeams(arr)
+        if (arr[0]) setTeamId(arr[0].id)
       } catch (e: any) {
         flash(`Load failed: ${e.message || e}`)
       }
     })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // helper to read saved keys for a specific team from admin API
+  async function loadSavedKeys(tid: string) {
+    try {
+      const j = await get<any>(`/api/admin/team-pill-colors?teamId=${encodeURIComponent(tid)}`)
+      // shape: { teamId, ui_light_color_key, ui_dark_color_key } or {}
+      const lk = j?.ui_light_color_key as ColorKey | undefined
+      const dk = j?.ui_dark_color_key as ColorKey | undefined
+      if (lk) setLightKey(lk)
+      if (dk) setDarkKey(dk)
+      // also mirror into local teams[] so previews keep working when switching around
+      if (lk || dk) {
+        setTeams(prev =>
+          prev.map(t => (t.id === tid ? { ...t, ui_light_color_key: lk ?? t.ui_light_color_key, ui_dark_color_key: dk ?? t.ui_dark_color_key } : t))
+        )
+      }
+    } catch {
+      // silently ignore; we’ll fall back to defaults below
+    }
+  }
+
+  // When team changes, seed keys from SAVED -> fallback to sensible defaults
+  useEffect(() => {
+    const t = teams.find(x => x.id === teamId)
+    if (!t) return
+
+    // seed defaults
+    const options = colorOptionsForTeam(t)
+    let lk: ColorKey | '' =
+      (t.ui_light_color_key as ColorKey | null) ??
+      (options.find(o => o.value === 'color_primary')?.value as ColorKey | undefined) ??
+      (options[0]?.value as ColorKey | undefined) ??
+      ''
+    let dk: ColorKey | '' =
+      (t.ui_dark_color_key as ColorKey | null) ??
+      (options.find(o => o.value === 'color_secondary')?.value as ColorKey | undefined) ??
+      (options[0]?.value as ColorKey | undefined) ??
+      ''
+    setLightKey(lk || '')
+    setDarkKey(dk || '')
+
+    // then fetch saved keys from admin API to override if present
+    loadSavedKeys(t.id)
+  }, [teamId, teams])
 
   const team = useMemo(() => teams.find(t => t.id === teamId), [teamId, teams])
 
-  // when team changes, seed keys from stored prefs or sensible defaults
-  useEffect(() => {
-    const t = team
-    if (!t) return
-    const available = colorOptionsForTeam(t).map(o => o.value)
-    const defaultLight =
-      (t.ui_light_color_key as ColorKey | null) ||
-      (t.color_pref_light ? nearestKeyForHex(t, t.color_pref_light) : null) ||
-      (available.includes('color_primary') ? 'color_primary' : available[0] || '')
-    const defaultDark =
-      (t.ui_dark_color_key as ColorKey | null) ||
-      (t.color_pref_dark ? nearestKeyForHex(t, t.color_pref_dark) : null) ||
-      (available.includes('color_secondary') ? 'color_secondary' : available[0] || '')
-    setLightKey(defaultLight || '')
-    setDarkKey(defaultDark || '')
-  }, [team])
+  // compute hex for display next to selects
+  const lightHex = useMemo(() => (team && lightKey ? (team as any)[lightKey] : '') || '', [team, lightKey])
+  const darkHex  = useMemo(() => (team && darkKey  ? (team as any)[darkKey ] : '') || '', [team, darkKey])
 
-  const lightHex = useMemo(
-    () => (team && lightKey ? (team as any)[lightKey] : '#ffffff') || '#ffffff',
-    [team, lightKey]
-  )
-  const darkHex = useMemo(
-    () => (team && darkKey ? (team as any)[darkKey] : '#111827') || '#111827',
-    [team, darkKey]
-  )
-
-  // Build a preview team that reflects the current selections (without needing to save)
-  const previewTeam = useMemo(
-    () =>
-      team
-        ? ({
-            ...team,
-            ui_light_color_key: lightKey || team.ui_light_color_key,
-            ui_dark_color_key: darkKey || team.ui_dark_color_key,
-          } as TeamShape)
-        : null,
-    [team, lightKey, darkKey]
-  )
+  // Build an ephemeral team object with the *selected* keys so <TeamPill> previews correctly.
+  const previewTeam: TeamShape | null = useMemo(() => {
+    if (!team) return null
+    return {
+      ...team,
+      ui_light_color_key: (lightKey || null) as any,
+      ui_dark_color_key: (darkKey || null) as any,
+    }
+  }, [team, lightKey, darkKey])
 
   function colorOptionsForTeam(t?: TeamRow) {
     if (!t) return []
@@ -137,47 +139,48 @@ export default function TeamPillColors() {
     ]
     return pairs
       .filter(p => p.hex && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(p.hex))
-      .map(p => ({
-        value: p.key,
-        label: `${p.label} (${p.hex})`,
-        hex: p.hex!,
-      }))
-  }
-
-  function nearestKeyForHex(t: TeamRow, hex: string): ColorKey | null {
-    const opts = colorOptionsForTeam(t)
-    const target = hex.toLowerCase()
-    const direct = opts.find(o => o.hex.toLowerCase() === target)
-    if (direct) return direct.value as ColorKey
-    return (opts[0]?.value as ColorKey) || null
+      .map(p => ({ value: p.key, label: `${p.label} (${p.hex})`, hex: p.hex! }))
   }
 
   async function save() {
     if (!team || !lightKey || !darkKey) return
     setBusy(true)
     try {
-      // preferred endpoint
+      // canonical admin endpoint you added
       await post('/api/admin/team-pill-colors', {
         teamId: team.id,
         ui_light_color_key: lightKey,
         ui_dark_color_key: darkKey,
       })
+      // reflect immediately in local state, so it persists when navigating/swapping teams
+      setTeams(prev =>
+        prev.map(t =>
+          t.id === team.id
+            ? { ...t, ui_light_color_key: lightKey, ui_dark_color_key: darkKey }
+            : t
+        )
+      )
       flash('Saved.')
     } catch (e1: any) {
-      // graceful fallback to branding if your backend uses that
+      // optional fallback to branding route if your backend maps it there
       try {
         await post('/api/admin/branding', {
           teamId: team.id,
           ui_light_color_key: lightKey,
           ui_dark_color_key: darkKey,
         })
+        setTeams(prev =>
+          prev.map(t =>
+            t.id === team.id
+              ? { ...t, ui_light_color_key: lightKey, ui_dark_color_key: darkKey }
+              : t
+          )
+        )
         flash('Saved.')
       } catch (e2: any) {
         flash(e1?.message || e2?.message || 'Save failed')
       }
     } finally {
-      // Make sure the new keys are reflected if user navigates away/back.
-      loadTeams(team?.id).catch(() => {})
       setBusy(false)
     }
   }
@@ -220,7 +223,7 @@ export default function TeamPillColors() {
           <span
             className="inline-block w-8 h-8 rounded border"
             title={lightHex}
-            style={{ background: lightHex }}
+            style={{ background: lightHex || 'transparent' }}
           />
         </div>
 
@@ -238,19 +241,15 @@ export default function TeamPillColors() {
           <span
             className="inline-block w-8 h-8 rounded border"
             title={darkHex}
-            style={{ background: darkHex }}
+            style={{ background: darkHex || 'transparent' }}
           />
         </div>
       </div>
 
-      {/* Universal pill previews */}
+      {/* Previews using the shared UI pill (mono look) */}
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        {previewTeam ? (
-          <>
-            <TeamPill team={previewTeam} mode="light" size="lg">Light preview</TeamPill>
-            <TeamPill team={previewTeam} mode="dark" size="lg">Dark preview</TeamPill>
-          </>
-        ) : null}
+        <TeamPill team={previewTeam} mode="light" size="lg" />
+        <TeamPill team={previewTeam} mode="dark" size="lg" />
       </div>
 
       <div className="mt-4">
