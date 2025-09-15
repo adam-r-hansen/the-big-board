@@ -1,308 +1,266 @@
 'use client'
 
-// app/page.tsx — Home (stabilized & minimal)
-/**
- * - Auto-selects the first league (no blank state).
- * - Uses only working endpoints:
- *     /api/leagues
- *     /api/games-for-week?season=&week=
- *     /api/my-picks?leagueId=&season=&week=
- *     /api/standings?leagueId=&season=
- * - No calls to /api/teams*, /api/wrinkles, /api/league-locked-picks.
- * - Robust game label inference so GameCard always renders.
- * - Week defaults to NFL Tue→Mon boundaries.
- */
+// app/page.tsx — Home (uses same sources/normalizers as Scoreboard)
 
-import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
-import Link from 'next/link'
-import GameCard, { type GameCardGame } from '@/components/ui/GameCard'
-import AdminNavLink from '@/components/AdminNavLink'
-import { createClient as createSupabaseClient } from '@/utils/supabase/client'
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
+import GameCard, { type GameCardGame } from "@/components/ui/GameCard";
+import AdminNavLink from "@/components/AdminNavLink";
+import type { TeamShape } from "@/components/ui/TeamPill";
+import { createClient as createSupabaseClient } from "@/utils/supabase/client";
 
-function cn(...classes: Array<string | false | null | undefined>): string {
-  return classes.filter(Boolean).join(' ')
+/** small util */
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
 }
-const isLikelyAbbr = (s?: string | null) => !!s && /^[A-Za-z]{2,4}$/.test(s.trim())
 
-// ——— Types (defensive) ———
-type League = { id: string; name: string; season: number }
-type Game = {
-  id: string
-  week: number
-  game_utc?: string | null
-  status?: 'UPCOMING' | 'LIVE' | 'FINAL' | string
-  home: { id?: string; abbr?: string | null; abbreviation?: string | null; name?: string | null; score?: number | null; logo?: string | null }
-  away: { id?: string; abbr?: string | null; abbreviation?: string | null; name?: string | null; score?: number | null; logo?: string | null }
+/** NFL Tue→Mon week helper */
+function tuesdayToMondayWeekIndex(d: Date) {
+  const year = d.getFullYear();
+  const sept1 = new Date(year, 8, 1);
+  const day = sept1.getDay(); // 0..6
+  const offsetToTue = (9 - day) % 7; // Tue=2
+  const firstTue = new Date(year, 8, 1 + offsetToTue);
+  const diffDays = Math.floor((d.getTime() - firstTue.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.max(1, Math.floor(diffDays / 7) + 1);
 }
+
+/** types */
+type League = { id: string; name: string; season: number };
+type TeamMap = Record<string, TeamShape>;
 type Pick = {
-  id: string
-  team_id: string
-  game_id?: string | null
-  status?: 'UPCOMING' | 'LIVE' | 'FINAL' | string
-  points?: number | null
-}
+  id: string;
+  team_id: string;
+  game_id?: string | null;
+  status?: "UPCOMING" | "LIVE" | "FINAL" | string;
+  points?: number | null;
+};
 
-// ——— Small UI ———
+/** UI card */
 function Card(props: { title: string; right?: ReactNode; className?: string; children: ReactNode }) {
-  const { title, right, className, children } = props
+  const { title, right, className, children } = props;
   return (
-    <section className={cn('rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5', className)}>
+    <section
+      className={cn(
+        "rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5",
+        className,
+      )}
+    >
       <header className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold">{title}</h2>
         {right}
       </header>
       <div>{children}</div>
     </section>
-  )
+  );
 }
 
-// ——— Helpers ———
-function gameLocked(g?: Game | null) {
-  if (!g) return false
-  const s = (g.status || '').toUpperCase()
-  return s === 'LIVE' || s === 'FINAL'
+/** helpers for right-rail displays */
+function gameLocked(g?: GameCardGame | null) {
+  if (!g) return false;
+  const s = (g.status || "").toUpperCase();
+  return s === "LIVE" || s === "FINAL";
 }
-function pickPointsForGame(pickTeamId: string, g?: Game): number | null {
-  if (!g) return null
-  const s = (g.status || '').toUpperCase()
-  const hs = typeof g.home.score === 'number' ? g.home.score : null
-  const as = typeof g.away.score === 'number' ? g.away.score : null
-  if (s !== 'FINAL') return null
-  if (hs == null || as == null) return 0
+function pickPointsForGame(pickTeamId: string, g?: GameCardGame): number | null {
+  if (!g) return null;
+  const s = (g.status || "").toUpperCase();
+  const hs = typeof g.home.score === "number" ? g.home.score : null;
+  const as = typeof g.away.score === "number" ? g.away.score : null;
+  if (s !== "FINAL") return null;
+  if (hs == null || as == null) return 0;
   if (hs === as) {
-    if (g.home.id === pickTeamId) return hs / 2
-    if (g.away.id === pickTeamId) return as / 2
-    return 0
+    if (g.home.id === pickTeamId) return hs / 2;
+    if (g.away.id === pickTeamId) return as / 2;
+    return 0;
   }
-  if (hs > as) return g.home.id === pickTeamId ? hs : 0
-  return g.away.id === pickTeamId ? as : 0
+  if (hs > as) return g.home.id === pickTeamId ? hs : 0;
+  return g.away.id === pickTeamId ? as : 0;
 }
 
-// Normalize games; aggressively infer abbreviations from any hint
-function normalizeGames(arr: any[]): Game[] {
-  return (arr || []).map((x) => {
-    const homeId = x.home_id ?? x.home?.id ?? x.homeTeamId ?? null
-    const awayId = x.away_id ?? x.away?.id ?? x.awayTeamId ?? null
-
-    const homeAb =
-      x.home_abbr ?? x.home?.abbr ?? x.home?.abbreviation ??
-      (isLikelyAbbr(homeId) ? String(homeId).toUpperCase() : null)
-    const awayAb =
-      x.away_abbr ?? x.away?.abbr ?? x.away?.abbreviation ??
-      (isLikelyAbbr(awayId) ? String(awayId).toUpperCase() : null)
-
-    return {
-      id: x.id || x.game_id || `${x.season}-${x.week}-${homeAb ?? ''}-${awayAb ?? ''}`,
-      week: Number(x.week ?? x.game_week ?? 0),
-      game_utc: x.game_utc ?? x.kickoff ?? x.date ?? null,
-      status: (x.status || x.state || 'UPCOMING').toUpperCase(),
-      home: {
-        id: homeId ?? homeAb ?? undefined,
-        abbr: homeAb ?? null,
-        abbreviation: homeAb ?? null,
-        name: x.home?.name ?? null,
-        score: x.home_score ?? x.home?.score ?? null,
-        logo: x.home?.logo ?? null,
-      },
-      away: {
-        id: awayId ?? awayAb ?? undefined,
-        abbr: awayAb ?? null,
-        abbreviation: awayAb ?? null,
-        name: x.away?.name ?? null,
-        score: x.away_score ?? x.away?.score ?? null,
-        logo: x.away?.logo ?? null,
-      },
-    }
-  })
+/** NORMALIZER — copied to match Scoreboard exactly */
+function normalizeGamesForCard(rows: any[]): GameCardGame[] {
+  return (rows || []).map((x) => ({
+    id: x.id,
+    week: x.week,
+    game_utc: x.game_utc || x.start_time,
+    status: x.status ?? "UPCOMING",
+    home: {
+      id: x.home?.id ?? x.home_team ?? x.home_team_id,
+      name: x.home?.name ?? x.home_name ?? null,
+      abbr: x.home?.abbreviation ?? x.home_abbr ?? null,
+      score: x.home_score ?? x.home?.score ?? null,
+      logo: x.home?.logo ?? x.logo_home ?? null,
+    },
+    away: {
+      id: x.away?.id ?? x.away_team ?? x.away_team_id,
+      name: x.away?.name ?? x.away_name ?? null,
+      abbr: x.away?.abbreviation ?? x.away_abbr ?? null,
+      score: x.away_score ?? x.away?.score ?? null,
+      logo: x.away?.logo ?? x.logo_away ?? null,
+    },
+  }));
 }
 
-// Build a minimal teamIndex for GameCard from the games themselves
-type TeamForCard = {
-  id: string
-  abbreviation: string | null
-  name: string | null
-  color_primary: string | null
-  color_secondary: string | null
-  logo: string | null
-  logo_dark: string | null
-}
-function buildTeamIndexForCard(games: Game[]): Record<string, TeamForCard> {
-  const m: Record<string, TeamForCard> = {}
-  for (const g of games || []) {
-    for (const side of [g.home, g.away]) {
-      const id = (side.id || side.abbr || side.abbreviation || '') as string
-      if (!id) continue
-      if (m[id]) continue
-      const v: TeamForCard = {
-        id,
-        abbreviation: (side.abbr || side.abbreviation || (isLikelyAbbr(id) ? id.toUpperCase() : null)) as string | null,
-        name: (side.name ?? null) as string | null,
-        color_primary: null,
-        color_secondary: null,
-        logo: (side.logo ?? null) as string | null,
-        logo_dark: null,
-      }
-      m[v.id] = v
-      if (v.abbreviation) {
-        m[v.abbreviation] = v
-        m[v.abbreviation.toUpperCase()] = v
-      }
-    }
-  }
-  return m
-}
-
-// NFL week calc (Tue→Mon)
-function firstTuesdayOnOrAfterSept1(seasonYear: number) {
-  const d = new Date(seasonYear, 8 /* Sept */, 1, 0, 0, 0, 0)
-  const day = d.getDay()
-  const delta = (9 - day) % 7
-  d.setDate(d.getDate() + delta)
-  return d
-}
-function stripTime(d: Date): Date { return new Date(d.getFullYear(), d.getMonth(), d.getDate()) }
-function currentNflWeekForSeason(seasonYear: number, today = new Date()): number {
-  const anchor = firstTuesdayOnOrAfterSept1(seasonYear)
-  if (today.getTime() < anchor.getTime()) return 1
-  const MS = 24 * 60 * 60 * 1000
-  const diffDays = Math.floor((stripTime(today).getTime() - stripTime(anchor).getTime()) / MS)
-  const week = 1 + Math.floor(diffDays / 7)
-  return Math.min(18, Math.max(1, week))
-}
-
-// ——— Component ———
 function HomeInner() {
-  const [leagues, setLeagues] = useState<League[]>([])
-  const [leagueId, setLeagueId] = useState<string>('')
-  const [season, setSeason] = useState<number>(new Date().getFullYear())
-  const [week, setWeek] = useState<number>(1)
-  const [userPickedWeek, setUserPickedWeek] = useState(false)
+  const [season, setSeason] = useState<number>(new Date().getFullYear());
+  const [week, setWeek] = useState<number>(tuesdayToMondayWeekIndex(new Date()));
+  const [userPickedWeek, setUserPickedWeek] = useState(false);
 
-  const [games, setGames] = useState<Game[]>([])
-  const [myPicks, setMyPicks] = useState<Pick[]>([])
-  const [standRows, setStandRows] = useState<any[]>([])
-  const [authReady, setAuthReady] = useState(false)
+  const [leagues, setLeagues] = useState<League[]>([]);
+  const [leagueId, setLeagueId] = useState<string>("");
 
-  const teamIndexForCard = useMemo(() => buildTeamIndexForCard(games), [games])
+  const [teamMap, setTeamMap] = useState<TeamMap>({});
+  const [games, setGames] = useState<GameCardGame[]>([]);
+  const [myPicks, setMyPicks] = useState<Pick[]>([]);
+  const [standRows, setStandRows] = useState<any[]>([]);
+  const [authReady, setAuthReady] = useState(false);
 
-  const picksUsed = myPicks.length
-  const picksAllowed = 2 // wrinkles removed (endpoint 404)
-  const picksLocked = myPicks.filter((p) => p.status === 'FINAL' || p.status === 'LIVE').length
-  const weekPoints = myPicks.reduce((acc, p) => acc + (typeof p.points === 'number' ? p.points : 0), 0)
+  const picksUsed = myPicks.length;
+  const picksAllowed = 2; // wrinkles removed from Home
+  const picksLocked = myPicks.filter((p) => p.status === "FINAL" || p.status === "LIVE").length;
+  const weekPoints = myPicks.reduce((acc, p) => acc + (typeof p.points === "number" ? p.points : 0), 0);
 
-  // Auth callback cleanup + ready flag
+  // Auth callback cleanup + ready
   useEffect(() => {
-    const url = new URL(window.location.href)
-    const code = url.searchParams.get('code')
-    ;(async () => {
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get("code");
+    (async () => {
       try {
         if (code) {
-          const supabase = createSupabaseClient()
-          await supabase.auth.exchangeCodeForSession(code)
-          const AUTH_PARAMS = ['code','type','scope','auth_callback','next','redirect_to','provider','refresh_token','access_token']
-          const clean = new URL(window.location.href)
-          AUTH_PARAMS.forEach((p) => clean.searchParams.delete(p))
-          window.history.replaceState({}, '', clean.toString())
+          const supabase = createSupabaseClient();
+          await supabase.auth.exchangeCodeForSession(code);
+          const AUTH_PARAMS = [
+            "code",
+            "type",
+            "scope",
+            "auth_callback",
+            "next",
+            "redirect_to",
+            "provider",
+            "refresh_token",
+            "access_token",
+          ];
+          const clean = new URL(window.location.href);
+          AUTH_PARAMS.forEach((p) => clean.searchParams.delete(p));
+          window.history.replaceState({}, "", clean.toString());
         }
       } catch (e) {
-        console.error('Auth handling failed', e)
+        console.error("Auth handling failed", e);
       } finally {
-        setAuthReady(true)
+        setAuthReady(true);
       }
-    })()
-  }, [])
+    })();
+  }, []);
 
-  // 1) Leagues — auto-select the first immediately
+  // 1) Team map — EXACTLY like Scoreboard
   useEffect(() => {
-    if (!authReady) return
-    ;(async () => {
+    if (!authReady) return;
+    (async () => {
       try {
-        const res = await fetch('/api/leagues', { cache: 'no-store' })
+        const tm = await fetch("/api/team-map", { cache: "no-store" }).then((r) => r.json());
+        setTeamMap((tm?.teams || {}) as TeamMap);
+      } catch (e) {
+        console.warn("team-map failed", e);
+        setTeamMap({});
+      }
+    })();
+  }, [authReady]);
+
+  // 2) Leagues — auto-select the first immediately (no blank state)
+  useEffect(() => {
+    if (!authReady) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/leagues", { cache: "no-store" });
         if (res.ok) {
-          const data = await res.json()
-          const L: League[] = Array.isArray(data?.leagues) ? data.leagues : data?.rows || data || []
-          setLeagues(L)
+          const data = await res.json();
+          const L: League[] = Array.isArray(data?.leagues) ? data.leagues : data?.rows || data || [];
+          setLeagues(L);
           if (L.length > 0) {
-            setLeagueId((prev) => prev || L[0].id)
-            setSeason(L[0].season || new Date().getFullYear())
+            setLeagueId((prev) => prev || L[0].id);
+            setSeason(L[0].season || new Date().getFullYear());
           }
-        } else {
-          console.warn('/api/leagues failed', res.status)
         }
       } catch (e) {
-        console.error('Load leagues failed', e)
+        console.error("Load leagues failed", e);
       }
-    })()
-  }, [authReady])
+    })();
+  }, [authReady]);
 
-  // 2) Games — by season/week
+  // 3) Games — use the Scoreboard normalizer
   useEffect(() => {
-    if (!authReady) return
-    ;(async () => {
+    if (!authReady) return;
+    (async () => {
       try {
-        const res = await fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' })
-        if (res.ok) {
-          const data = await res.json()
-          setGames(normalizeGames(data?.games || data || []))
-        } else {
-          console.warn('/api/games-for-week failed', res.status)
-          setGames([])
-        }
+        const j = await fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: "no-store" }).then((r) =>
+          r.json(),
+        );
+        const rows = (j?.games || j || []) as any[];
+        setGames(normalizeGamesForCard(rows));
       } catch (e) {
-        console.error('Load games failed', e)
-        setGames([])
+        console.error("Load games failed", e);
+        setGames([]);
       }
-    })()
-  }, [authReady, season, week])
+    })();
+  }, [authReady, season, week]);
 
-  // 3) My Picks — only when leagueId exists
+  // 4) My Picks — only when a league is selected (include leagueId)
   useEffect(() => {
-    if (!authReady || !leagueId) { setMyPicks([]); return }
-    ;(async () => {
+    if (!authReady || !leagueId) {
+      setMyPicks([]);
+      return;
+    }
+    (async () => {
       try {
-        const url = `/api/my-picks?leagueId=${encodeURIComponent(leagueId)}&season=${season}&week=${week}`
-        const res = await fetch(url, { cache: 'no-store' })
-        if (res.ok) {
-          const data = await res.json()
-          const pArr = Array.isArray(data?.picks) ? data.picks : Array.isArray(data) ? data : []
-          setMyPicks(pArr)
-        } else {
-          console.warn('/api/my-picks failed', res.status)
-          setMyPicks([])
-        }
+        const j = await fetch(
+          `/api/my-picks?leagueId=${encodeURIComponent(leagueId)}&season=${season}&week=${week}`,
+          { cache: "no-store" },
+        ).then((r) => r.json());
+        const pArr = Array.isArray(j?.picks) ? j.picks : Array.isArray(j) ? j : [];
+        setMyPicks(pArr);
       } catch (e) {
-        console.error('Load my picks failed', e)
-        setMyPicks([])
+        console.error("Load my picks failed", e);
+        setMyPicks([]);
       }
-    })()
-  }, [authReady, leagueId, season, week])
+    })();
+  }, [authReady, leagueId, season, week]);
 
-  // 4) Standings — only when leagueId exists
+  // 5) Standings — only when a league is selected
   useEffect(() => {
-    if (!authReady || !leagueId) { setStandRows([]); return }
-    ;(async () => {
+    if (!authReady || !leagueId) {
+      setStandRows([]);
+      return;
+    }
+    (async () => {
       try {
-        const res = await fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
-        if (res.ok) {
-          const s = await res.json()
-          const rows = Array.isArray(s) ? s : (s?.standings || s?.rows || [])
-          setStandRows(rows || [])
+        const r = await fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: "no-store" });
+        if (r.ok) {
+          const s = await r.json();
+          const rows = Array.isArray(s) ? s : s?.standings || s?.rows || [];
+          setStandRows(rows || []);
         } else {
-          setStandRows([])
+          setStandRows([]);
         }
       } catch {
-        setStandRows([])
+        setStandRows([]);
       }
-    })()
-  }, [authReady, leagueId, season])
+    })();
+  }, [authReady, leagueId, season]);
 
-  // Default NFL week (Tue→Mon), don’t override manual choice
+  // Default week (Tue→Mon) when season changes (don’t override manual week pick)
   useEffect(() => {
-    if (userPickedWeek) return
-    const computed = currentNflWeekForSeason(season, new Date())
-    if (computed !== week) setWeek(computed)
+    if (userPickedWeek) return;
+    const computed = tuesdayToMondayWeekIndex(new Date());
+    if (computed !== week) setWeek(computed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [season])
+  }, [season]);
+
+  /** simple map to find game by id (for points/status display) */
+  const gameById = useMemo(() => {
+    const m = new Map<string, GameCardGame>();
+    for (const g of games) m.set(g.id, g);
+    return m;
+  }, [games]);
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
@@ -347,24 +305,24 @@ function HomeInner() {
             className="w-full rounded-lg border bg-transparent px-3 py-2"
             value={week}
             onChange={(e) => {
-              setWeek(Number(e.target.value))
-              setUserPickedWeek(true)
+              setWeek(Number(e.target.value));
+              setUserPickedWeek(true);
             }}
           >
             {Array.from({ length: 18 }).map((_, i) => {
-              const wk = i + 1
+              const wk = i + 1;
               return (
                 <option key={wk} value={wk}>
                   {wk}
                 </option>
-              )
+              );
             })}
           </select>
         </div>
       </section>
 
       <div className="grid lg:grid-cols-12 gap-6">
-        {/* LEFT 2/3 */}
+        {/* LEFT */}
         <div className="lg:col-span-8 grid gap-6">
           <Card
             title="League overview"
@@ -416,14 +374,14 @@ function HomeInner() {
             ) : (
               <div className="grid gap-4">
                 {games.map((g) => (
-                  <GameCard key={g.id} game={g as unknown as GameCardGame} teamIndex={teamIndexForCard as any} />
+                  <GameCard key={g.id} game={g} teamIndex={teamMap} />
                 ))}
               </div>
             )}
           </Card>
         </div>
 
-        {/* RIGHT 1/3 */}
+        {/* RIGHT */}
         <aside className="lg:col-span-4 grid gap-6">
           <Card
             title={`My picks — Week ${week}`}
@@ -442,27 +400,35 @@ function HomeInner() {
             ) : (
               <ul className="grid gap-2 max-h-64 overflow-auto pr-1">
                 {myPicks.map((p) => {
-                  const g = games.find((gg) => gg.id === p.game_id)
-                  const s = (g?.status || (gameLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase()
-                  const pts = pickPointsForGame(p.team_id, g)
+                  const g = gameById.get(p.game_id || "");
+                  const s = (g?.status || (gameLocked(g) ? "LIVE" : "UPCOMING")).toUpperCase();
+                  const pts = pickPointsForGame(p.team_id, g);
                   const abbr =
-                    (g?.home.id === p.team_id ? (g.home.abbr || g.home.abbreviation) : undefined) ||
-                    (g?.away.id === p.team_id ? (g.away.abbr || g.away.abbreviation) : undefined) ||
-                    (isLikelyAbbr(p.team_id) ? p.team_id.toUpperCase() : '—')
+                    (g?.home.id === p.team_id ? g.home.abbr : undefined) ||
+                    (g?.away.id === p.team_id ? g.away.abbr : undefined) ||
+                    "—";
                   return (
                     <li key={p.id} className="flex items-center justify-between">
                       <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
-                        <span className="font-semibold">{abbr || '—'}</span>
+                        <span className="font-semibold">{abbr}</span>
                       </span>
                       <span className="flex items-center gap-2">
-                        {typeof pts === 'number' && <span className="text-[10px] font-bold">{pts} pts</span>}
+                        {typeof pts === "number" && <span className="text-[10px] font-bold">{pts} pts</span>}
                         <span className="text-[10px] uppercase tracking-wide text-neutral-500">{s}</span>
                       </span>
                     </li>
-                  )
+                  );
                 })}
               </ul>
             )}
+          </Card>
+
+          {/* Placeholder until we wire your real endpoint back in */}
+          <Card
+            title="League picks (locked)"
+            right={leagueId ? <Link href={`/standings?leagueId=${leagueId}&season=${season}`} className="text-xs underline">Standings →</Link> : null}
+          >
+            <div className="text-sm text-neutral-500">No locked picks yet.</div>
           </Card>
 
           <Card
@@ -483,7 +449,7 @@ function HomeInner() {
               <ol className="grid gap-2">
                 {standRows.map((r: any, idx: number) => (
                   <li key={r.profile_id || r.id || idx} className="flex items-center justify-between">
-                    <span className="truncate">{r.display_name || r.name || r.email || 'Member'}</span>
+                    <span className="truncate">{r.display_name || r.name || r.email || "Member"}</span>
                     <span className="text-sm font-semibold">{r.points_total ?? 0} pts</span>
                   </li>
                 ))}
@@ -493,7 +459,7 @@ function HomeInner() {
         </aside>
       </div>
     </main>
-  )
+  );
 }
 
 export default function HomePage() {
@@ -508,5 +474,5 @@ export default function HomePage() {
     >
       <HomeInner />
     </Suspense>
-  )
+  );
 }
