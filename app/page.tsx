@@ -1,31 +1,31 @@
 'use client'
 
-// app/page.tsx — Home (uses same sources/normalizers as Scoreboard)
+// app/page.tsx — Home using PickPill, same data sources as Scoreboard
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import GameCard, { type GameCardGame } from "@/components/ui/GameCard";
 import AdminNavLink from "@/components/AdminNavLink";
 import type { TeamShape } from "@/components/ui/TeamPill";
+import PickPill from "@/components/ui/PickPill";
 import { createClient as createSupabaseClient } from "@/utils/supabase/client";
 
-/** small util */
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-/** NFL Tue→Mon week helper */
+// Tue→Mon helper (same as scoreboard logic)
 function tuesdayToMondayWeekIndex(d: Date) {
   const year = d.getFullYear();
   const sept1 = new Date(year, 8, 1);
-  const day = sept1.getDay(); // 0..6
-  const offsetToTue = (9 - day) % 7; // Tue=2
+  const day = sept1.getDay();
+  const offsetToTue = (9 - day) % 7;
   const firstTue = new Date(year, 8, 1 + offsetToTue);
   const diffDays = Math.floor((d.getTime() - firstTue.getTime()) / (1000 * 60 * 60 * 24));
   return Math.max(1, Math.floor(diffDays / 7) + 1);
 }
 
-/** types */
+// Types
 type League = { id: string; name: string; season: number };
 type TeamMap = Record<string, TeamShape>;
 type Pick = {
@@ -35,8 +35,14 @@ type Pick = {
   status?: "UPCOMING" | "LIVE" | "FINAL" | string;
   points?: number | null;
 };
+type MemberLockedPicks = {
+  profile_id: string;
+  display_name?: string | null;
+  points_week?: number | null;
+  picks?: Array<{ team_id: string; status?: string; points?: number | null }>;
+};
 
-/** UI card */
+// Reusable card
 function Card(props: { title: string; right?: ReactNode; className?: string; children: ReactNode }) {
   const { title, right, className, children } = props;
   return (
@@ -55,7 +61,7 @@ function Card(props: { title: string; right?: ReactNode; className?: string; chi
   );
 }
 
-/** helpers for right-rail displays */
+// Small helpers
 function gameLocked(g?: GameCardGame | null) {
   if (!g) return false;
   const s = (g.status || "").toUpperCase();
@@ -77,7 +83,7 @@ function pickPointsForGame(pickTeamId: string, g?: GameCardGame): number | null 
   return g.away.id === pickTeamId ? as : 0;
 }
 
-/** NORMALIZER — copied to match Scoreboard exactly */
+// EXACTLY the normalizer from Scoreboard
 function normalizeGamesForCard(rows: any[]): GameCardGame[] {
   return (rows || []).map((x) => ({
     id: x.id,
@@ -113,14 +119,15 @@ function HomeInner() {
   const [games, setGames] = useState<GameCardGame[]>([]);
   const [myPicks, setMyPicks] = useState<Pick[]>([]);
   const [standRows, setStandRows] = useState<any[]>([]);
+  const [locked, setLocked] = useState<MemberLockedPicks[]>([]);
   const [authReady, setAuthReady] = useState(false);
 
   const picksUsed = myPicks.length;
-  const picksAllowed = 2; // wrinkles removed from Home
+  const picksAllowed = 2; // no wrinkles here
   const picksLocked = myPicks.filter((p) => p.status === "FINAL" || p.status === "LIVE").length;
   const weekPoints = myPicks.reduce((acc, p) => acc + (typeof p.points === "number" ? p.points : 0), 0);
 
-  // Auth callback cleanup + ready
+  // Auth cleanup
   useEffect(() => {
     const url = new URL(window.location.href);
     const code = url.searchParams.get("code");
@@ -129,51 +136,38 @@ function HomeInner() {
         if (code) {
           const supabase = createSupabaseClient();
           await supabase.auth.exchangeCodeForSession(code);
-          const AUTH_PARAMS = [
-            "code",
-            "type",
-            "scope",
-            "auth_callback",
-            "next",
-            "redirect_to",
-            "provider",
-            "refresh_token",
-            "access_token",
-          ];
+          const AUTH_PARAMS = ["code","type","scope","auth_callback","next","redirect_to","provider","refresh_token","access_token"];
           const clean = new URL(window.location.href);
           AUTH_PARAMS.forEach((p) => clean.searchParams.delete(p));
           window.history.replaceState({}, "", clean.toString());
         }
-      } catch (e) {
-        console.error("Auth handling failed", e);
       } finally {
         setAuthReady(true);
       }
     })();
   }, []);
 
-  // 1) Team map — EXACTLY like Scoreboard
+  // Teams (same source as Scoreboard)
   useEffect(() => {
     if (!authReady) return;
     (async () => {
       try {
         const tm = await fetch("/api/team-map", { cache: "no-store" }).then((r) => r.json());
         setTeamMap((tm?.teams || {}) as TeamMap);
-      } catch (e) {
-        console.warn("team-map failed", e);
+      } catch {
         setTeamMap({});
       }
     })();
   }, [authReady]);
 
-  // 2) Leagues — auto-select the first immediately (no blank state)
+  // Leagues (auto-select first)
   useEffect(() => {
     if (!authReady) return;
     (async () => {
       try {
-        const res = await fetch("/api/leagues", { cache: "no-store" });
-        if (res.ok) {
-          const data = await res.json();
+        const r = await fetch("/api/leagues", { cache: "no-store" });
+        if (r.ok) {
+          const data = await r.json();
           const L: League[] = Array.isArray(data?.leagues) ? data.leagues : data?.rows || data || [];
           setLeagues(L);
           if (L.length > 0) {
@@ -181,81 +175,78 @@ function HomeInner() {
             setSeason(L[0].season || new Date().getFullYear());
           }
         }
-      } catch (e) {
-        console.error("Load leagues failed", e);
-      }
+      } catch {}
     })();
   }, [authReady]);
 
-  // 3) Games — use the Scoreboard normalizer
+  // Games
   useEffect(() => {
     if (!authReady) return;
     (async () => {
       try {
-        const j = await fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: "no-store" }).then((r) =>
-          r.json(),
-        );
-        const rows = (j?.games || j || []) as any[];
-        setGames(normalizeGamesForCard(rows));
-      } catch (e) {
-        console.error("Load games failed", e);
+        const j = await fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: "no-store" }).then((r) => r.json());
+        setGames(normalizeGamesForCard(j?.games || j || []));
+      } catch {
         setGames([]);
       }
     })();
   }, [authReady, season, week]);
 
-  // 4) My Picks — only when a league is selected (include leagueId)
+  // My Picks (needs league)
   useEffect(() => {
-    if (!authReady || !leagueId) {
-      setMyPicks([]);
-      return;
-    }
+    if (!authReady || !leagueId) { setMyPicks([]); return; }
     (async () => {
       try {
-        const j = await fetch(
-          `/api/my-picks?leagueId=${encodeURIComponent(leagueId)}&season=${season}&week=${week}`,
-          { cache: "no-store" },
-        ).then((r) => r.json());
-        const pArr = Array.isArray(j?.picks) ? j.picks : Array.isArray(j) ? j : [];
-        setMyPicks(pArr);
-      } catch (e) {
-        console.error("Load my picks failed", e);
+        const j = await fetch(`/api/my-picks?leagueId=${encodeURIComponent(leagueId)}&season=${season}&week=${week}`, { cache: "no-store" }).then((r) => r.json());
+        setMyPicks(Array.isArray(j?.picks) ? j.picks : Array.isArray(j) ? j : []);
+      } catch {
         setMyPicks([]);
       }
     })();
   }, [authReady, leagueId, season, week]);
 
-  // 5) Standings — only when a league is selected
+  // Standings (needs league)
   useEffect(() => {
-    if (!authReady || !leagueId) {
-      setStandRows([]);
-      return;
-    }
+    if (!authReady || !leagueId) { setStandRows([]); return; }
     (async () => {
       try {
         const r = await fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: "no-store" });
         if (r.ok) {
           const s = await r.json();
-          const rows = Array.isArray(s) ? s : s?.standings || s?.rows || [];
-          setStandRows(rows || []);
-        } else {
-          setStandRows([]);
-        }
-      } catch {
-        setStandRows([]);
-      }
+          setStandRows(Array.isArray(s) ? s : s?.standings || s?.rows || []);
+        } else setStandRows([]);
+      } catch { setStandRows([]); }
     })();
   }, [authReady, leagueId, season]);
 
-  // Default week (Tue→Mon) when season changes (don’t override manual week pick)
+  // Locked picks (guarded — tries two common endpoints; no crash if 404)
+  useEffect(() => {
+    if (!authReady || !leagueId) { setLocked([]); return; }
+    (async () => {
+      const urls = [
+        `/api/league-locked?leagueId=${leagueId}&season=${season}&week=${week}`,
+        `/api/league-locked-picks?leagueId=${leagueId}&season=${season}&week=${week}`,
+      ];
+      for (const u of urls) {
+        try {
+          const r = await fetch(u, { cache: "no-store" });
+          if (!r.ok) continue;
+          const data = await r.json();
+          const arr = Array.isArray(data) ? data : (data?.rows || data?.members || data?.locked || []);
+          if (Array.isArray(arr)) { setLocked(arr as MemberLockedPicks[]); return; }
+        } catch {}
+      }
+      setLocked([]);
+    })();
+  }, [authReady, leagueId, season, week]);
+
+  // Keep Tue→Mon default when season changes unless the user picked manually
   useEffect(() => {
     if (userPickedWeek) return;
-    const computed = tuesdayToMondayWeekIndex(new Date());
-    if (computed !== week) setWeek(computed);
+    setWeek(tuesdayToMondayWeekIndex(new Date()));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season]);
 
-  /** simple map to find game by id (for points/status display) */
   const gameById = useMemo(() => {
     const m = new Map<string, GameCardGame>();
     for (const g of games) m.set(g.id, g);
@@ -324,6 +315,7 @@ function HomeInner() {
       <div className="grid lg:grid-cols-12 gap-6">
         {/* LEFT */}
         <div className="lg:col-span-8 grid gap-6">
+          {/* Overview */}
           <Card
             title="League overview"
             right={
@@ -345,7 +337,7 @@ function HomeInner() {
               </div>
               <div className="rounded-xl border px-4 py-3">
                 <div className="text-xs text-neutral-500">Remaining</div>
-                <div className="text-2xl font-semibold">{Math.max(0, picksAllowed - picksUsed)}</div>
+                <div className="text-2xl font-semibold">{Math.max(0, 2 - picksUsed)}</div>
               </div>
               <div className="rounded-xl border px-4 py-3">
                 <div className="text-xs text-neutral-500">Locked</div>
@@ -354,6 +346,7 @@ function HomeInner() {
             </div>
           </Card>
 
+          {/* Games */}
           <Card
             title={`Week ${week} — Games`}
             right={
@@ -383,6 +376,7 @@ function HomeInner() {
 
         {/* RIGHT */}
         <aside className="lg:col-span-4 grid gap-6">
+          {/* My Picks */}
           <Card
             title={`My picks — Week ${week}`}
             right={
@@ -403,15 +397,9 @@ function HomeInner() {
                   const g = gameById.get(p.game_id || "");
                   const s = (g?.status || (gameLocked(g) ? "LIVE" : "UPCOMING")).toUpperCase();
                   const pts = pickPointsForGame(p.team_id, g);
-                  const abbr =
-                    (g?.home.id === p.team_id ? g.home.abbr : undefined) ||
-                    (g?.away.id === p.team_id ? g.away.abbr : undefined) ||
-                    "—";
                   return (
                     <li key={p.id} className="flex items-center justify-between">
-                      <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
-                        <span className="font-semibold">{abbr}</span>
-                      </span>
+                      <PickPill teamId={p.team_id} teamMap={teamMap} />
                       <span className="flex items-center gap-2">
                         {typeof pts === "number" && <span className="text-[10px] font-bold">{pts} pts</span>}
                         <span className="text-[10px] uppercase tracking-wide text-neutral-500">{s}</span>
@@ -423,14 +411,34 @@ function HomeInner() {
             )}
           </Card>
 
-          {/* Placeholder until we wire your real endpoint back in */}
-          <Card
-            title="League picks (locked)"
-            right={leagueId ? <Link href={`/standings?leagueId=${leagueId}&season=${season}`} className="text-xs underline">Standings →</Link> : null}
-          >
-            <div className="text-sm text-neutral-500">No locked picks yet.</div>
+          {/* League picks (locked) */}
+          <Card title="League picks (locked)">
+            {!leagueId ? (
+              <div className="text-sm text-neutral-500">Select a league to view locked picks.</div>
+            ) : locked.length === 0 ? (
+              <div className="text-sm text-neutral-500">No locked picks yet.</div>
+            ) : (
+              <ul className="grid gap-3 max-h-72 overflow-auto pr-1">
+                {locked.map((m) => (
+                  <li key={m.profile_id} className="border rounded-xl px-3 py-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium">{m.display_name || "Member"}</span>
+                      <span className="text-neutral-600">{m.points_week ?? 0} pts</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {m.picks && m.picks.length > 0 ? (
+                        m.picks.map((pk, idx) => <PickPill key={`${m.profile_id}-${idx}`} teamId={pk.team_id} teamMap={teamMap} size="xs" />)
+                      ) : (
+                        <span className="text-xs text-neutral-500">No locked picks yet.</span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
 
+          {/* Standings (mini) */}
           <Card
             title="Standings (mini)"
             right={
