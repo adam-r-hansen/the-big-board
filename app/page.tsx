@@ -16,12 +16,18 @@
  *  - currentWeek = 1 + floor((today - anchor)/7 days), clamped to 1…18.
  */
 
-import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import GameCard, { type GameCardGame } from '@/components/ui/GameCard'
 import AdminNavLink from '@/components/AdminNavLink'
-import { createSupabaseClient } from '@/utils/supabase/client'
-import { cn } from '@/lib/utils'
+import { createClient as createSupabaseClient } from '@/utils/supabase/client'
+
+// —————————————————————————————————————————————————————
+// Minimal utility (replaces '@/lib/utils')
+// —————————————————————————————————————————————————————
+function cn(...classes: Array<string | false | null | undefined>): string {
+  return classes.filter(Boolean).join(' ')
+}
 
 // —————————————————————————————————————————————————————
 // Types mirrored from API responses (kept loose/defensive)
@@ -76,10 +82,10 @@ function Card(props: { title: string; right?: React.ReactNode; className?: strin
   const { title, right, className, children } = props
   return (
     <section
-      className={[
+      className={cn(
         'rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5',
-        className,
-      ].join(' ')}
+        className
+      )}
     >
       <header className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold">{title}</h2>
@@ -88,17 +94,6 @@ function Card(props: { title: string; right?: React.ReactNode; className?: strin
       <div>{children}</div>
     </section>
   )
-}
-
-function StatusBadge({ s }: { s?: string | null }) {
-  const t = (s || '').toUpperCase()
-  const cls =
-    t === 'FINAL'
-      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-      : t === 'LIVE'
-      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-      : 'bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300'
-  return <span className={cn('inline-block rounded-full px-2 py-1 text-[10px] font-semibold', cls)}>{t || 'UPCOMING'}</span>
 }
 
 // —————————————————————————————————————————————————————
@@ -115,18 +110,14 @@ function pickPointsForGame(pickTeamId: string, g?: Game): number | null {
   const s = (g.status || '').toUpperCase()
   const hs = typeof g.home.score === 'number' ? g.home.score : null
   const as = typeof g.away.score === 'number' ? g.away.score : null
-  if (s !== 'FINAL') {
-    return null
-  }
+  if (s !== 'FINAL') return null
   if (hs == null || as == null) return 0
   if (hs === as) {
     if (g.home.id === pickTeamId) return hs / 2
     if (g.away.id === pickTeamId) return as / 2
     return 0
   }
-  if (hs > as) {
-    return g.home.id === pickTeamId ? hs : 0
-  }
+  if (hs > as) return g.home.id === pickTeamId ? hs : 0
   return g.away.id === pickTeamId ? as : 0
 }
 
@@ -166,28 +157,22 @@ function useGameByTeamId(games: Game[]) {
 // NFL week calc (Tuesday→Monday) by season
 // —————————————————————————————————————————————————————
 function firstTuesdayOnOrAfterSept1(seasonYear: number) {
-  // local time is fine here (client-side UX)
-  const d = new Date(seasonYear, 8 /* Sept is 8 */, 1, 0, 0, 0, 0)
-  // 0=Sun,1=Mon,2=Tue,...
-  const day = d.getDay()
-  const delta = (9 - day) % 7 // days to add to reach Tuesday
+  const d = new Date(seasonYear, 8 /* Sept */, 1, 0, 0, 0, 0)
+  const day = d.getDay() // 0=Sun..2=Tue
+  const delta = (9 - day) % 7
   d.setDate(d.getDate() + delta)
   return d
 }
-
+function stripTime(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
+}
 function currentNflWeekForSeason(seasonYear: number, today = new Date()): number {
   const anchor = firstTuesdayOnOrAfterSept1(seasonYear)
-  // If before anchor, week 1
   if (today.getTime() < anchor.getTime()) return 1
   const MS_PER_DAY = 24 * 60 * 60 * 1000
   const diffDays = Math.floor((stripTime(today).getTime() - stripTime(anchor).getTime()) / MS_PER_DAY)
   const week = 1 + Math.floor(diffDays / 7)
-  // Clamp 1..18
   return Math.min(18, Math.max(1, week))
-}
-
-function stripTime(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
 }
 
 // —————————————————————————————————————————————————————
@@ -196,8 +181,6 @@ function HomeInner() {
   const [leagueId, setLeagueId] = useState('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
   const [week, setWeek] = useState<number>(1)
-
-  // Track whether the user has manually chosen a week so we don't overwrite it
   const [userPickedWeek, setUserPickedWeek] = useState(false)
 
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
@@ -264,7 +247,7 @@ function HomeInner() {
     })()
   }, [])
 
-  // Load leagues, teams, games, picks, wrinkles, standings, league locked picks
+  // Load leagues, teams, games, my picks, wrinkles, standings, league locked picks
   useEffect(() => {
     if (!authReady) return
 
@@ -319,7 +302,7 @@ function HomeInner() {
         const rows = Array.isArray(s) ? s : (s?.standings || s?.rows || [])
         setStandRows(rows || [])
 
-        // league locked picks aggregation (if needed)
+        // league locked picks — support both response shapes
         if (Array.isArray(L?.members)) {
           setLeagueLocked(L.members as MemberLockedPicks[])
         } else if (Array.isArray(L?.rows)) {
@@ -352,7 +335,7 @@ function HomeInner() {
     })()
   }, [authReady, leagueId, season, week])
 
-  // When leagues resolve to a single league, mirror its season
+  // Pin to single league's season if only one
   useEffect(() => {
     if (leagues.length === 1) {
       const L = leagues[0]
@@ -361,16 +344,11 @@ function HomeInner() {
     }
   }, [leagues])
 
-  // ——— Default the week based on NFL Tue→Mon boundaries ———
-  // This runs whenever the season changes or on initial mount,
-  // but will NOT override once the user has manually picked a week.
+  // Default the week based on NFL Tue→Mon boundaries (don’t override manual pick)
   useEffect(() => {
     if (userPickedWeek) return
-    // Compute current NFL week for the selected season
     const computed = currentNflWeekForSeason(season, new Date())
-    if (computed !== week) {
-      setWeek(computed)
-    }
+    if (computed !== week) setWeek(computed)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season])
 
@@ -397,16 +375,6 @@ function HomeInner() {
       <span className={cn('inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm', mono)}>
         <span className="font-semibold">{t?.abbreviation || '—'}</span>
         {showPoints != null && <span className="text-[10px] font-bold">{showPoints} pts</span>}
-      </span>
-    )
-  }
-
-  function responsiveTeamChip(teamId?: string) {
-    const t = teamIndex[teamId || ''] as TeamLike | undefined
-    if (!t) return <span className="inline-block rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">—</span>
-    return (
-      <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
-        <span className="font-semibold">{t.abbreviation || '—'}</span>
       </span>
     )
   }
@@ -469,7 +437,6 @@ function HomeInner() {
             value={season}
             onChange={(e) => {
               setSeason(Number(e.target.value))
-              // Let the default-week effect recompute if user hasn't picked week
             }}
           />
         </div>
@@ -481,7 +448,7 @@ function HomeInner() {
             value={week}
             onChange={(e) => {
               setWeek(Number(e.target.value))
-              setUserPickedWeek(true) // prevent auto-overwrite after manual selection
+              setUserPickedWeek(true)
             }}
           >
             {Array.from({ length: 18 }).map((_, i) => {
@@ -577,16 +544,20 @@ function HomeInner() {
               ) : (
                 <ul className="grid gap-2">
                   {myPicks.map((p) => {
-                    const g = p.game_id ? gameById.get(p.game_id) : undefined
+                    const g = p.game_id ? gameById.get(p.game_id!) : undefined
                     const s = (g?.status || (gameLocked(g) ? 'LIVE' : 'UPCOMING')).toUpperCase()
                     const pts = pickPointsForGame(p.team_id, g)
                     return (
                       <li key={p.id} className="flex items-center justify-between">
-                        {teamChipForId(p.team_id, {
-                          status: s as any,
-                          showPoints: typeof pts === 'number' ? pts : null,
-                        })}
-                        <span className="text-[10px] uppercase tracking-wide text-neutral-500">{s}</span>
+                        <span>
+                          <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
+                            <span className="font-semibold">{teamIndex[p.team_id]?.abbreviation || '—'}</span>
+                          </span>
+                        </span>
+                        <span className="flex items-center gap-2">
+                          {typeof pts === 'number' && <span className="text-[10px] font-bold">{pts} pts</span>}
+                          <span className="text-[10px] uppercase tracking-wide text-neutral-500">{s}</span>
+                        </span>
                       </li>
                     )
                   })}
@@ -610,11 +581,9 @@ function HomeInner() {
                         {m.picks && m.picks.length > 0 ? (
                           m.picks.map((pk, idx) => (
                             <span key={`${m.profile_id}-${idx}`}>
-                              {teamChipForId(pk.team_id, {
-                                status: pk.status as any,
-                                showPoints:
-                                  pk.status === 'FINAL' && typeof pk.points === 'number' ? pk.points : null,
-                              })}
+                              <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
+                                <span className="font-semibold">{teamIndex[pk.team_id]?.abbreviation || '—'}</span>
+                              </span>
                             </span>
                           ))
                         ) : (
