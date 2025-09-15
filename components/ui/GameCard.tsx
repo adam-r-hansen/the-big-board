@@ -2,15 +2,15 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import type { TeamShape } from "@/components/ui/TeamPill"; // type-only
+import type { TeamShape } from "@/components/ui/TeamPill"; // type-only import
 
 export type GameTeam = {
   id?: string;
-  abbr?: string | null;        // from API normalizeGames
-  abbreviation?: string | null; // just in case it comes through as 'abbreviation'
-  name?: string | null;        // sometimes present, often not
+  abbr?: string | null;
+  abbreviation?: string | null;
+  name?: string | null;
   score?: number | null;
-  logo?: string | null;        // sometimes present, often not
+  logo?: string | null;
 };
 
 export type GameCardGame = {
@@ -24,7 +24,7 @@ export type GameCardGame = {
 
 export type GameCardProps = {
   game: GameCardGame;
-  teamIndex?: Record<string, TeamShape>; // from useTeamIndex (keys: id and ABBR)
+  teamIndex?: Record<string, TeamShape>; // id and ABBR keyed
   right?: ReactNode;
 };
 
@@ -40,7 +40,6 @@ function fmtWhen(s?: string | null) {
   }
 }
 
-/** Prefer configured mono color keys; fall back sanely. */
 function pickMonoColor(team: Partial<TeamShape> | undefined, mode: "light" | "dark") {
   if (!team) return mode === "light" ? "#e5e7eb" : "#111827";
   const pref =
@@ -51,6 +50,7 @@ function pickMonoColor(team: Partial<TeamShape> | undefined, mode: "light" | "da
   const val = (key?: string) => {
     const v = key ? (team as any)[key] : undefined;
     return typeof v === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? v : null;
+    // falls through to other palette keys
   };
 
   return (
@@ -62,7 +62,6 @@ function pickMonoColor(team: Partial<TeamShape> | undefined, mode: "light" | "da
   );
 }
 
-/** Choose black/white text on a hex bg */
 function readableOn(bg: string) {
   try {
     const hex = bg.replace("#", "");
@@ -81,8 +80,8 @@ function readableOn(bg: string) {
 function statusColor(s: string | undefined) {
   const up = (s || "UPCOMING").toUpperCase();
   if (up === "FINAL") return "#0f172a"; // slate-900
-  if (up === "LIVE") return "#b91c1c"; // red-700
-  return "#334155"; // slate-600
+  if (up === "LIVE") return "#b91c1c";  // red-700
+  return "#334155";                     // slate-600
 }
 
 function StatusPill({ status }: { status?: string }) {
@@ -98,7 +97,7 @@ function StatusPill({ status }: { status?: string }) {
   );
 }
 
-/** Find best-available name/abbr/logo using teamIndex + raw game team. */
+/** Resolve best label & logo using teamIndex by id or abbr. */
 function resolveTeamMeta(
   t: GameTeam,
   teamIndex?: Record<string, TeamShape>
@@ -109,16 +108,19 @@ function resolveTeamMeta(
 
   const shape = idKey || abbrKey;
   const label =
-    (shape?.name && String(shape.name)) ||
+    (shape && (shape as any).name && String((shape as any).name)) ||
     (t.name && String(t.name)) ||
-    (shape?.abbreviation && String(shape.abbreviation)) ||
+    ((shape && (shape as any).abbreviation && String((shape as any).abbreviation)) as
+      | string
+      | undefined) ||
     (abbr || "—");
 
-  const logo = (shape?.logo as string | undefined) ?? t.logo ?? null;
+  // IMPORTANT: TeamShape doesn't declare `logo`, so use (shape as any)?.logo
+  const logo = ((shape as any)?.logo as string | undefined) ?? t.logo ?? null;
+
   return { label, logo, shape };
 }
 
-/* a tiny inline logo circle */
 function LogoDot({ src, alt }: { src?: string | null; alt?: string | null }) {
   return (
     <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white/95 border border-black/10 overflow-hidden shrink-0">
