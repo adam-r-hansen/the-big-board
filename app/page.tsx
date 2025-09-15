@@ -369,15 +369,14 @@ function HomeInner() {
     let total = 0;
     const picks = (m.picks || []).map((pk) => {
       const teamId = pk.team_id;
-      // try to find the game this team is in (by scanning games list)
+      // find the game this team is in (by scanning this week’s games)
       const g = games.find((gg) => gg.home.id === teamId || gg.away.id === teamId);
       const computed = pickPointsForGame(teamId, g);
       const points = typeof pk.points === "number" ? pk.points : computed;
       if (typeof points === "number") total += points;
       return { ...pk, points };
     });
-    // if API already sent points_week, prefer that; otherwise use derived total
-    return { picks, total: typeof m.points_week === "number" ? m.points_week : total };
+    return { picks, total };
   };
 
   return (
@@ -538,7 +537,7 @@ function HomeInner() {
             )}
           </Card>
 
-          {/* League picks (locked) — FIXED: no clipping; Derived points shown */}
+          {/* League picks (locked) — Derived points + no clipping */}
           <Card title="League picks (locked)">
             {!leagueId ? (
               <div className="text-sm text-neutral-500">Select a league to view locked picks.</div>
@@ -548,13 +547,14 @@ function HomeInner() {
               <ul className="grid gap-3">
                 {locked.map((m) => {
                   const { picks, total } = withDerivedPickPoints(m);
+                  const totalToShow = Math.max(total, Number(m.points_week ?? 0)); // <-- prefer derived if larger
                   return (
                     <li key={m.profile_id} className="border rounded-xl px-3 py-2">
                       <div className="flex items-center justify-between text-sm">
                         <span className="font-medium">{m.display_name || "Member"}</span>
-                        <span className="text-neutral-600">{typeof m.points_week === "number" ? m.points_week : total} pts</span>
+                        <span className="text-neutral-600">{totalToShow} pts</span>
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-2">
+                      <div className="mt-2 flex flex-wrap gap-3">
                         {picks.length > 0 ? (
                           picks.map((pk, idx) => (
                             <span key={`${m.profile_id}-${idx}`} className="inline-flex items-center gap-2">
