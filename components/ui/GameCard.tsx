@@ -1,123 +1,158 @@
 // components/ui/GameCard.tsx
 "use client";
 
-import Image from "next/image";
-import type { ReactNode, CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { TeamShape } from "@/components/ui/TeamPill";
 import { pickTeamColor, readableOn } from "@/components/ui/TeamPill";
 
-/** Minimal game shape consumed by this card */
+/**
+ * Minimal game shape expected by this card.
+ * You can adapt your data mapping where you call <GameCard ... />.
+ */
+export type GameTeam = {
+  id?: string;
+  abbr?: string | null;
+  name?: string | null;
+  score?: number | null;
+  logo?: string | null;
+};
+
 export type GameCardGame = {
   id: string;
   week: number;
-  game_utc: string; // ISO
-  status?: "UPCOMING" | "LIVE" | "FINAL";
-  home: { id?: string; name?: string | null; abbr?: string | null; score?: number | null; logo?: string | null };
-  away: { id?: string; name?: string | null; abbr?: string | null; score?: number | null; logo?: string | null };
+  game_utc?: string | null; // ISO string
+  status?: "UPCOMING" | "LIVE" | "FINAL" | string;
+  home: GameTeam;
+  away: GameTeam;
 };
 
-type Props = {
+export type GameCardProps = {
   game: GameCardGame;
+  /** Optional mapping for team colors by id (from /api/team-map) */
   teamIndex?: Record<string, TeamShape>;
-  right?: ReactNode;
+  right?: ReactNode; // optional trailing item in header
 };
 
-function statusColorHex(status?: string) {
-  const s = (status || "UPCOMING").toUpperCase();
-  if (s === "FINAL") return "#111827";      // neutral-900
-  if (s === "LIVE") return "#dc2626";       // red-600
-  return "#6b7280";                          // neutral-500
+function statusColor(s: string | undefined) {
+  const up = (s || "UPCOMING").toUpperCase();
+  if (up === "FINAL") return "#0f172a"; // slate-900
+  if (up === "LIVE") return "#b91c1c"; // red-700
+  return "#334155"; // slate-600 (upcoming)
 }
 
-function TeamLogo({ logo, alt }: { logo?: string | null; alt: string }) {
+function StatusPill({ status }: { status?: string }) {
+  const hex = statusColor(status);
+  const label = (status || "UPCOMING").toUpperCase();
   return (
-    <div className="mr-3 shrink-0 grid place-items-center rounded-full border border-black/10 bg-white dark:bg-neutral-900 w-10 h-10">
-      {logo ? (
-        <Image
-          src={logo}
-          alt={alt}
-          width={24}
-          height={24}
-          className="object-contain"
-          unoptimized
-        />
-      ) : (
-        <span className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
-          {alt?.slice(0, 1) || "•"}
-        </span>
-      )}
-    </div>
+    <span
+      className="rounded-full px-3 py-1 text-xs font-semibold"
+      style={{
+        color: hex,
+        border: `2px solid ${hex}`,
+        background: "transparent",
+      }}
+    >
+      {label}
+    </span>
   );
 }
 
-export default function GameCard({ game, teamIndex, right }: Props) {
-  const statusHex = statusColorHex(game.status);
+function fmtWhen(s?: string | null) {
+  try {
+    if (!s) return "";
+    const d = new Date(s);
+    return d.toLocaleString();
+  } catch {
+    return "";
+  }
+}
 
-  const homeTeam: TeamShape | undefined = game.home.id ? teamIndex?.[game.home.id] : undefined;
-  const awayTeam: TeamShape | undefined = game.away.id ? teamIndex?.[game.away.id] : undefined;
+function TeamLogo({ logo, alt }: { logo?: string | null; alt?: string | null }) {
+  return (
+    <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-full border border-black/10 bg-white overflow-hidden">
+      {logo ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={logo} alt={alt || ""} className="w-8 h-8 object-contain" />
+      ) : (
+        <span className="w-6 h-6 rounded-full bg-black/10" />
+      )}
+    </span>
+  );
+}
 
-  const homeBg = pickTeamColor("light", homeTeam); 
-  const awayBg = pickTeamColor("light", awayTeam);
+export default function GameCard({ game, teamIndex, right }: GameCardProps) {
+  const s = (game.status || "UPCOMING").toUpperCase();
+
+  // Look up optional TeamShape to derive mono colors
+  const homeTeam: TeamShape | undefined = game.home.id
+    ? teamIndex?.[game.home.id]
+    : undefined;
+  const awayTeam: TeamShape | undefined = game.away.id
+    ? teamIndex?.[game.away.id]
+    : undefined;
+
+  const homeBg = pickTeamColor(homeTeam, "light");
+  const awayBg = pickTeamColor(awayTeam, "light");
 
   const homeText = readableOn(homeBg);
   const awayText = readableOn(awayBg);
 
-  const when = game.game_utc ? new Date(game.game_utc).toLocaleString() : "";
+  const homeScore = typeof game.home.score === "number" ? game.home.score : null;
+  const awayScore = typeof game.away.score === "number" ? game.away.score : null;
 
   return (
     <article className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
-      {/* Top row */}
-      <div className="mb-3 flex items-center gap-3">
-        <div className="text-sm text-neutral-600 dark:text-neutral-400 truncate">
-          {when} • Week {game.week}
+      <header className="mb-3 flex items-center justify-between text-xs text-neutral-500">
+        <span>
+          {fmtWhen(game.game_utc)}
+          {game.week ? ` • Week ${game.week}` : null}
+        </span>
+        <div className="flex items-center gap-2">
+          {right}
+          <StatusPill status={s} />
         </div>
-        <div className="ml-auto">
-          <span
-            className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold"
-            style={
-              {
-                border: `2px solid ${statusHex}`,
-                color: statusHex,
-                background: "transparent",
-              } as CSSProperties
-            }
-          >
-            {(game.status || "UPCOMING").toUpperCase()}
-          </span>
-        </div>
-        {right}
-      </div>
+      </header>
 
-      {/* Teams — single column safe layout */}
-      <div className="flex flex-col gap-3">
+      {/* Single-column layout, each side is a pill with logo + name + score */}
+      <div className="grid gap-3">
         {/* HOME */}
-       <div className="flex items-center min-w-0">
-         <TeamLogo
-           logo={game.home.logo || undefined}
+        <div className="flex items-center min-w-0">
+          <TeamLogo
+            logo={game.home.logo || undefined}
             alt={game.home.name || game.home.abbr || "Home"}
           />
-        <div
-    className="flex items-center justify-between gap-3 rounded-full px-4 py-3 min-w-0 flex-1"
-    style={{ background: homeBg, color: homeText } as CSSProperties}
-  >
-    <span className="truncate font-semibold">{game.home.name || game.home.abbr}</span>
-    {homeScore != null && <span className="text-lg font-bold">{homeScore}</span>}
-  </div>
-</div>
+          <div
+            className="flex items-center justify-between gap-3 rounded-full px-4 py-3 min-w-0 flex-1 ml-3"
+            style={{ background: homeBg, color: homeText } as CSSProperties}
+          >
+            <span className="truncate font-semibold">
+              {game.home.name || game.home.abbr}
+            </span>
+            {homeScore != null && (
+              <span className="text-lg font-bold">{homeScore}</span>
+            )}
+          </div>
+        </div>
+
         {/* AWAY */}
-<div className="flex items-center min-w-0">
-  <TeamLogo
-    logo={game.away.logo || undefined}
-    alt={game.away.name || game.away.abbr || "Away"}
-  />
-  <div
-    className="flex items-center justify-between gap-3 rounded-full px-4 py-3 min-w-0 flex-1"
-    style={{ background: awayBg, color: awayText } as CSSProperties}
-  >
-    <span className="truncate font-semibold">{game.away.name || game.away.abbr}</span>
-    {awayScore != null && <span className="text-lg font-bold">{awayScore}</span>}
-  </div>
-</div>      
+        <div className="flex items-center min-w-0">
+          <TeamLogo
+            logo={game.away.logo || undefined}
+            alt={game.away.name || game.away.abbr || "Away"}
+          />
+          <div
+            className="flex items-center justify-between gap-3 rounded-full px-4 py-3 min-w-0 flex-1 ml-3"
+            style={{ background: awayBg, color: awayText } as CSSProperties}
+          >
+            <span className="truncate font-semibold">
+              {game.away.name || game.away.abbr}
+            </span>
+            {awayScore != null && (
+              <span className="text-lg font-bold">{awayScore}</span>
+            )}
+          </div>
+        </div>
+      </div>
     </article>
   );
 }
