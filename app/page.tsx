@@ -1,6 +1,6 @@
 'use client'
 
-// app/page.tsx — Home with robust Locked Picks grouping and Tue→Mon week default
+// app/page.tsx — Home with locked-picks grouping + points + no clipping
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -165,9 +165,6 @@ function groupLockedFromRows(raw: any): MemberLockedPicks[] {
     const team_id: string =
       r.team_id || r.teamId || r.team?.id || r.team?.team_id || r.team_abbr || r.abbr || r.abbreviation || "";
 
-    // If we can't identify the team for the row, skip adding a pick
-    const havePick = Boolean(team_id);
-
     const statusRaw: string = r.status || r.game_status || r.state || "";
     const status = statusRaw ? String(statusRaw).toUpperCase() : undefined;
 
@@ -176,8 +173,6 @@ function groupLockedFromRows(raw: any): MemberLockedPicks[] {
         ? r.points
         : typeof r.pick_points === "number"
         ? r.pick_points
-        : typeof r.points_week === "number" // sometimes per-row equals final
-        ? r.points_week
         : null;
 
     let entry = byMember.get(profile_id);
@@ -191,12 +186,8 @@ function groupLockedFromRows(raw: any): MemberLockedPicks[] {
       byMember.set(profile_id, entry);
     }
 
-    if (havePick) {
-      entry.picks!.push({
-        team_id,
-        status,
-        points: rowPoints,
-      });
+    if (team_id) {
+      entry.picks!.push({ team_id, status, points: rowPoints });
     }
 
     if (typeof rowPoints === "number") {
@@ -204,13 +195,12 @@ function groupLockedFromRows(raw: any): MemberLockedPicks[] {
     }
   }
 
-  // sort stable by display_name
   return Array.from(byMember.values()).sort((a, b) =>
     (a.display_name || "").localeCompare(b.display_name || ""),
   );
 }
 
-/** Normalize standings to simple rows ({display_name, points_total}) */
+/** Normalize standings to simple rows */
 function normalizeStandings(raw: any): Array<{ profile_id?: string; display_name?: string; points_total?: number }> {
   const arr =
     (Array.isArray(raw) && raw) ||
@@ -242,7 +232,7 @@ function HomeInner() {
   const [authReady, setAuthReady] = useState(false);
 
   const picksUsed = myPicks.length;
-  const picksAllowed = 2; // wrinkle extras handled elsewhere if needed
+  const picksAllowed = 2;
   const picksLocked = myPicks.filter((p) => p.status === "FINAL" || p.status === "LIVE").length;
   const weekPoints = myPicks.reduce((acc, p) => acc + (typeof p.points === "number" ? p.points : 0), 0);
 
@@ -324,7 +314,7 @@ function HomeInner() {
     })();
   }, [authReady, leagueId, season, week]);
 
-  // Standings (probe + normalize)
+  // Standings
   useEffect(() => {
     if (!authReady || !leagueId) { setStandRows([]); return; }
     (async () => {
@@ -338,31 +328,26 @@ function HomeInner() {
     })();
   }, [authReady, leagueId, season]);
 
-  // Locked picks (probe list includes /api/league-picks-week FIRST; group rows → members)
+  // Locked picks
   useEffect(() => {
     if (!authReady || !leagueId) { setLocked([]); return; }
     (async () => {
       const base = `leagueId=${leagueId}&season=${season}&week=${week}`;
       const raw = await tryJson([
-        `/api/league-picks-week?${base}`,   // original endpoint
+        `/api/league-picks-week?${base}`,   // preferred
         `/api/league-locked?${base}`,
         `/api/league-locked-picks?${base}`,
         `/api/locked-picks?${base}`,
         `/api/picks-locked?${base}`,
       ]);
 
-      if (!raw) {
-        setLocked([]);
-        return;
-      }
+      if (!raw) { setLocked([]); return; }
 
       if (Array.isArray((raw as any).members)) {
         setLocked(normalizeLockedMembersShape(raw));
-        return;
+      } else {
+        setLocked(groupLockedFromRows(raw));
       }
-
-      // FALLBACK: treat as row-per-pick and group
-      setLocked(groupLockedFromRows(raw));
     })();
   }, [authReady, leagueId, season, week]);
 
@@ -378,6 +363,22 @@ function HomeInner() {
     for (const g of games) m.set(g.id, g);
     return m;
   }, [games]);
+
+  // Helper to compute derived points for a member’s picks if API didn’t supply them
+  const withDerivedPickPoints = (m: MemberLockedPicks): { picks: Required<MemberLockedPicks>["picks"]; total: number } => {
+    let total = 0;
+    const picks = (m.picks || []).map((pk) => {
+      const teamId = pk.team_id;
+      // try to find the game this team is in (by scanning games list)
+      const g = games.find((gg) => gg.home.id === teamId || gg.away.id === teamId);
+      const computed = pickPointsForGame(teamId, g);
+      const points = typeof pk.points === "number" ? pk.points : computed;
+      if (typeof points === "number") total += points;
+      return { ...pk, points };
+    });
+    // if API already sent points_week, prefer that; otherwise use derived total
+    return { picks, total: typeof m.points_week === "number" ? m.points_week : total };
+  };
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
@@ -518,9 +519,9 @@ function HomeInner() {
             ) : myPicks.length === 0 ? (
               <div className="text-sm text-neutral-500">No picks yet.</div>
             ) : (
-              <ul className="grid gap-2 max-h-64 overflow-auto pr-1">
+              <ul className="grid gap-2">
                 {myPicks.map((p) => {
-                  const g = gameById.get(p.game_id || "");
+                  const g = games.find((gg) => gg.home.id === p.team_id || gg.away.id === p.team_id);
                   const s = (g?.status || (gameLocked(g) ? "LIVE" : "UPCOMING")).toUpperCase();
                   const pts = pickPointsForGame(p.team_id, g);
                   return (
@@ -537,31 +538,39 @@ function HomeInner() {
             )}
           </Card>
 
-          {/* League picks (locked) */}
+          {/* League picks (locked) — FIXED: no clipping; Derived points shown */}
           <Card title="League picks (locked)">
             {!leagueId ? (
               <div className="text-sm text-neutral-500">Select a league to view locked picks.</div>
             ) : locked.length === 0 ? (
               <div className="text-sm text-neutral-500">No locked picks yet.</div>
             ) : (
-              <ul className="grid gap-3 max-h-72 overflow-auto pr-1">
-                {locked.map((m) => (
-                  <li key={m.profile_id} className="border rounded-xl px-3 py-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium">{m.display_name || "Member"}</span>
-                      <span className="text-neutral-600">{m.points_week ?? 0} pts</span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {m.picks && m.picks.length > 0 ? (
-                        m.picks.map((pk, idx) => (
-                          <PickPill key={`${m.profile_id}-${idx}`} teamId={pk.team_id} teamMap={teamMap} size="xs" />
-                        ))
-                      ) : (
-                        <span className="text-xs text-neutral-500">No locked picks yet.</span>
-                      )}
-                    </div>
-                  </li>
-                ))}
+              <ul className="grid gap-3">
+                {locked.map((m) => {
+                  const { picks, total } = withDerivedPickPoints(m);
+                  return (
+                    <li key={m.profile_id} className="border rounded-xl px-3 py-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium">{m.display_name || "Member"}</span>
+                        <span className="text-neutral-600">{typeof m.points_week === "number" ? m.points_week : total} pts</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {picks.length > 0 ? (
+                          picks.map((pk, idx) => (
+                            <span key={`${m.profile_id}-${idx}`} className="inline-flex items-center gap-2">
+                              <PickPill teamId={pk.team_id} teamMap={teamMap} size="xs" />
+                              {typeof pk.points === "number" && (
+                                <span className="text-[10px] font-semibold">{pk.points} pts</span>
+                              )}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs text-neutral-500">No locked picks yet.</span>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Card>
