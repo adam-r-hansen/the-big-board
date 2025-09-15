@@ -5,11 +5,6 @@
  * Home: overview + scoreboard (left 2/3), and
  * My Picks / League Picks (locked only) / Standings mini (right 1/3).
  *
- * Scoring:
- *  - Win  -> team final score
- *  - Loss -> 0
- *  - Tie  -> half of team final score (e.g. 10 -> 5)
- *
  * Default Week Logic:
  *  - NFL week boundaries are Tuesday → Monday.
  *  - Anchor = first Tuesday on/after September 1 of the selected season.
@@ -18,7 +13,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import GameCard, { type GameCardGame } from '@/components/ui/GameCard'
+import GameCard, { type GameCardGame, type TeamShape } from '@/components/ui/GameCard'
 import AdminNavLink from '@/components/AdminNavLink'
 import { createClient as createSupabaseClient } from '@/utils/supabase/client'
 
@@ -76,27 +71,6 @@ type MemberLockedPicks = {
 }
 
 // —————————————————————————————————————————————————————
-// Small UI bits
-// —————————————————————————————————————————————————————
-function Card(props: { title: string; right?: React.ReactNode; className?: string; children: React.ReactNode }) {
-  const { title, right, className, children } = props
-  return (
-    <section
-      className={cn(
-        'rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5',
-        className
-      )}
-    >
-      <header className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        {right}
-      </header>
-      <div>{children}</div>
-    </section>
-  )
-}
-
-// —————————————————————————————————————————————————————
 // Helpers
 // —————————————————————————————————————————————————————
 function gameLocked(g?: Game | null) {
@@ -121,6 +95,7 @@ function pickPointsForGame(pickTeamId: string, g?: Game): number | null {
   return g.away.id === pickTeamId ? as : 0
 }
 
+// loose index for other UI bits in this file
 function useTeamIndex(teamMap: Record<string, Team>) {
   return useMemo(() => {
     const m: Record<string, TeamLike> = {}
@@ -142,15 +117,27 @@ function useTeamIndex(teamMap: Record<string, Team>) {
   }, [teamMap])
 }
 
-function useGameByTeamId(games: Game[]) {
-  return useMemo(() => {
-    const m = new Map<string, Game>()
-    for (const g of games) {
-      if (g.home?.id) m.set(g.home.id, g)
-      if (g.away?.id) m.set(g.away.id, g)
+// strict index that satisfies GameCard’s expected TeamShape
+function buildTeamIndexStrict(teamMap: Record<string, Team>): Record<string, TeamShape> {
+  const m: Record<string, TeamShape> = {}
+  for (const t of Object.values(teamMap || {})) {
+    if (!t?.id) continue
+    const v: TeamShape = {
+      id: t.id,
+      abbreviation: t.abbreviation ?? null,
+      name: t.name ?? null,
+      color_primary: t.color_primary ?? null,
+      color_secondary: t.color_secondary ?? null,
+      logo: t.logo ?? null,
+      logo_dark: t.logo_dark ?? null,
     }
-    return m
-  }, [games])
+    m[t.id] = v
+    if (t.abbreviation) {
+      m[t.abbreviation] = v
+      m[t.abbreviation.toUpperCase()] = v
+    }
+  }
+  return m
 }
 
 // —————————————————————————————————————————————————————
@@ -184,11 +171,10 @@ function HomeInner() {
   const [userPickedWeek, setUserPickedWeek] = useState(false)
 
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
-  const teamIndex = useTeamIndex(teamMap)
+  const teamIndexLoose = useTeamIndex(teamMap) // used for chips on the right side
+  const teamIndexStrict = useMemo(() => buildTeamIndexStrict(teamMap), [teamMap]) // passed to GameCard
 
   const [games, setGames] = useState<Game[]>([])
-  const gameByTeamId = useGameByTeamId(games)
-
   const [myPicks, setMyPicks] = useState<Pick[]>([])
   const [wrinkleExtra, setWrinkleExtra] = useState<number>(0)
 
@@ -359,26 +345,6 @@ function HomeInner() {
     return m
   }, [games])
 
-  function teamChipForId(teamId: string, opts?: { status?: 'UPCOMING' | 'LIVE' | 'FINAL'; showPoints?: number | null }) {
-    const t = teamIndex[teamId]
-    const status = (opts?.status || 'UPCOMING').toUpperCase()
-    const showPoints = typeof opts?.showPoints === 'number' ? opts!.showPoints : null
-
-    const mono =
-      status === 'FINAL'
-        ? 'bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200'
-        : status === 'LIVE'
-        ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900'
-        : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200'
-
-    return (
-      <span className={cn('inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm', mono)}>
-        <span className="font-semibold">{t?.abbreviation || '—'}</span>
-        {showPoints != null && <span className="text-[10px] font-bold">{showPoints} pts</span>}
-      </span>
-    )
-  }
-
   // ——— Normalize games from API ———
   function normalizeGames(arr: any[]): Game[] {
     return (arr || []).map((x) => ({
@@ -521,7 +487,7 @@ function HomeInner() {
               ) : (
                 <div className="grid gap-4">
                   {games.map((g) => (
-                    <GameCard key={g.id} game={g as unknown as GameCardGame} teamIndex={teamIndex} />
+                    <GameCard key={g.id} game={g as unknown as GameCardGame} teamIndex={teamIndexStrict} />
                   ))}
                 </div>
               )}
@@ -551,7 +517,7 @@ function HomeInner() {
                       <li key={p.id} className="flex items-center justify-between">
                         <span>
                           <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
-                            <span className="font-semibold">{teamIndex[p.team_id]?.abbreviation || '—'}</span>
+                            <span className="font-semibold">{teamIndexLoose[p.team_id]?.abbreviation || '—'}</span>
                           </span>
                         </span>
                         <span className="flex items-center gap-2">
@@ -582,7 +548,7 @@ function HomeInner() {
                           m.picks.map((pk, idx) => (
                             <span key={`${m.profile_id}-${idx}`}>
                               <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 py-1 text-sm">
-                                <span className="font-semibold">{teamIndex[pk.team_id]?.abbreviation || '—'}</span>
+                                <span className="font-semibold">{teamIndexLoose[pk.team_id]?.abbreviation || '—'}</span>
                               </span>
                             </span>
                           ))
