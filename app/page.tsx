@@ -210,7 +210,7 @@ function HomeInner() {
 
   const [leagueLocked, setLeagueLocked] = useState<MemberLockedPicks[]>([])
   const [standRows, setStandRows] = useState<any[]>([])
-  const [msg, setMsg] = useState('')
+  const [msg, setMsg] = useState<string>('')
 
   const [authReady, setAuthReady] = useState(false)
 
@@ -263,31 +263,20 @@ function HomeInner() {
     })()
   }, [])
 
-  // Load leagues, teams, games, my picks, wrinkles, standings, league locked picks
+  // 1) Load LEAGUES + TEAMS (safe to always run)
   useEffect(() => {
     if (!authReady) return
-
     ;(async () => {
       try {
-        const [{ leagues: L }, t, g, p, w, s] = await Promise.all([
+        const [leaguesRes, teamsRes] = await Promise.all([
           fetch('/api/leagues', { cache: 'no-store' }).then((r) => r.json()),
           fetch('/api/teams', { cache: 'no-store' }).then((r) => r.json()),
-          fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then((r) => r.json()),
-          fetch(`/api/my-picks?season=${season}&week=${week}`, { cache: 'no-store' }).then((r) => r.json()),
-          fetch(`/api/wrinkles?leagueId=${leagueId}`, { cache: 'no-store' }).then((r) => r.json()),
-          fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }).then((r) => r.json()),
         ])
 
-        // leagues
-        const leaguesArr = Array.isArray(L) ? L : L?.rows || []
-        setLeagues(leaguesArr)
-        if (leaguesArr.length === 1) {
-          setLeagueId(leaguesArr[0].id)
-          setSeason(leaguesArr[0].season)
-        }
+        const L = Array.isArray(leaguesRes?.leagues) ? leaguesRes.leagues : leaguesRes?.rows || leaguesRes || []
+        setLeagues(L)
 
-        // teams
-        const teamsArr = Array.isArray(t?.teams) ? t.teams : Array.isArray(t) ? t : []
+        const teamsArr = Array.isArray(teamsRes?.teams) ? teamsRes.teams : Array.isArray(teamsRes) ? teamsRes : []
         const map: Record<string, Team> = {}
         for (const it of teamsArr) {
           if (!it?.id) continue
@@ -300,65 +289,62 @@ function HomeInner() {
         }
         setTeamMap(map)
 
-        // games
-        const gNorm = normalizeGames(g?.games || g || [])
+        // If exactly one league, default-select it and adopt its season
+        if (L.length === 1) {
+          setLeagueId(L[0].id)
+          setSeason(L[0].season)
+        }
+      } catch (e) {
+        console.error('Load leagues/teams failed', e)
+        setMsg((prev) => prev || 'Failed to load some data. Try refresh.')
+      }
+    })()
+  }, [authReady])
+
+  // 2) Load GAMES + MY PICKS (independent of league)
+  useEffect(() => {
+    if (!authReady) return
+    ;(async () => {
+      try {
+        const [gamesRes, picksRes] = await Promise.all([
+          fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then((r) => r.json()),
+          fetch(`/api/my-picks?season=${season}&week=${week}`, { cache: 'no-store' }).then((r) => r.json()),
+        ])
+        const gNorm = normalizeGames(gamesRes?.games || gamesRes || [])
         setGames(gNorm)
 
-        // picks
-        const pArr = Array.isArray(p?.picks) ? p.picks : Array.isArray(p) ? p : []
+        const pArr = Array.isArray(picksRes?.picks) ? picksRes.picks : Array.isArray(picksRes) ? picksRes : []
         setMyPicks(pArr)
+      } catch (e) {
+        console.error('Load games/picks failed', e)
+        setMsg((prev) => prev || 'Failed to load some data. Try refresh.')
+      }
+    })()
+  }, [authReady, season, week])
 
-        // wrinkle extra picks
-        const extra = Array.isArray(w?.wrinkles)
-          ? w.wrinkles.reduce((acc: number, it: any) => acc + (Number(it?.extra_picks) || 0), 0)
+  // 3) Load WRINKLES + STANDINGS (ONLY when leagueId exists)
+  useEffect(() => {
+    if (!authReady || !leagueId) return
+    ;(async () => {
+      try {
+        const [wRes, sRes] = await Promise.all([
+          fetch(`/api/wrinkles?leagueId=${leagueId}`, { cache: 'no-store' }).then((r) => r.json()),
+          fetch(`/api/standings?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }).then((r) => r.json()),
+        ])
+
+        const extra = Array.isArray(wRes?.wrinkles)
+          ? wRes.wrinkles.reduce((acc: number, it: any) => acc + (Number(it?.extra_picks) || 0), 0)
           : 0
         setWrinkleExtra(extra)
 
-        // standings
-        const rows = Array.isArray(s) ? s : (s?.standings || s?.rows || [])
+        const rows = Array.isArray(sRes) ? sRes : (sRes?.standings || sRes?.rows || [])
         setStandRows(rows || [])
-
-        // league locked picks — support both response shapes
-        if (Array.isArray(L?.members)) {
-          setLeagueLocked(L.members as MemberLockedPicks[])
-        } else if (Array.isArray(L?.rows)) {
-          const grouped = new Map<string, MemberLockedPicks>()
-          const safeName = (r: any) =>
-            r?.display_name ||
-            r?.name ||
-            r?.profile_name ||
-            `${(r?.first_name || '').trim()} ${(r?.last_name || '').trim()}`.trim() ||
-            r?.email ||
-            'Member'
-
-          for (const r of L.rows) {
-            const id = r.profile_id || r.member_id || r.id
-            if (!id) continue
-            if (!grouped.has(id)) {
-              grouped.set(id, { profile_id: id, display_name: safeName(r), points_week: r.points_week || 0, picks: [] })
-            }
-            const acc = grouped.get(id)!
-            if (r.team_id) {
-              acc.picks!.push({ team_id: r.team_id, status: (r.status || '').toUpperCase(), points: r.points ?? null })
-            }
-          }
-          setLeagueLocked(Array.from(grouped.values()))
-        }
       } catch (e) {
-        console.error('Home load failed:', e)
-        setMsg('Failed to load some data. Try refresh.')
+        console.error('Load wrinkles/standings failed', e)
+        setMsg((prev) => prev || 'Failed to load some data. Try refresh.')
       }
     })()
-  }, [authReady, leagueId, season, week])
-
-  // Pin to single league's season if only one
-  useEffect(() => {
-    if (leagues.length === 1) {
-      const L = leagues[0]
-      setLeagueId(L.id)
-      setSeason(L.season)
-    }
-  }, [leagues])
+  }, [authReady, leagueId, season])
 
   // Default the week based on NFL Tue→Mon boundaries (don’t override manual pick)
   useEffect(() => {
