@@ -2,20 +2,21 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import type { TeamShape } from "@/components/ui/TeamPill"; // type-only import
+import type { TeamShape } from "@/components/ui/TeamPill"; // type-only
 
 export type GameTeam = {
   id?: string;
-  abbr?: string | null;
-  name?: string | null;
+  abbr?: string | null;        // from API normalizeGames
+  abbreviation?: string | null; // just in case it comes through as 'abbreviation'
+  name?: string | null;        // sometimes present, often not
   score?: number | null;
-  logo?: string | null;
+  logo?: string | null;        // sometimes present, often not
 };
 
 export type GameCardGame = {
   id: string;
   week: number;
-  game_utc?: string | null; // ISO
+  game_utc?: string | null;
   status?: "UPCOMING" | "LIVE" | "FINAL" | string;
   home: GameTeam;
   away: GameTeam;
@@ -23,7 +24,7 @@ export type GameCardGame = {
 
 export type GameCardProps = {
   game: GameCardGame;
-  teamIndex?: Record<string, TeamShape>;
+  teamIndex?: Record<string, TeamShape>; // from useTeamIndex (keys: id and ABBR)
   right?: ReactNode;
 };
 
@@ -39,7 +40,7 @@ function fmtWhen(s?: string | null) {
   }
 }
 
-/** Pick a solid mono color from TeamShape */
+/** Prefer configured mono color keys; fall back sanely. */
 function pickMonoColor(team: Partial<TeamShape> | undefined, mode: "light" | "dark") {
   if (!team) return mode === "light" ? "#e5e7eb" : "#111827";
   const pref =
@@ -97,6 +98,26 @@ function StatusPill({ status }: { status?: string }) {
   );
 }
 
+/** Find best-available name/abbr/logo using teamIndex + raw game team. */
+function resolveTeamMeta(
+  t: GameTeam,
+  teamIndex?: Record<string, TeamShape>
+): { label: string; logo?: string | null; shape?: TeamShape } {
+  const idKey = t.id && teamIndex ? teamIndex[t.id] : undefined;
+  const abbr = (t.abbr || t.abbreviation || "")?.toString().toUpperCase();
+  const abbrKey = abbr && teamIndex ? teamIndex[abbr] : undefined;
+
+  const shape = idKey || abbrKey;
+  const label =
+    (shape?.name && String(shape.name)) ||
+    (t.name && String(t.name)) ||
+    (shape?.abbreviation && String(shape.abbreviation)) ||
+    (abbr || "—");
+
+  const logo = (shape?.logo as string | undefined) ?? t.logo ?? null;
+  return { label, logo, shape };
+}
+
 /* a tiny inline logo circle */
 function LogoDot({ src, alt }: { src?: string | null; alt?: string | null }) {
   return (
@@ -116,15 +137,11 @@ function LogoDot({ src, alt }: { src?: string | null; alt?: string | null }) {
 export default function GameCard({ game, teamIndex, right }: GameCardProps) {
   const s = (game.status || "UPCOMING").toUpperCase();
 
-  const homeShape: Partial<TeamShape> | undefined = game.home.id
-    ? teamIndex?.[game.home.id]
-    : undefined;
-  const awayShape: Partial<TeamShape> | undefined = game.away.id
-    ? teamIndex?.[game.away.id]
-    : undefined;
+  const homeMeta = resolveTeamMeta(game.home, teamIndex);
+  const awayMeta = resolveTeamMeta(game.away, teamIndex);
 
-  const homeBg = pickMonoColor(homeShape, "light");
-  const awayBg = pickMonoColor(awayShape, "light");
+  const homeBg = pickMonoColor(homeMeta.shape, "light");
+  const awayBg = pickMonoColor(awayMeta.shape, "light");
   const homeText = readableOn(homeBg);
   const awayText = readableOn(awayBg);
 
@@ -144,19 +161,18 @@ export default function GameCard({ game, teamIndex, right }: GameCardProps) {
         </div>
       </header>
 
-      {/* one column; each row is a filled mono-color pill with logo + name + score inside */}
       <div className="grid gap-3">
         {/* HOME */}
         <div
           className="flex items-center gap-3 rounded-full px-4 py-3 min-w-0"
           style={{ background: homeBg, color: homeText } as CSSProperties}
         >
-          <LogoDot src={game.home.logo} alt={game.home.name || game.home.abbr || "Home"} />
-          <span className="truncate font-semibold text-base md:text-lg">
-            {game.home.name || game.home.abbr}
-          </span>
-          <span className="ml-auto inline-flex items-center justify-center rounded-full px-3 py-1 text-base md:text-lg font-extrabold"
-            style={{ background: "transparent", color: homeText }}>
+          <LogoDot src={homeMeta.logo} alt={homeMeta.label} />
+          <span className="truncate font-semibold text-base md:text-lg">{homeMeta.label}</span>
+          <span
+            className="ml-auto inline-flex items-center justify-center rounded-full px-3 py-1 text-base md:text-lg font-extrabold"
+            style={{ background: "transparent", color: homeText }}
+          >
             {homeScore != null ? homeScore : "—"}
           </span>
         </div>
@@ -166,12 +182,12 @@ export default function GameCard({ game, teamIndex, right }: GameCardProps) {
           className="flex items-center gap-3 rounded-full px-4 py-3 min-w-0"
           style={{ background: awayBg, color: awayText } as CSSProperties}
         >
-          <LogoDot src={game.away.logo} alt={game.away.name || game.away.abbr || "Away"} />
-          <span className="truncate font-semibold text-base md:text-lg">
-            {game.away.name || game.away.abbr}
-          </span>
-          <span className="ml-auto inline-flex items-center justify-center rounded-full px-3 py-1 text-base md:text-lg font-extrabold"
-            style={{ background: "transparent", color: awayText }}>
+          <LogoDot src={awayMeta.logo} alt={awayMeta.label} />
+          <span className="truncate font-semibold text-base md:text-lg">{awayMeta.label}</span>
+          <span
+            className="ml-auto inline-flex items-center justify-center rounded-full px-3 py-1 text-base md:text-lg font-extrabold"
+            style={{ background: "transparent", color: awayText }}
+          >
             {awayScore != null ? awayScore : "—"}
           </span>
         </div>
