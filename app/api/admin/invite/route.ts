@@ -16,15 +16,16 @@ export async function POST(req: Request) {
       )
     }
 
-    // Build the redirect URL that the magic link will land on
-    // NEXT_PUBLIC_SITE_URL is best; fall back to Vercel URL; final hardcoded domain as last resort.
+    // Where the magic link should land after auth:
     const site =
       process.env.NEXT_PUBLIC_SITE_URL ||
       (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://www.the-big-board.fun')
 
     const redirectTo = `${site}/?leagueId=${encodeURIComponent(leagueId)}`
 
-    const supabase = createServerClient()
+    // IMPORTANT: await the server client (your util returns a Promise)
+    const supabase = await createServerClient()
+
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
