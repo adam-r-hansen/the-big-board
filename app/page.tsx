@@ -13,7 +13,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import GameCard, { type GameCardGame, type TeamShape } from '@/components/ui/GameCard'
+import GameCard, { type GameCardGame } from '@/components/ui/GameCard'
 import AdminNavLink from '@/components/AdminNavLink'
 import { createClient as createSupabaseClient } from '@/utils/supabase/client'
 
@@ -117,12 +117,21 @@ function useTeamIndex(teamMap: Record<string, Team>) {
   }, [teamMap])
 }
 
-// strict index that satisfies GameCard’s expected TeamShape
-function buildTeamIndexStrict(teamMap: Record<string, Team>): Record<string, TeamShape> {
-  const m: Record<string, TeamShape> = {}
+// narrow index for GameCard (no external type import needed)
+type TeamForCard = {
+  id: string
+  abbreviation: string | null
+  name: string | null
+  color_primary: string | null
+  color_secondary: string | null
+  logo: string | null
+  logo_dark: string | null
+}
+function buildTeamIndexForCard(teamMap: Record<string, Team>): Record<string, TeamForCard> {
+  const m: Record<string, TeamForCard> = {}
   for (const t of Object.values(teamMap || {})) {
     if (!t?.id) continue
-    const v: TeamShape = {
+    const v: TeamForCard = {
       id: t.id,
       abbreviation: t.abbreviation ?? null,
       name: t.name ?? null,
@@ -172,7 +181,7 @@ function HomeInner() {
 
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
   const teamIndexLoose = useTeamIndex(teamMap) // used for chips on the right side
-  const teamIndexStrict = useMemo(() => buildTeamIndexStrict(teamMap), [teamMap]) // passed to GameCard
+  const teamIndexForCard = useMemo(() => buildTeamIndexForCard(teamMap), [teamMap]) // passed to GameCard
 
   const [games, setGames] = useState<Game[]>([])
   const [myPicks, setMyPicks] = useState<Pick[]>([])
@@ -487,7 +496,7 @@ function HomeInner() {
               ) : (
                 <div className="grid gap-4">
                   {games.map((g) => (
-                    <GameCard key={g.id} game={g as unknown as GameCardGame} teamIndex={teamIndexStrict} />
+                    <GameCard key={g.id} game={g as unknown as GameCardGame} teamIndex={teamIndexForCard as any} />
                   ))}
                 </div>
               )}
