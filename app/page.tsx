@@ -1,6 +1,6 @@
 'use client'
 
-// app/page.tsx — Home with robust Locked Picks + Mini-Standings
+// app/page.tsx — Home with robust Locked Picks + Mini-Standings (now probes /api/league-picks-week first)
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -181,7 +181,7 @@ function HomeInner() {
   const [authReady, setAuthReady] = useState(false);
 
   const picksUsed = myPicks.length;
-  const picksAllowed = 2; // (wrinkles removed here)
+  const picksAllowed = 2; // wrinkle extras handled elsewhere if needed
   const picksLocked = myPicks.filter((p) => p.status === "FINAL" || p.status === "LIVE").length;
   const weekPoints = myPicks.reduce((acc, p) => acc + (typeof p.points === "number" ? p.points : 0), 0);
 
@@ -277,12 +277,13 @@ function HomeInner() {
     })();
   }, [authReady, leagueId, season]);
 
-  // Locked picks (try several names; normalize)
+  // Locked picks (probe list now includes /api/league-picks-week FIRST)
   useEffect(() => {
     if (!authReady || !leagueId) { setLocked([]); return; }
     (async () => {
       const base = `leagueId=${leagueId}&season=${season}&week=${week}`;
       const raw = await tryJson([
+        `/api/league-picks-week?${base}`,   // ← your original endpoint
         `/api/league-locked?${base}`,
         `/api/league-locked-picks?${base}`,
         `/api/locked-picks?${base}`,
