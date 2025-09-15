@@ -91,37 +91,33 @@ export default function GameCard({ game, teamIndex, right }: Props) {
       {/* Teams — single column safe layout */}
       <div className="flex flex-col gap-3">
         {/* HOME */}
-        <div className="flex items-center min-w-0">
-          <TeamLogo logo={homeTeam?.logo || game.home.logo} alt={game.home.name || game.home.abbr || "Home"} />
-          <div
-            className="flex items-center justify-between gap-3 rounded-full px-4 py-3 min-w-0 flex-1"
-            style={{ background: homeBg, color: homeText } as CSSProperties}
-          >
-            <div className="truncate text-base md:text-lg font-semibold">
-              {game.home.name || homeTeam?.name || game.home.abbr || "Home"}
-            </div>
-            <div className="shrink-0 text-lg md:text-xl font-extrabold tabular-nums">
-              {typeof game.home.score === "number" ? game.home.score : (game.status === "UPCOMING" ? "—" : "0")}
-            </div>
-          </div>
-        </div>
-
+       <div className="flex items-center min-w-0">
+         <TeamLogo
+           logo={game.home.logo || undefined}
+            alt={game.home.name || game.home.abbr || "Home"}
+          />
+        <div
+    className="flex items-center justify-between gap-3 rounded-full px-4 py-3 min-w-0 flex-1"
+    style={{ background: homeBg, color: homeText } as CSSProperties}
+  >
+    <span className="truncate font-semibold">{game.home.name || game.home.abbr}</span>
+    {homeScore != null && <span className="text-lg font-bold">{homeScore}</span>}
+  </div>
+</div>
         {/* AWAY */}
-        <div className="flex items-center min-w-0">
-          <TeamLogo logo={awayTeam?.logo || game.away.logo} alt={game.away.name || game.away.abbr || "Away"} />
-          <div
-            className="flex items-center justify-between gap-3 rounded-full px-4 py-3 min-w-0 flex-1"
-            style={{ background: awayBg, color: awayText } as CSSProperties}
-          >
-            <div className="truncate text-base md:text-lg font-semibold">
-              {game.away.name || awayTeam?.name || game.away.abbr || "Away"}
-            </div>
-            <div className="shrink-0 text-lg md:text-xl font-extrabold tabular-nums">
-              {typeof game.away.score === "number" ? game.away.score : (game.status === "UPCOMING" ? "—" : "0")}
-            </div>
-          </div>
-        </div>
-      </div>
+<div className="flex items-center min-w-0">
+  <TeamLogo
+    logo={game.away.logo || undefined}
+    alt={game.away.name || game.away.abbr || "Away"}
+  />
+  <div
+    className="flex items-center justify-between gap-3 rounded-full px-4 py-3 min-w-0 flex-1"
+    style={{ background: awayBg, color: awayText } as CSSProperties}
+  >
+    <span className="truncate font-semibold">{game.away.name || game.away.abbr}</span>
+    {awayScore != null && <span className="text-lg font-bold">{awayScore}</span>}
+  </div>
+</div>      
     </article>
   );
 }
