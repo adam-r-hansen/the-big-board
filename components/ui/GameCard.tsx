@@ -1,135 +1,127 @@
 // components/ui/GameCard.tsx
-'use client'
+"use client";
 
+import Image from "next/image";
 import type { ReactNode, CSSProperties } from "react";
 import type { TeamShape } from "@/components/ui/TeamPill";
 import { pickTeamColor, readableOn } from "@/components/ui/TeamPill";
 
-/** Minimal game shape expected by this card. */
-export type GameCardTeam = TeamShape & {
-  logo?: string | null;
-};
-
-export type GameCardData = {
+/** Minimal game shape consumed by this card */
+export type GameCardGame = {
   id: string;
   week: number;
   game_utc: string; // ISO
   status?: "UPCOMING" | "LIVE" | "FINAL";
-  home: { id?: string; name?: string | null; abbr?: string | null; score?: number | null; logo?: string | null } & Partial<GameCardTeam>;
-  away: { id?: string; name?: string | null; abbr?: string | null; score?: number | null; logo?: string | null } & Partial<GameCardTeam>;
+  home: { id?: string; name?: string | null; abbr?: string | null; score?: number | null; logo?: string | null };
+  away: { id?: string; name?: string | null; abbr?: string | null; score?: number | null; logo?: string | null };
 };
 
 type Props = {
-  game: GameCardData;
-  className?: string;
-  right?: ReactNode; // extra actions, if any
+  game: GameCardGame;
+  teamIndex?: Record<string, TeamShape>;
+  right?: ReactNode;
 };
 
-function pillStyle(bg: string): CSSProperties {
-  return {
-    background: bg,
-    color: readableOn(bg),
-    borderColor: bg,
-  };
+function statusColorHex(status?: string) {
+  const s = (status || "UPCOMING").toUpperCase();
+  if (s === "FINAL") return "#111827";      // neutral-900
+  if (s === "LIVE") return "#dc2626";       // red-600
+  return "#6b7280";                          // neutral-500
 }
 
-function statusColor(status?: string) {
-  const s = (status || '').toUpperCase();
-  if (s === 'FINAL') return '#111827';     // neutral-900
-  if (s === 'LIVE')  return '#dc2626';     // red-600
-  return '#6b7280';                        // gray-500
+function TeamLogo({ logo, alt }: { logo?: string | null; alt: string }) {
+  return (
+    <div className="mr-3 shrink-0 grid place-items-center rounded-full border border-black/10 bg-white dark:bg-neutral-900 w-10 h-10">
+      {logo ? (
+        <Image
+          src={logo}
+          alt={alt}
+          width={24}
+          height={24}
+          className="object-contain"
+          unoptimized
+        />
+      ) : (
+        <span className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+          {alt?.slice(0, 1) || "•"}
+        </span>
+      )}
+    </div>
+  );
 }
 
-export default function GameCard({ game, className = "", right }: Props) {
-  const s = (game.status || 'UPCOMING').toUpperCase() as "UPCOMING" | "LIVE" | "FINAL";
-  const when = game.game_utc ? new Date(game.game_utc).toLocaleString() : '';
+export default function GameCard({ game, teamIndex, right }: Props) {
+  const statusHex = statusColorHex(game.status);
 
-  // ✅ pickTeamColor now expects (mode, team)
-  const homeBg = pickTeamColor('light', game.home as TeamShape);
-  const awayBg = pickTeamColor('light', game.away as TeamShape);
+  const homeTeam: TeamShape | undefined = game.home.id ? teamIndex?.[game.home.id] : undefined;
+  const awayTeam: TeamShape | undefined = game.away.id ? teamIndex?.[game.away.id] : undefined;
 
-  const statusHex = statusColor(s);
+  const homeBg = pickTeamColor(homeTeam, "light");
+  const awayBg = pickTeamColor(awayTeam, "light");
 
-  const homeScore =
-    typeof game.home.score === 'number' ? game.home.score : (s === 'FINAL' || s === 'LIVE' ? 0 : null);
-  const awayScore =
-    typeof game.away.score === 'number' ? game.away.score : (s === 'FINAL' || s === 'LIVE' ? 0 : null);
+  const homeText = readableOn(homeBg);
+  const awayText = readableOn(awayBg);
+
+  const when = game.game_utc ? new Date(game.game_utc).toLocaleString() : "";
 
   return (
-    <article
-      className={[
-        "rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5",
-        className,
-      ].join(" ")}
-    >
-      <header className="mb-3 flex items-center justify-between text-xs text-neutral-500">
-        <span>{when} • Week {game.week}</span>
-
-        {/* Transparent status pill with colored border/text */}
-        <span
-          className="inline-flex items-center rounded-full px-2.5 py-1 border text-[10px] font-semibold tracking-wide uppercase"
-          style={{ borderColor: statusHex, color: statusHex, background: 'transparent' }}
-        >
-          {s}
-        </span>
-      </header>
-
-      <div className="flex items-center gap-3">
-        {/* Home */}
-        <div className="flex-1">
-          <div
-            className="w-full rounded-full border px-4 py-3 flex items-center gap-3"
-            style={pillStyle(homeBg)}
-            title={game.home.name || game.home.abbr || ""}
+    <article className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
+      {/* Top row */}
+      <div className="mb-3 flex items-center gap-3">
+        <div className="text-sm text-neutral-600 dark:text-neutral-400 truncate">
+          {when} • Week {game.week}
+        </div>
+        <div className="ml-auto">
+          <span
+            className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold"
+            style={
+              {
+                border: `2px solid ${statusHex}`,
+                color: statusHex,
+                background: "transparent",
+              } as CSSProperties
+            }
           >
-            {game.home.logo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={game.home.logo}
-                alt={game.home.abbr || "logo"}
-                className="h-6 w-6 shrink-0 rounded-sm bg-white/80 p-0.5"
-              />
-            ) : null}
-            <div className="truncate font-semibold">
-              <span className="hidden sm:inline">{game.home.name || game.home.abbr}</span>
-              <span className="sm:hidden">{game.home.abbr || game.home.name}</span>
+            {(game.status || "UPCOMING").toUpperCase()}
+          </span>
+        </div>
+        {right}
+      </div>
+
+      {/* Teams — single column safe layout */}
+      <div className="flex flex-col gap-3">
+        {/* HOME */}
+        <div className="flex items-center min-w-0">
+          <TeamLogo logo={homeTeam?.logo || game.home.logo} alt={game.home.name || game.home.abbr || "Home"} />
+          <div
+            className="flex items-center justify-between gap-3 rounded-full px-4 py-3 min-w-0 flex-1"
+            style={{ background: homeBg, color: homeText } as CSSProperties}
+          >
+            <div className="truncate text-base md:text-lg font-semibold">
+              {game.home.name || homeTeam?.name || game.home.abbr || "Home"}
             </div>
-            <div className="ml-auto tabular-nums font-semibold">
-              {homeScore ?? "—"}
+            <div className="shrink-0 text-lg md:text-xl font-extrabold tabular-nums">
+              {typeof game.home.score === "number" ? game.home.score : (game.status === "UPCOMING" ? "—" : "0")}
             </div>
           </div>
         </div>
 
-        <div className="text-neutral-400">—</div>
-
-        {/* Away */}
-        <div className="flex-1">
+        {/* AWAY */}
+        <div className="flex items-center min-w-0">
+          <TeamLogo logo={awayTeam?.logo || game.away.logo} alt={game.away.name || game.away.abbr || "Away"} />
           <div
-            className="w-full rounded-full border px-4 py-3 flex items-center gap-3"
-            style={pillStyle(awayBg)}
-            title={game.away.name || game.away.abbr || ""}
+            className="flex items-center justify-between gap-3 rounded-full px-4 py-3 min-w-0 flex-1"
+            style={{ background: awayBg, color: awayText } as CSSProperties}
           >
-            {game.away.logo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={game.away.logo}
-                alt={game.away.abbr || "logo"}
-                className="h-6 w-6 shrink-0 rounded-sm bg-white/80 p-0.5"
-              />
-            ) : null}
-            <div className="truncate font-semibold">
-              <span className="hidden sm:inline">{game.away.name || game.away.abbr}</span>
-              <span className="sm:hidden">{game.away.abbr || game.away.name}</span>
+            <div className="truncate text-base md:text-lg font-semibold">
+              {game.away.name || awayTeam?.name || game.away.abbr || "Away"}
             </div>
-            <div className="ml-auto tabular-nums font-semibold">
-              {awayScore ?? "—"}
+            <div className="shrink-0 text-lg md:text-xl font-extrabold tabular-nums">
+              {typeof game.away.score === "number" ? game.away.score : (game.status === "UPCOMING" ? "—" : "0")}
             </div>
           </div>
         </div>
       </div>
-
-      {/* Optional footer row for extras */}
-      {right ? <div className="mt-3">{right}</div> : null}
     </article>
   );
 }
