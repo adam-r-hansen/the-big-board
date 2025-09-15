@@ -2,6 +2,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import TeamPill, { TeamShape } from '@/components/ui/TeamPill'
 
 type TeamRow = {
   id: string
@@ -46,25 +47,6 @@ async function post<T = any>(url: string, body: any): Promise<T> {
   return data
 }
 
-function readableTextOn(bg: string) {
-  // Accepts #rrggbb or #rgb; defaults to black text on failure.
-  try {
-    const hex = bg.replace('#', '')
-    const v = hex.length === 3
-      ? hex.split('').map(c => c + c).join('')
-      : hex
-    const r = parseInt(v.slice(0, 2), 16) / 255
-    const g = parseInt(v.slice(2, 4), 16) / 255
-    const b = parseInt(v.slice(4, 6), 16) / 255
-    // sRGB luminance
-    const toLin = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4))
-    const L = 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b)
-    return L > 0.5 ? '#111827' /* near-black */ : 'white'
-  } catch {
-    return '#111827'
-  }
-}
-
 export default function TeamPillColors() {
   const [teams, setTeams] = useState<TeamRow[]>([])
   const [teamId, setTeamId] = useState<string>('')
@@ -80,26 +62,35 @@ export default function TeamPillColors() {
     setTimeout(() => setMsg(''), 2500)
   }
 
+  async function loadTeams(preserveId?: string) {
+    const tm = await get<any>('/api/team-map')
+    const arr = Object.values<TeamRow>(tm?.teams || {})
+    arr.sort((a, b) => (a.abbreviation || '').localeCompare(b.abbreviation || ''))
+    setTeams(arr)
+    if (preserveId) {
+      setTeamId(preserveId)
+    } else if (!teamId && arr[0]) {
+      setTeamId(arr[0].id)
+    }
+  }
+
   // fetch team map once
   useEffect(() => {
     ;(async () => {
       try {
-        const tm = await get<any>('/api/team-map')
-        const arr = Object.values<TeamRow>(tm?.teams || {})
-        // sort stable by abbreviation
-        arr.sort((a, b) => (a.abbreviation || '').localeCompare(b.abbreviation || ''))
-        setTeams(arr)
-        // default select first team
-        if (arr[0]) setTeamId(arr[0].id)
+        await loadTeams()
       } catch (e: any) {
         flash(`Load failed: ${e.message || e}`)
       }
     })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const team = useMemo(() => teams.find(t => t.id === teamId), [teamId, teams])
 
   // when team changes, seed keys from stored prefs or sensible defaults
   useEffect(() => {
-    const t = teams.find(x => x.id === teamId)
+    const t = team
     if (!t) return
     const available = colorOptionsForTeam(t).map(o => o.value)
     const defaultLight =
@@ -112,19 +103,36 @@ export default function TeamPillColors() {
       (available.includes('color_secondary') ? 'color_secondary' : available[0] || '')
     setLightKey(defaultLight || '')
     setDarkKey(defaultDark || '')
-  }, [teamId, teams])
+  }, [team])
 
-  const team = useMemo(() => teams.find(t => t.id === teamId), [teamId, teams])
+  const lightHex = useMemo(
+    () => (team && lightKey ? (team as any)[lightKey] : '#ffffff') || '#ffffff',
+    [team, lightKey]
+  )
+  const darkHex = useMemo(
+    () => (team && darkKey ? (team as any)[darkKey] : '#111827') || '#111827',
+    [team, darkKey]
+  )
 
-  const lightHex = useMemo(() => (team && lightKey ? (team as any)[lightKey] : '#ffffff') || '#ffffff', [team, lightKey])
-  const darkHex  = useMemo(() => (team && darkKey  ? (team as any)[darkKey ] : '#111827') || '#111827', [team, darkKey])
+  // Build a preview team that reflects the current selections (without needing to save)
+  const previewTeam = useMemo(
+    () =>
+      team
+        ? ({
+            ...team,
+            ui_light_color_key: lightKey || team.ui_light_color_key,
+            ui_dark_color_key: darkKey || team.ui_dark_color_key,
+          } as TeamShape)
+        : null,
+    [team, lightKey, darkKey]
+  )
 
   function colorOptionsForTeam(t?: TeamRow) {
     if (!t) return []
     const pairs: { key: ColorKey; label: string; hex?: string | null }[] = [
-      { key: 'color_primary', label: 'Primary',   hex: t.color_primary },
+      { key: 'color_primary', label: 'Primary', hex: t.color_primary },
       { key: 'color_secondary', label: 'Secondary', hex: t.color_secondary },
-      { key: 'color_tertiary', label: 'Tertiary',  hex: t.color_tertiary },
+      { key: 'color_tertiary', label: 'Tertiary', hex: t.color_tertiary },
       { key: 'color_quaternary', label: 'Quaternary', hex: t.color_quaternary },
     ]
     return pairs
@@ -141,7 +149,6 @@ export default function TeamPillColors() {
     const target = hex.toLowerCase()
     const direct = opts.find(o => o.hex.toLowerCase() === target)
     if (direct) return direct.value as ColorKey
-    // fallback by label priority
     return (opts[0]?.value as ColorKey) || null
   }
 
@@ -169,6 +176,8 @@ export default function TeamPillColors() {
         flash(e1?.message || e2?.message || 'Save failed')
       }
     } finally {
+      // Make sure the new keys are reflected if user navigates away/back.
+      loadTeams(team?.id).catch(() => {})
       setBusy(false)
     }
   }
@@ -234,20 +243,14 @@ export default function TeamPillColors() {
         </div>
       </div>
 
-      {/* Previews beneath inputs to avoid overlap */}
+      {/* Universal pill previews */}
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <span
-          className="px-4 py-2 rounded-full border text-sm font-semibold"
-          style={{ background: lightHex, color: readableTextOn(lightHex) }}
-        >
-          Light preview
-        </span>
-        <span
-          className="px-4 py-2 rounded-full border text-sm font-semibold"
-          style={{ background: darkHex, color: readableTextOn(darkHex) }}
-        >
-          Dark preview
-        </span>
+        {previewTeam ? (
+          <>
+            <TeamPill team={previewTeam} mode="light" size="lg">Light preview</TeamPill>
+            <TeamPill team={previewTeam} mode="dark" size="lg">Dark preview</TeamPill>
+          </>
+        ) : null}
       </div>
 
       <div className="mt-4">
