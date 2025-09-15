@@ -1,6 +1,6 @@
 'use client'
 
-// app/page.tsx — Home with robust Locked Picks + Mini-Standings (now probes /api/league-picks-week first)
+// app/page.tsx — Home with robust Locked Picks grouping and Tue→Mon week default
 
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -121,35 +121,96 @@ async function tryJson<T = any>(urls: string[]): Promise<T | null> {
   return null;
 }
 
-/** Normalize many possible locked-picks payload shapes into MemberLockedPicks[] */
-function normalizeLocked(raw: any): MemberLockedPicks[] {
-  const arr =
-    (Array.isArray(raw) && raw) ||
-    raw?.rows ||
-    raw?.members ||
-    raw?.locked ||
-    raw?.data ||
-    [];
-  if (!Array.isArray(arr)) return [];
-
-  return arr.map((m: any) => {
-    const picks = Array.isArray(m?.picks)
+/** Normalize `members` shape straight-through */
+function normalizeLockedMembersShape(raw: any): MemberLockedPicks[] {
+  if (!raw || !Array.isArray(raw.members)) return [];
+  return raw.members.map((m: any) => ({
+    profile_id: m.profile_id ?? m.user_id ?? m.id ?? String(Math.random()),
+    display_name: m.display_name ?? m.name ?? m.username ?? null,
+    points_week: m.points_week ?? m.week_points ?? m.points ?? 0,
+    picks: Array.isArray(m.picks)
       ? m.picks.map((p: any) => ({
-          team_id: p.team_id ?? p.team ?? p.teamId ?? p.abbr ?? p.abbreviation ?? null,
+          team_id: p.team_id ?? p.team ?? p.teamId ?? p.abbr ?? p.abbreviation ?? "",
           status: p.status ?? p.state ?? undefined,
           points: p.points ?? p.pts ?? undefined,
         }))
-      : [];
-    return {
-      profile_id: m.profile_id ?? m.user_id ?? m.id ?? String(Math.random()),
-      display_name: m.display_name ?? m.name ?? m.username ?? null,
-      points_week: m.points_week ?? m.week_points ?? m.points ?? 0,
-      picks,
-    } as MemberLockedPicks;
-  });
+      : [],
+  }));
 }
 
-/** Normalize many possible standings payload shapes into rows with {display_name, points_total} */
+/** Group row-per-pick payloads into MemberLockedPicks[] */
+function groupLockedFromRows(raw: any): MemberLockedPicks[] {
+  const rows: any[] =
+    (Array.isArray(raw) && raw) ||
+    raw?.rows ||
+    raw?.data ||
+    [];
+
+  if (!Array.isArray(rows)) return [];
+
+  const byMember = new Map<string, MemberLockedPicks>();
+
+  const getName = (r: any) =>
+    (r.display_name && String(r.display_name)) ||
+    (r.name && String(r.name)) ||
+    (r.profiles?.display_name && String(r.profiles.display_name)) ||
+    (r.profiles?.full_name && String(r.profiles.full_name)) ||
+    (r.profiles?.email ? String(r.profiles.email).split("@")[0] : "") ||
+    "Member";
+
+  for (const r of rows) {
+    const profile_id: string =
+      r.profile_id || r.profileId || r.user_id || r.userId || r.profiles?.id || "unknown";
+
+    const team_id: string =
+      r.team_id || r.teamId || r.team?.id || r.team?.team_id || r.team_abbr || r.abbr || r.abbreviation || "";
+
+    // If we can't identify the team for the row, skip adding a pick
+    const havePick = Boolean(team_id);
+
+    const statusRaw: string = r.status || r.game_status || r.state || "";
+    const status = statusRaw ? String(statusRaw).toUpperCase() : undefined;
+
+    const rowPoints =
+      typeof r.points === "number"
+        ? r.points
+        : typeof r.pick_points === "number"
+        ? r.pick_points
+        : typeof r.points_week === "number" // sometimes per-row equals final
+        ? r.points_week
+        : null;
+
+    let entry = byMember.get(profile_id);
+    if (!entry) {
+      entry = {
+        profile_id,
+        display_name: getName(r),
+        points_week: 0,
+        picks: [],
+      };
+      byMember.set(profile_id, entry);
+    }
+
+    if (havePick) {
+      entry.picks!.push({
+        team_id,
+        status,
+        points: rowPoints,
+      });
+    }
+
+    if (typeof rowPoints === "number") {
+      entry.points_week = (entry.points_week ?? 0) + rowPoints;
+    }
+  }
+
+  // sort stable by display_name
+  return Array.from(byMember.values()).sort((a, b) =>
+    (a.display_name || "").localeCompare(b.display_name || ""),
+  );
+}
+
+/** Normalize standings to simple rows ({display_name, points_total}) */
 function normalizeStandings(raw: any): Array<{ profile_id?: string; display_name?: string; points_total?: number }> {
   const arr =
     (Array.isArray(raw) && raw) ||
@@ -205,7 +266,7 @@ function HomeInner() {
     })();
   }, []);
 
-  // Team map (same as Scoreboard)
+  // Team map
   useEffect(() => {
     if (!authReady) return;
     (async () => {
@@ -263,7 +324,7 @@ function HomeInner() {
     })();
   }, [authReady, leagueId, season, week]);
 
-  // Standings (try several names; normalize)
+  // Standings (probe + normalize)
   useEffect(() => {
     if (!authReady || !leagueId) { setStandRows([]); return; }
     (async () => {
@@ -277,19 +338,31 @@ function HomeInner() {
     })();
   }, [authReady, leagueId, season]);
 
-  // Locked picks (probe list now includes /api/league-picks-week FIRST)
+  // Locked picks (probe list includes /api/league-picks-week FIRST; group rows → members)
   useEffect(() => {
     if (!authReady || !leagueId) { setLocked([]); return; }
     (async () => {
       const base = `leagueId=${leagueId}&season=${season}&week=${week}`;
       const raw = await tryJson([
-        `/api/league-picks-week?${base}`,   // ← your original endpoint
+        `/api/league-picks-week?${base}`,   // original endpoint
         `/api/league-locked?${base}`,
         `/api/league-locked-picks?${base}`,
         `/api/locked-picks?${base}`,
         `/api/picks-locked?${base}`,
       ]);
-      setLocked(normalizeLocked(raw));
+
+      if (!raw) {
+        setLocked([]);
+        return;
+      }
+
+      if (Array.isArray((raw as any).members)) {
+        setLocked(normalizeLockedMembersShape(raw));
+        return;
+      }
+
+      // FALLBACK: treat as row-per-pick and group
+      setLocked(groupLockedFromRows(raw));
     })();
   }, [authReady, leagueId, season, week]);
 
