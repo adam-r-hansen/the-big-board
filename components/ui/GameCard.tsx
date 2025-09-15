@@ -2,8 +2,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import type { TeamShape } from "@/components/ui/TeamPill";
-import { pickTeamColor, readableOn } from "@/components/ui/TeamPill";
+import type { TeamShape } from "@/components/ui/TeamPill"; // type-only import
 
 /**
  * Minimal game shape expected by this card.
@@ -33,6 +32,8 @@ export type GameCardProps = {
   right?: ReactNode; // optional trailing item in header
 };
 
+/* ---------------- helpers (local, no external deps) ---------------- */
+
 function statusColor(s: string | undefined) {
   const up = (s || "UPCOMING").toUpperCase();
   if (up === "FINAL") return "#0f172a"; // slate-900
@@ -46,11 +47,7 @@ function StatusPill({ status }: { status?: string }) {
   return (
     <span
       className="rounded-full px-3 py-1 text-xs font-semibold"
-      style={{
-        color: hex,
-        border: `2px solid ${hex}`,
-        background: "transparent",
-      }}
+      style={{ color: hex, border: `2px solid ${hex}`, background: "transparent" }}
     >
       {label}
     </span>
@@ -67,6 +64,50 @@ function fmtWhen(s?: string | null) {
   }
 }
 
+/** Readable text color (black or white) given a hex background */
+function readableOn(bg: string) {
+  try {
+    const hex = bg.replace("#", "");
+    const v = hex.length === 3 ? hex.split("").map(c => c + c).join("") : hex;
+    const r = parseInt(v.slice(0, 2), 16) / 255;
+    const g = parseInt(v.slice(2, 4), 16) / 255;
+    const b = parseInt(v.slice(4, 6), 16) / 255;
+    const toLin = (c: number) =>
+      c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    const L = 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b);
+    return L > 0.5 ? "#111827" : "#ffffff";
+  } catch {
+    return "#111827";
+  }
+}
+
+/** Choose mono-color for a team based on TeamShape + prefs. */
+function pickMonoColor(team: Partial<TeamShape> | undefined, mode: "light" | "dark") {
+  if (!team) return mode === "light" ? "#e5e7eb" : "#111827";
+
+  // Prefer saved UI keys, then fall back to primary/secondary, then anything valid
+  const prefKey =
+    (mode === "light" ? (team as any).ui_light_color_key : (team as any).ui_dark_color_key) as
+      | string
+      | undefined;
+
+  const fallKey = mode === "light" ? "color_primary" : "color_secondary";
+
+  const tryHex = (key?: string) => {
+    const v = key ? (team as any)[key] : undefined;
+    return typeof v === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? v : null;
+  };
+
+  const hex =
+    tryHex(prefKey) ||
+    tryHex(fallKey) ||
+    tryHex("color_tertiary") ||
+    tryHex("color_quaternary");
+
+  if (hex) return hex;
+  return mode === "light" ? "#e5e7eb" : "#111827";
+}
+
 function TeamLogo({ logo, alt }: { logo?: string | null; alt?: string | null }) {
   return (
     <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-full border border-black/10 bg-white overflow-hidden">
@@ -80,19 +121,21 @@ function TeamLogo({ logo, alt }: { logo?: string | null; alt?: string | null }) 
   );
 }
 
+/* ---------------- component ---------------- */
+
 export default function GameCard({ game, teamIndex, right }: GameCardProps) {
   const s = (game.status || "UPCOMING").toUpperCase();
 
   // Look up optional TeamShape to derive mono colors
-  const homeTeam: TeamShape | undefined = game.home.id
+  const homeTeam: Partial<TeamShape> | undefined = game.home.id
     ? teamIndex?.[game.home.id]
     : undefined;
-  const awayTeam: TeamShape | undefined = game.away.id
+  const awayTeam: Partial<TeamShape> | undefined = game.away.id
     ? teamIndex?.[game.away.id]
     : undefined;
 
-  const homeBg = pickTeamColor(homeTeam, "light");
-  const awayBg = pickTeamColor(awayTeam, "light");
+  const homeBg = pickMonoColor(homeTeam, "light");
+  const awayBg = pickMonoColor(awayTeam, "light");
 
   const homeText = readableOn(homeBg);
   const awayText = readableOn(awayBg);
