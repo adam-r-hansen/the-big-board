@@ -5,9 +5,7 @@ import type { ReactNode, CSSProperties } from "react";
 import type { TeamShape } from "@/components/ui/TeamPill";
 import { pickTeamColor, readableOn } from "@/components/ui/TeamPill";
 
-/**
- * Minimal game shape expected by this card.
- */
+/** Minimal game shape expected by this card. */
 export type GameCardTeam = TeamShape & {
   logo?: string | null;
 };
@@ -46,9 +44,9 @@ export default function GameCard({ game, className = "", right }: Props) {
   const s = (game.status || 'UPCOMING').toUpperCase() as "UPCOMING" | "LIVE" | "FINAL";
   const when = game.game_utc ? new Date(game.game_utc).toLocaleString() : '';
 
-  // Choose team mono colors via TeamPill helpers
-  const homeBg = pickTeamColor(game.home as TeamShape, 'light');
-  const awayBg = pickTeamColor(game.away as TeamShape, 'light');
+  // ✅ pickTeamColor now expects (mode, team)
+  const homeBg = pickTeamColor('light', game.home as TeamShape);
+  const awayBg = pickTeamColor('light', game.away as TeamShape);
 
   const statusHex = statusColor(s);
 
