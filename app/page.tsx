@@ -11,7 +11,7 @@
  *  - currentWeek = 1 + floor((today - anchor)/7 days), clamped to 1…18.
  */
 
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import GameCard, { type GameCardGame } from '@/components/ui/GameCard'
 import AdminNavLink from '@/components/AdminNavLink'
@@ -68,6 +68,27 @@ type MemberLockedPicks = {
   display_name?: string | null
   points_week?: number | null
   picks?: Array<{ team_id: string; status?: string; points?: number | null }>
+}
+
+// —————————————————————————————————————————————————————
+// Small UI bits
+// —————————————————————————————————————————————————————
+function Card(props: { title: string; right?: ReactNode; className?: string; children: ReactNode }) {
+  const { title, right, className, children } = props
+  return (
+    <section
+      className={cn(
+        'rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5',
+        className
+      )}
+    >
+      <header className="mb-3 flex items-center justify-between">
+        <h2 className="text-lg font-semibold">{title}</h2>
+        {right}
+      </header>
+      <div>{children}</div>
+    </section>
+  )
 }
 
 // —————————————————————————————————————————————————————
