@@ -36,10 +36,10 @@ type Game = {
 }
 type Pick = { id: string; team_id: string; game_id: string | null }
 
-/* ---------------- NFL Tue→Mon week logic (same as Home) ---------------- */
+/* ---------------- NFL Tue→Mon week logic ---------------- */
 function firstTuesdayOnOrAfterSept1(seasonYear: number) {
   const d = new Date(seasonYear, 8 /* Sept */, 1, 0, 0, 0, 0)
-  const day = d.getDay() // 0=Sun..6=Sat (Tue=2)
+  const day = d.getDay()
   const delta = (9 - day) % 7
   d.setDate(d.getDate() + delta)
   return d
@@ -56,7 +56,7 @@ function currentNflWeekForSeason(seasonYear: number, today = new Date()): number
   return Math.min(18, Math.max(1, week))
 }
 
-/* ---------------- Shared visual helpers (pills) ---------------- */
+/* ---------------- Visual helpers: outline/fill pills ---------------- */
 const isHex = (x?: string | null) => !!x && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(x)
 const safe = (x: string | null | undefined, fallback: string) => (isHex(x) ? (x as string) : fallback)
 function textOn(bg: string) {
@@ -74,8 +74,12 @@ function textOn(bg: string) {
   }
 }
 
-/* Big board pill button w/ logo, outline; fills when picked */
-function TeamColorButton({
+/** The in-game pick button:
+ *  - Outline by default (transparent center, colored border/text)
+ *  - Fills with team primary when picked
+ *  - Always shows the logo + abbr, compact “pill”
+ */
+function TeamPickButton({
   team,
   picked,
   disabled,
@@ -89,8 +93,9 @@ function TeamColorButton({
   const abbr = team?.abbreviation ?? '—'
   const primary = safe(team?.color_primary, '#6b7280')
   const secondary = safe(team?.color_secondary, '#374151')
-  const fill = picked ? primary : 'transparent'
-  const text = picked ? textOn(primary) : primary
+
+  const bg = picked ? primary : 'transparent'
+  const fg = picked ? textOn(primary) : primary
   const border = primary
 
   return (
@@ -99,16 +104,15 @@ function TeamColorButton({
       disabled={!!disabled}
       onClick={disabled ? undefined : onClick}
       className={[
-        'w-full h-14 rounded-full border px-4 font-semibold tracking-wide flex items-center gap-2',
+        'w-full h-14 rounded-full border px-4 font-semibold tracking-wide',
+        'flex items-center gap-2',
         'transition-[transform,opacity] active:scale-[0.98]',
         disabled ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-90',
       ].join(' ')}
       style={{
         borderColor: border,
-        color: text,
-        background: picked
-          ? `linear-gradient(0deg, ${secondary}33, ${primary})`
-          : 'transparent',
+        color: fg,
+        background: picked ? `linear-gradient(0deg, ${secondary}22, ${primary})` : 'transparent',
       }}
     >
       <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white/95 border border-black/10 overflow-hidden">
@@ -124,7 +128,10 @@ function TeamColorButton({
   )
 }
 
-/* Compact pill for sidebars (abbr + logo), transparent body, colored stroke/text; can “solid” when locked/picked if needed */
+/** Compact “PickPill” used in sidebars:
+ *  - Solid if `solid` is true (used for “My picks — Week N”)
+ *  - Otherwise outline (used for season list)
+ */
 function PickPill({
   team,
   solid = false,
@@ -146,7 +153,11 @@ function PickPill({
     <span
       title={title}
       className="inline-flex items-center gap-2 rounded-full border px-3 py-1"
-      style={{ borderColor: bd, color: fg, background: solid ? `linear-gradient(0deg, ${secondary}33, ${primary})` : 'transparent' }}
+      style={{
+        borderColor: bd,
+        color: fg,
+        background: solid ? `linear-gradient(0deg, ${secondary}22, ${primary})` : 'transparent',
+      }}
     >
       <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white/95 border border-black/10 overflow-hidden">
         {team?.logo ? (
@@ -183,7 +194,7 @@ export default function PicksPage() {
 
   const [games, setGames] = useState<Game[]>([])
   const [picks, setPicks] = useState<Pick[]>([])
-  const [seasonPicks, setSeasonPicks] = useState<Pick[]>([]) // list of all picks this season (optional API)
+  const [seasonPicks, setSeasonPicks] = useState<Pick[]>([])
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<string>('')
@@ -192,13 +203,12 @@ export default function PicksPage() {
   const [invite, setInvite] = useState('')
   const [joining, setJoining] = useState(false)
 
-  // --- Load leagues
+  // --- Load leagues + teams
   async function loadLeagues() {
     try {
       const j = await fetch('/api/my-leagues', { cache: 'no-store' }).then((r) => r.json())
       const ls: League[] = j.leagues || []
       setLeagues(ls)
-      // Select a league if needed
       if (!leagueId && ls[0]) {
         setLeagueId(ls[0].id)
         setSeason(ls[0].season)
@@ -219,7 +229,7 @@ export default function PicksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Auto-set to the current NFL week (Tue→Mon). Do not fight the user.
+  // Auto-set to current NFL week (Tue→Mon). Stop once user changes week.
   useEffect(() => {
     if (!season || userPickedWeek) return
     const computed = currentNflWeekForSeason(season, new Date())
@@ -248,7 +258,7 @@ export default function PicksPage() {
     return idx
   }, [teamMap])
 
-  // --- Load games + picks when league/season/weekly changes
+  // --- Load games + weekly picks
   useEffect(() => {
     if (!leagueId || !season || !week) return
     ;(async () => {
@@ -276,7 +286,7 @@ export default function PicksPage() {
             },
           })),
         )
-        setPicks((p.picks ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
+        setPicks((p.picks ?? p.rows ?? p ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
       } catch (e: any) {
         setMsg(e?.message || 'Load error')
       } finally {
@@ -285,15 +295,21 @@ export default function PicksPage() {
     })()
   }, [leagueId, season, week])
 
-  // Optional: load all season picks for the sidebar list (ignore errors)
+  // --- Load season picks (robust to multiple API shapes)
   useEffect(() => {
     if (!leagueId || !season) return
     ;(async () => {
       try {
-        const j = await fetch(`/api/my-picks-season?leagueId=${leagueId}&season=${season}`, {
-          cache: 'no-store',
-        }).then((r) => r.json())
-        const arr: any[] = Array.isArray(j?.picks) ? j.picks : Array.isArray(j) ? j : []
+        // Try preferred endpoint
+        let res = await fetch(`/api/my-picks-season?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
+        let j: any = null
+        if (res.ok) j = await res.json().catch(() => ({}))
+        // Fallback: sometimes “/api/my-picks?leagueId=&season=” (no week) returns all
+        if (!res.ok || (!j?.picks && !Array.isArray(j))) {
+          const alt = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
+          if (alt.ok) j = await alt.json().catch(() => ({}))
+        }
+        const arr: any[] = Array.isArray(j?.picks) ? j.picks : Array.isArray(j) ? j : Array.isArray(j?.rows) ? j.rows : []
         setSeasonPicks(arr.map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id ?? null })))
       } catch {
         setSeasonPicks([])
@@ -325,7 +341,7 @@ export default function PicksPage() {
     const j = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`, {
       cache: 'no-store',
     }).then((r) => r.json())
-    setPicks((j.picks ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
+    setPicks((j.picks ?? j.rows ?? j ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
   }
   async function deletePickById(pickId: string) {
     const res = await fetch(`/api/picks?id=${pickId}`, { method: 'DELETE', cache: 'no-store' })
@@ -413,12 +429,8 @@ export default function PicksPage() {
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-3">
-          <Link className="underline text-sm" href="/standings">
-            Standings
-          </Link>
-          <Link className="opacity-80 hover:opacity-100 text-sm underline-offset-4 hover:underline" href="/stats">
-            Stats
-          </Link>
+          <Link className="underline text-sm" href="/standings">Standings</Link>
+          <Link className="opacity-80 hover:opacity-100 text-sm underline-offset-4 hover:underline" href="/stats">Stats</Link>
 
           {/* League label / selector */}
           {noLeagues ? null : singleLeague ? (
@@ -431,15 +443,11 @@ export default function PicksPage() {
               value={leagueId}
               onChange={(e) => setLeagueId(e.target.value)}
             >
-              {leagues.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
+              {leagues.map((l) => (<option key={l.id} value={l.id}>{l.name}</option>))}
             </select>
           )}
 
-          {/* Always show Season + Week selectors when user has any league */}
+          {/* Season & Week */}
           {!noLeagues && (
             <>
               <select
@@ -447,21 +455,14 @@ export default function PicksPage() {
                 value={season}
                 onChange={(e) => {
                   setSeason(Number(e.target.value))
-                  // allow auto-week again when season changes
-                  setUserPickedWeek(false)
+                  setUserPickedWeek(false) // allow auto-week again on season change
                 }}
-                title="Season"
               >
                 {Array.from({ length: 3 }).map((_, i) => {
                   const yr = new Date().getFullYear() - 1 + i
-                  return (
-                    <option key={yr} value={yr}>
-                      {yr}
-                    </option>
-                  )
+                  return (<option key={yr} value={yr}>{yr}</option>)
                 })}
               </select>
-
               <select
                 className="border rounded px-2 py-1 bg-transparent"
                 value={week}
@@ -469,15 +470,10 @@ export default function PicksPage() {
                   setWeek(Number(e.target.value))
                   setUserPickedWeek(true)
                 }}
-                title="Week"
               >
                 {Array.from({ length: 18 }).map((_, i) => {
                   const wk = i + 1
-                  return (
-                    <option key={wk} value={wk}>
-                      Week {wk}
-                    </option>
-                  )
+                  return (<option key={wk} value={wk}>Week {wk}</option>)
                 })}
               </select>
             </>
@@ -505,7 +501,7 @@ export default function PicksPage() {
         </section>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* LEFT 2/3 — Wrinkle + Weekly */}
+          {/* LEFT 2/3 — Wrinkle + Weekly games */}
           <div className="lg:col-span-8 grid gap-6">
             <SpecialPicksCard leagueId={leagueId} season={season} week={week} teams={teamIndex} />
 
@@ -524,14 +520,12 @@ export default function PicksPage() {
                 return (
                   <article key={g.id} className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
                     <div className="mb-2 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
-                      <span>
-                        {new Date(g.game_utc).toLocaleString()} • Week {g.week}
-                      </span>
+                      <span>{new Date(g.game_utc).toLocaleString()} • Week {g.week}</span>
                       <span className="uppercase tracking-wide">{locked ? 'LOCKED' : g.status || 'UPCOMING'}</span>
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="flex-1">
-                        <TeamColorButton
+                        <TeamPickButton
                           team={homeTeam}
                           picked={homeId ? picks.some((p) => p.team_id === homeId) : false}
                           disabled={locked || weeklyQuotaFull || !homeId}
@@ -540,7 +534,7 @@ export default function PicksPage() {
                       </div>
                       <div className="text-neutral-400">—</div>
                       <div className="flex-1">
-                        <TeamColorButton
+                        <TeamPickButton
                           team={awayTeam}
                           picked={awayId ? picks.some((p) => p.team_id === awayId) : false}
                           disabled={locked || weeklyQuotaFull || !awayId}
@@ -554,7 +548,7 @@ export default function PicksPage() {
             </SectionCard>
           </div>
 
-          {/* RIGHT 1/3 — My picks (pills) + Season picks */}
+          {/* RIGHT 1/3 — My picks (solid pills) + Season picks (outline pills) */}
           <aside className="lg:col-span-4 grid gap-6">
             <SectionCard title={`My picks — Week ${week}`}>
               {picks.length === 0 ? (
@@ -562,7 +556,9 @@ export default function PicksPage() {
               ) : (
                 <ul className="grid gap-2">
                   {picks.map((p) => {
-                    const t = (teamIndex as any)[p.team_id] || (teamIndex as any)[(teamIndex as any)[p.team_id]?.abbreviation?.toUpperCase() || '']
+                    const t =
+                      (teamIndex as any)[p.team_id] ||
+                      (teamIndex as any)[(teamIndex as any)[p.team_id]?.abbreviation?.toUpperCase() || '']
                     const locked = p.game_id ? isLocked(games.find((g) => g.id === p.game_id)?.game_utc) : false
                     return (
                       <li key={p.id} className="flex items-center justify-between">
@@ -598,7 +594,9 @@ export default function PicksPage() {
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {seasonPicks.map((p) => {
-                    const t = (teamIndex as any)[p.team_id] || (teamIndex as any)[(teamIndex as any)[p.team_id]?.abbreviation?.toUpperCase() || '']
+                    const t =
+                      (teamIndex as any)[p.team_id] ||
+                      (teamIndex as any)[(teamIndex as any)[p.team_id]?.abbreviation?.toUpperCase() || '']
                     return <PickPill key={p.id} team={t} />
                   })}
                 </div>
