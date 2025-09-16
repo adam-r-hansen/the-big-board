@@ -66,8 +66,8 @@ function textOn(bg: string) {
     const r = parseInt(v.slice(0, 2), 16) / 255
     const g = parseInt(v.slice(2, 4), 16) / 255
     const b = parseInt(v.slice(4, 6), 16) / 255
-    const L = [r, g, b].map(c => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)))
-      .reduce((acc, x, i) => acc + x * [0.2126, 0.7152, 0.0722][i], 0)
+    const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4))
+    const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
     return L > 0.5 ? '#111827' : '#ffffff'
   } catch { return '#111827' }
 }
@@ -158,7 +158,7 @@ export default function PicksPage() {
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState('')
 
-  const [invite, setInvite] = useState('')  // join fallback
+  const [invite, setInvite] = useState('')
   const [joining, setJoining] = useState(false)
 
   /* ---------- leagues + team map ---------- */
@@ -255,14 +255,14 @@ export default function PicksPage() {
     ;(async () => {
       try {
         // 1) Preferred endpoint
-        let r = await fetch(`/api/my-picks-season?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
-        let j: any = r.ok ? await r.json().catch(() => ({})) : null
+        let res = await fetch(`/api/my-picks-season?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
+        let j: any = res.ok ? await res.json().catch(() => ({})) : null
         let arr: any[] =
           Array.isArray(j?.picks) ? j.picks :
           Array.isArray(j?.rows) ? j.rows :
           Array.isArray(j) ? j : []
 
-        // 2) Fallback: sometimes /api/my-picks without week returns all
+        // 2) Fallback: /api/my-picks without week -> all
         if (arr.length === 0) {
           const alt = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
           const jj: any = alt.ok ? await alt.json().catch(() => ({})) : null
@@ -272,7 +272,7 @@ export default function PicksPage() {
             Array.isArray(jj) ? jj : []
         }
 
-        // 3) Last resort: build from weeks 1..18 (merge unique ids)
+        // 3) Last resort: merge weeks 1..18
         if (arr.length === 0) {
           const promises = Array.from({ length: 18 }).map((_, i) =>
             fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${i + 1}`, { cache: 'no-store' })
@@ -282,7 +282,11 @@ export default function PicksPage() {
           const results = await Promise.all(promises)
           const merged: Record<string, any> = {}
           for (const x of results) {
-            const a: any[] = Array.isArray(x?.picks) ? x.picks : Array.isArray(x) ? x : Array.isArray(x?.rows) ? x.rows : []
+            const xx = x as any
+            const a: any[] =
+              Array.isArray(xx?.picks) ? xx.picks :
+              Array.isArray(xx) ? xx :
+              Array.isArray(xx?.rows) ? xx.rows : []
             for (const it of a) merged[it.id] = it
           }
           arr = Object.values(merged)
@@ -465,7 +469,7 @@ export default function PicksPage() {
           <div className="lg:col-span-8 grid gap-6">
             <SpecialPicksCard leagueId={leagueId} season={season} week={week} teams={teamIndex} />
 
-            <SectionCard title={`Week ${week} — ${Math.max(0, 2 - (picks?.length ?? 0))} of 2 picks left`} right={<span className="text-xs text-neutral-500">{msg}</span>}>
+            <SectionCard title={`Week ${week} — ${picksLeft} of 2 picks left`} right={<span className="text-xs text-neutral-500">{msg}</span>}>
               {loading && <div className="text-sm text-neutral-500">Loading…</div>}
               {!loading && games.length === 0 && <div className="text-sm text-neutral-500">No games.</div>}
 
