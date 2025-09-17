@@ -44,9 +44,7 @@ function firstTuesdayOnOrAfterSept1(seasonYear: number) {
   d.setDate(d.getDate() + delta)
   return d
 }
-function stripTime(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
-}
+function stripTime(d: Date) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()) }
 function currentNflWeekForSeason(seasonYear: number, today = new Date()) {
   const anchor = firstTuesdayOnOrAfterSept1(seasonYear)
   if (today.getTime() < anchor.getTime()) return 1
@@ -56,7 +54,7 @@ function currentNflWeekForSeason(seasonYear: number, today = new Date()) {
   return Math.min(18, Math.max(1, week))
 }
 
-/* ---------- Pill helpers (force the look inline) ---------- */
+/* ---------- Pill helpers (no gradients) ---------- */
 const isHex = (x?: string | null) => !!x && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(x)
 const safe = (x?: string | null, fb = '#6b7280') => (isHex(x) ? (x as string) : fb)
 function textOn(bg: string) {
@@ -72,14 +70,12 @@ function textOn(bg: string) {
   } catch { return '#111827' }
 }
 
-/** Game pick button: outline by default; fills when picked */
+/** Game pick button: outline by default; flat fill when picked */
 function TeamPickButton({
   team, picked, disabled, onClick,
 }: { team?: TeamLike; picked?: boolean; disabled?: boolean; onClick?: () => void }) {
   const abbr = team?.abbreviation ?? '—'
   const primary = safe(team?.color_primary)
-  const secondary = safe(team?.color_secondary, '#374151')
-  const bg = picked ? primary : 'transparent'
   const fg = picked ? textOn(primary) : primary
   return (
     <button
@@ -87,14 +83,14 @@ function TeamPickButton({
       disabled={!!disabled}
       onClick={disabled ? undefined : onClick}
       className={[
-        'bb-pill w-full h-14 rounded-full border px-4 font-semibold tracking-wide',
+        'w-full h-14 rounded-full border px-4 font-semibold tracking-wide',
         'flex items-center gap-2 transition-[transform,opacity] active:scale-[0.98]',
         disabled ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-90',
       ].join(' ')}
       style={{
         borderColor: primary,
         color: fg,
-        background: picked ? `linear-gradient(0deg, ${secondary}22, ${primary})` : 'transparent',
+        background: picked ? primary : 'transparent', // <-- flat fill, no gradient
       }}
     >
       <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white/95 border border-black/10 overflow-hidden">
@@ -107,19 +103,18 @@ function TeamPickButton({
   )
 }
 
-/** Sidebar pill: solid (for weekly picks) or outline (season list) */
+/** Sidebar pill: solid (for weekly picks) or outline (season list), no gradient */
 function PickPill({ team, solid = false }: { team?: TeamLike; solid?: boolean }) {
   const abbr = team?.abbreviation ?? '—'
   const primary = safe(team?.color_primary)
-  const secondary = safe(team?.color_secondary, '#374151')
   const fg = solid ? textOn(primary) : primary
   return (
     <span
-      className="bb-pill inline-flex items-center gap-2 rounded-full border px-3 py-1"
+      className="inline-flex items-center gap-2 rounded-full border px-3 py-1"
       style={{
         borderColor: primary,
         color: fg,
-        background: solid ? `linear-gradient(0deg, ${secondary}22, ${primary})` : 'transparent',
+        background: solid ? primary : 'transparent', // <-- flat fill, no gradient
       }}
     >
       <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white/95 border border-black/10 overflow-hidden">
@@ -254,7 +249,6 @@ export default function PicksPage() {
     if (!leagueId || !season) return
     ;(async () => {
       try {
-        // 1) Preferred endpoint
         let res = await fetch(`/api/my-picks-season?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
         let j: any = res.ok ? await res.json().catch(() => ({})) : null
         let arr: any[] =
@@ -262,7 +256,6 @@ export default function PicksPage() {
           Array.isArray(j?.rows) ? j.rows :
           Array.isArray(j) ? j : []
 
-        // 2) Fallback: /api/my-picks without week -> all
         if (arr.length === 0) {
           const alt = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' })
           const jj: any = alt.ok ? await alt.json().catch(() => ({})) : null
@@ -272,7 +265,6 @@ export default function PicksPage() {
             Array.isArray(jj) ? jj : []
         }
 
-        // 3) Last resort: merge weeks 1..18
         if (arr.length === 0) {
           const promises = Array.from({ length: 18 }).map((_, i) =>
             fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${i + 1}`, { cache: 'no-store' })
