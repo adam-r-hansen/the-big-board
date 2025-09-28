@@ -1,51 +1,105 @@
 // app/api/wrinkles/active/route.ts
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { NextResponse } from 'next/server'
+import { createClient as createSupabaseServerClient } from '@/utils/supabase/server'
 
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
-
-function j(data: any, init?: number | ResponseInit) {
-  const base: ResponseInit = typeof init === 'number' ? { status: init } : init || {}
-  const headers = new Headers(base.headers)
-  headers.set('Cache-Control', 'no-store')
-  return NextResponse.json(data, { ...base, headers })
+type WinlessParams = {
+  multiplier?: number
+  eligibleTeamIds?: string[]
 }
 
-export async function GET(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: auth, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !auth?.user) return j({ error: 'unauthenticated' }, 401)
+export async function GET(req: Request) {
+  const url = new URL(req.url)
+  const leagueId = url.searchParams.get('leagueId') || ''
+  const season = Number(url.searchParams.get('season') || '')
+  const week = Number(url.searchParams.get('week') || '')
 
-  const sp = new URL(req.url).searchParams
-  const leagueId = sp.get('leagueId') || ''
-  const season = Number(sp.get('season') || '0')
-  const week = Number(sp.get('week') || '0')
-
-  if (!season || !week) return j({ wrinkles: [] }, 200)
-
-  // Return wrinkles scoped to the league, or global (league_id IS NULL)
-  // Shape: { id, name, extra_picks, season, week, ... }
-  let q = supabase
-    .from('wrinkles')
-    .select('id, name, extra_picks, season, week, league_id')
-    .eq('season', season)
-    .eq('week', week)
-
-  if (leagueId) {
-    // include league-specific OR global
-    q = q.or(`league_id.eq.${leagueId},league_id.is.null`)
-  } else {
-    // no league provided -> only global
-    // @ts-ignore supabase-js supports .is
-    q = q.is('league_id', null)
+  if (!leagueId || !season || !week) {
+    return NextResponse.json({ error: 'leagueId, season, week are required' }, { status: 400 })
   }
 
-  const { data, error } = await q
-  if (error) return j({ error: error.message }, 400)
+  const supabase = createSupabaseServerClient()
 
-  // UI contract expects { "wrinkles": [ { id, name, extra_picks, ... } ] }
-  return j({ wrinkles: data ?? [] }, 200)
+  // 1) Fetch active wrinkles for this league/season/week
+  const { data: wrinkleRows, error: wrErr } = await supabase
+    .from('wrinkles')
+    .select('*')
+    .eq('league_id', leagueId)
+    .eq('season', season)
+    .eq('week', week)
+    .eq('status', 'active')
+
+  if (wrErr) {
+    return NextResponse.json({ error: wrErr.message }, { status: 500 })
+  }
+
+  const wrinkles = (wrinkleRows || []).map((w) => ({
+    id: w.id,
+    league_id: w.league_id,
+    season: w.season,
+    week: w.week,
+    name: w.name,
+    status: w.status,
+    extra_picks: w.extra_picks ?? 0,
+    kind: w.kind,
+    config: typeof w.config === 'string' ? safeJson(w.config) : (w.config ?? {}),
+  }))
+
+  // 2) If we have a winless_double wrinkle, compute eligible teams (0 wins before this week)
+  const winless = wrinkles.find((w) => String(w.kind).toLowerCase() === 'winless_double')
+  if (winless) {
+    // optional multiplier in config; default to 2
+    const multiplier =
+      (winless.config && typeof winless.config.multiplier === 'number' && winless.config.multiplier > 0
+        ? winless.config.multiplier
+        : 2)
+
+    // Pull FINAL games strictly earlier than this week in the same season
+    const { data: finals, error: gErr } = await supabase
+      .from('games')
+      .select('home_team, away_team, home_score, away_score')
+      .eq('season', season)
+      .lt('week', week)
+      .eq('status', 'FINAL')
+
+    if (gErr) {
+      // return wrinkle without params if we fail to compute
+      return NextResponse.json({ wrinkles }, { status: 200 })
+    }
+
+    // Compute all teams that appeared and their wins
+    const appeared = new Set<string>()
+    const wins = new Map<string, number>()
+
+    for (const g of finals || []) {
+      const home = String(g.home_team)
+      const away = String(g.away_team)
+      appeared.add(home)
+      appeared.add(away)
+
+      const hs = typeof g.home_score === 'number' ? g.home_score : null
+      const as = typeof g.away_score === 'number' ? g.away_score : null
+      if (hs == null || as == null) continue
+      if (hs === as) continue // ties not counted as wins
+
+      const winner = hs > as ? home : away
+      wins.set(winner, (wins.get(winner) || 0) + 1)
+    }
+
+    const eligibleTeamIds: string[] = []
+    for (const id of appeared) {
+      if ((wins.get(id) || 0) === 0) eligibleTeamIds.push(id)
+    }
+
+    ;(winless as any).params = { multiplier, eligibleTeamIds } as WinlessParams
+  }
+
+  return NextResponse.json({ wrinkles }, { status: 200 })
 }
 
+function safeJson(s: any) {
+  try {
+    return typeof s === 'string' ? JSON.parse(s) : s
+  } catch {
+    return {}
+  }
+}
