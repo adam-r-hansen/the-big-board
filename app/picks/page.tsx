@@ -2,7 +2,6 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
-import Link from 'next/link'
 import SpecialPicksCard from '@/components/SpecialPicksCard'
 
 type League = { id: string; name: string; season: number }
@@ -39,7 +38,7 @@ type Pick = { id: string; team_id: string; game_id: string | null }
 function nflWeek1ThursdayUTC(season: number) {
   const d = new Date(Date.UTC(season, 8, 1, 0, 0, 0)) // Sept 1, <season> @ 00:00 UTC
   const day = d.getUTCDay() // 0=Sun..6=Sat
-  const offsetToMonday = (8 - day) % 7 // days to next Monday (0 if already Monday)
+  const offsetToMonday = (8 - day) % 7 // days to next Monday
   d.setUTCDate(d.getUTCDate() + offsetToMonday)
   d.setUTCHours(0, 0, 0, 0)
   d.setUTCDate(d.getUTCDate() + 3) // Thursday after Labor Day
@@ -88,19 +87,10 @@ function TeamPickPill({
 }) {
   const abbr = team?.abbreviation ?? '—'
   const primary = safe(team?.color_primary ?? null, '#6b7280')
-  const secondary = safe(team?.color_secondary ?? null, '#374151')
 
   const pillStyle: React.CSSProperties = picked
-    ? {
-        background: primary,
-        color: textOn(primary),
-        borderColor: primary,
-      }
-    : {
-        background: 'transparent',
-        color: primary,
-        borderColor: primary,
-      }
+    ? { background: primary, color: textOn(primary), borderColor: primary }
+    : { background: 'transparent', color: primary, borderColor: primary }
 
   return (
     <button
@@ -115,14 +105,9 @@ function TeamPickPill({
       ].join(' ')}
       style={pillStyle}
     >
-      {/* Logo dot like GameCard */}
       <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white/95 border border-black/10 overflow-hidden">
-        {team?.logo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={team.logo} alt={abbr} className="w-6 h-6 object-contain" />
-        ) : (
-          <span className="w-4 h-4 rounded-full bg-black/10" />
-        )}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        {team?.logo ? <img src={team.logo} alt={abbr} className="w-6 h-6 object-contain" /> : <span className="w-4 h-4 rounded-full bg-black/10" />}
       </span>
       <span className="truncate">{abbr}</span>
     </button>
@@ -133,7 +118,7 @@ function TeamPickPill({
 function SectionCard({ children, title, right }: { children: React.ReactNode; title: string; right?: React.ReactNode }) {
   return (
     <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
-      <header className="mb-3 flex items-center justify-between">
+      <header className="mb-2 md:mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold">{title}</h2>
         {right}
       </header>
@@ -183,7 +168,8 @@ export default function PicksPage() {
       .then((r) => r.json())
       .then((j) => setTeamMap(j.teams || {}))
       .catch(() => {})
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Auto-detect current week once per season (don’t fight the user)
   useEffect(() => {
@@ -220,7 +206,7 @@ export default function PicksPage() {
     return idx
   }, [teamMap])
 
-  // Load games + picks (week)
+  // Load games + picks (for current week)
   useEffect(() => {
     if (!leagueId || !season || !week) return
     ;(async () => {
@@ -262,22 +248,9 @@ export default function PicksPage() {
     if (!leagueId || !season) return
     ;(async () => {
       try {
-        // call multiple shapes defensively and merge
-        const results = await Promise.allSettled([
-          fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }).then((r) => r.json()),
-          fetch(`/api/my-picks-season?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }).then((r) => r.json()),
-        ])
-        let arr: any[] = []
-        const ok = results.filter((x) => x.status === 'fulfilled').map((x: any) => x.value)
-        if (ok.length) {
-          const merged: Record<string, any> = {}
-          for (const x of ok) {
-            const a: any[] = Array.isArray(x?.picks) ? x.picks : Array.isArray(x) ? x : Array.isArray(x?.rows) ? x.rows : []
-            for (const it of a) merged[it.id] = it
-          }
-          arr = Object.values(merged)
-        }
-        setSeasonPicks(arr.map((r: any) => ({ id: r.id, team_id: r.team_id ?? r.teamId ?? r.team, game_id: r.game_id ?? r.gameId ?? null })))
+        const result = await fetch(`/api/my-picks-season?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }).then((r) => r.json())
+        const arr: any[] = Array.isArray(result?.picks) ? result.picks : []
+        setSeasonPicks(arr.map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id ?? null })))
       } catch {
         setSeasonPicks([])
       }
@@ -386,7 +359,7 @@ export default function PicksPage() {
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
-      {/* Header */}
+      {/* Header (removed duplicate Standings/Stats links) */}
       <section className="mb-4 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <Image alt="" src="/favicon.ico" width={24} height={24} className="rounded" />
@@ -394,13 +367,6 @@ export default function PicksPage() {
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-3">
-          <Link className="underline text-sm" href="/standings">
-            Standings
-          </Link>
-          <Link className="opacity-80 hover:opacity-100 text-sm underline-offset-4 hover:underline" href="/stats">
-            Stats
-          </Link>
-
           {/* League label / selector */}
           {noLeagues ? null : singleLeague ? (
             <span className="text-sm text-neutral-600">
@@ -472,30 +438,19 @@ export default function PicksPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* LEFT 2/3 — wrinkle + games */}
           <div className="lg:col-span-8 grid gap-6">
-            {/* NOTE: type cast to satisfy TeamShape prop expectation */}
             <SpecialPicksCard leagueId={leagueId} season={season} week={week} teams={teamIndex as unknown as Record<string, any>} />
 
             <SectionCard title={`Week ${week} — ${picksLeft} of 2 picks left`} right={<span className="text-xs text-neutral-500">{msg}</span>}>
               {loading && <div className="text-sm text-neutral-500">Loading…</div>}
               {!loading && games.length === 0 && <div className="text-sm text-neutral-500">No games.</div>}
 
-              {games.map((g, idx) => {
+              {games.map((g) => {
                 const { team: homeTeam, teamId: homeId } = resolve(g.home)
                 const { team: awayTeam, teamId: awayId } = resolve(g.away)
 
                 const locked = isLocked(g.game_utc)
                 const existing = pickByGame.get(g.id)
                 const weeklyQuotaFull = (picks?.length ?? 0) >= 2 && !existing
-
-                if (idx === 0)
-                  console.debug('Top game flags', {
-                    gameId: g.id,
-                    locked,
-                    picksLen: picks?.length ?? 0,
-                    weeklyQuotaFull,
-                    haveHomeId: !!homeId,
-                    haveAwayId: !!awayId,
-                  })
 
                 return (
                   <article key={g.id} className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
@@ -530,8 +485,8 @@ export default function PicksPage() {
             </SectionCard>
           </div>
 
-          {/* RIGHT 1/3 — My picks & Season picks */}
-          <aside className="lg:col-span-4 grid gap-6">
+          {/* RIGHT 1/3 — My picks & Season picks (tighter spacing on desktop) */}
+          <aside className="lg:col-span-4 grid gap-4 lg:gap-3">
             <SectionCard title={`My picks — Week ${week}`}>
               {picks.length === 0 ? (
                 <div className="text-sm text-neutral-500">No picks yet.</div>
