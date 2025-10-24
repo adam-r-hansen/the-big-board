@@ -73,9 +73,10 @@ export default function SpecialPicksCard({
                   <TeamPill
                     key={id}
                     team={t}
-                    variant="outlined"     // consistent site-wide style
+                    mode="outline"    /* TeamPill accepts `mode`, not `variant` */
                     size="sm"
-                    disabled
+                    className="pointer-events-none opacity-90" /* visually disabled */
+                    aria-disabled="true"
                   />
                 )
               })}
