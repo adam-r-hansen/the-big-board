@@ -24,7 +24,7 @@ function parseMaybeJson(input: any) {
 }
 
 export async function GET(req: NextRequest) {
-  // We still read the user (for optional membership check)
+  // still read user to optionally gate by league membership
   const supabase = await createClient()
   const { data: auth } = await supabase.auth.getUser()
   const userId = auth?.user?.id || null
@@ -46,13 +46,13 @@ export async function GET(req: NextRequest) {
       .eq('league_id', leagueId)
       .eq('profile_id', userId)
       .maybeSingle()
-    if (!mem) return j({ wrinkles: [] }, 200) // silently return none if not a member
+    if (!mem) return j({ wrinkles: [] }, 200)
   }
 
-  // Fetch wrinkles with admin client (RLS-safe)
+  // SELECT ONLY COLUMNS THAT EXIST (no params col in this schema)
   const { data: wr, error: wErr } = await admin
     .from('wrinkles')
-    .select('id, name, status, kind, extra_picks, params, config')
+    .select('id, name, status, kind, extra_picks, config')  // <-- no params here
     .eq('league_id', leagueId)
     .eq('season', season)
     .eq('week', week)
@@ -67,22 +67,20 @@ export async function GET(req: NextRequest) {
     status: w.status,
     kind: w.kind,
     extra_picks: w.extra_picks || 0,
-    // prefer params; fall back to config; parse string "{}" safely
-    params: (w.params && typeof w.params === 'object')
-      ? w.params
-      : parseMaybeJson(w.config),
+    // normalize to `params` on the wire from legacy `config`
+    params: parseMaybeJson(w.config),
   }))
 
   if (wrinkles.length === 0) return j({ wrinkles: [] }, 200)
 
-  // Join wrinkle_games and attach to each wrinkle
+  // Join wrinkle_games (if present)
   const ids = wrinkles.map(w => w.id)
-  const { data: wg, error: gErr } = await admin
+  const { data: wg } = await admin
     .from('wrinkle_games')
     .select('wrinkle_id, game_id, game_utc, status, home_team, away_team')
     .in('wrinkle_id', ids)
 
-  if (!gErr && wg) {
+  if (wg) {
     const byId = new Map(wrinkles.map(w => [w.id, w]))
     for (const g of wg) {
       const w = byId.get(g.wrinkle_id)
