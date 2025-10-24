@@ -25,26 +25,56 @@ export async function GET(req: NextRequest) {
 
   if (!leagueId || !season || !week) return j({ error: 'leagueId, season, week required' }, 400)
 
-  const { data, error } = await supabase
+  // 1) Fetch wrinkles for this slate. Support both `params` and legacy `config`.
+  const { data: wr, error: wErr } = await supabase
     .from('wrinkles')
-    .select('id, name, status, kind, extra_picks, params')
+    .select('id, name, status, kind, extra_picks, params, config')
     .eq('league_id', leagueId)
     .eq('season', season)
     .eq('week', week)
     .eq('status', 'active')
     .order('id', { ascending: true })
 
-  if (error) return j({ error: error.message }, 400)
+  if (wErr) return j({ error: wErr.message }, 400)
 
-  // normalize
-  const rows = (data || []).map((w: any) => ({
+  const wrinkles = (wr || []).map((w: any) => ({
     id: w.id,
     name: w.name,
     status: w.status,
     kind: w.kind,
     extra_picks: w.extra_picks || 0,
-    params: w.params || {},
+    // prefer params; fall back to config if present
+    params: (w.params && typeof w.params === 'object') ? w.params
+           : (w.config && typeof w.config === 'object') ? w.config
+           : {},
   }))
 
-  return j({ wrinkles: rows }, 200)
+  if (wrinkles.length === 0) return j({ wrinkles: [] }, 200)
+
+  // 2) Join wrinkle_games (if present) and attach to matching wrinkle.
+  const ids = wrinkles.map(w => w.id)
+  const { data: wg, error: gErr } = await supabase
+    .from('wrinkle_games')
+    .select('wrinkle_id, game_id, game_utc, status, home_team, away_team')
+    .in('wrinkle_id', ids)
+
+  if (gErr) {
+    // Not fatal—just return wrinkles without game info.
+    return j({ wrinkles }, 200)
+  }
+
+  const byId = new Map(wrinkles.map(w => [w.id, w]))
+  for (const g of (wg || [])) {
+    const w = byId.get(g.wrinkle_id)
+    if (!w) continue
+    ;(w as any).game = {
+      game_id: g.game_id || null,
+      game_utc: g.game_utc || null,
+      status: g.status || null,
+      home_team: g.home_team || null,
+      away_team: g.away_team || null,
+    }
+  }
+
+  return j({ wrinkles: Array.from(byId.values()) }, 200)
 }
