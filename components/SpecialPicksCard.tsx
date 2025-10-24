@@ -1,6 +1,6 @@
 // components/SpecialPicksCard.tsx
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import TeamPill, { type TeamShape } from '@/components/ui/TeamPill'
 
 type Wrinkle = {
@@ -18,6 +18,8 @@ type Wrinkle = {
   }
 }
 
+type WrinklePick = { id: string; wrinkle_id: string; team_id: string; game_id: string | null }
+
 export default function SpecialPicksCard({
   leagueId,
   season,
@@ -32,7 +34,13 @@ export default function SpecialPicksCard({
   const data = useWrinkles(leagueId, season, week)
   const wrinkles: Wrinkle[] = data?.wrinkles || []
 
-  // Extract common pieces
+  const { picks, refresh: refreshPicks, error: picksErr } = useWrinklePicks(leagueId, season, week)
+  const pickByWrinkle = useMemo(() => {
+    const m = new Map<string, WrinklePick>()
+    for (const p of picks) m.set(p.wrinkle_id, p)
+    return m
+  }, [picks])
+
   const extraCount = wrinkles.reduce((acc, w) => acc + (w.extra_picks || 0), 0)
   const winless = wrinkles.find((w) => String(w.kind).toLowerCase() === 'winless_double')
   const multiplier = winless?.params?.multiplier || 2
@@ -51,6 +59,31 @@ export default function SpecialPicksCard({
     extraCount > 0 ||
     winlessEligible.size > 0 ||
     bonusEligible.size > 0
+
+  async function chooseWrinkleTeam(w: Wrinkle, teamId: string) {
+    try {
+      const res = await fetch('/api/wrinkle-picks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          leagueId,
+          season,
+          week,
+          wrinkleId: w.id,
+          teamId,
+          gameId: w.game?.game_id ?? null,
+        }),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error(j?.error || `HTTP ${res.status}`)
+      }
+      await refreshPicks()
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('wrinkle pick failed', e)
+    }
+  }
 
   if (!hasAny) {
     return (
@@ -82,25 +115,32 @@ export default function SpecialPicksCard({
             <strong>{multiplier}×</strong> their points.
           </div>
 
-          {winlessEligible.size === 0 ? (
-            <div className="text-sm text-neutral-500">No eligible winless teams before Week {week}.</div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {[...winlessEligible].map((id) => {
-                const t = teams[id]
-                if (!t) return null
-                return (
+          <div className="flex flex-wrap gap-2">
+            {[...winlessEligible].map((id) => {
+              const t = teams[id]
+              if (!t) return null
+              const picked = pickByWrinkle.get(winless.id || '')
+              const selected = picked?.team_id === id
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => chooseWrinkleTeam(winless, id)}
+                  className={[
+                    'rounded-full focus:outline-none',
+                    selected ? 'ring-2 ring-neutral-400' : 'ring-0',
+                  ].join(' ')}
+                  title={selected ? 'Selected' : 'Select'}
+                >
                   <TeamPill
-                    key={id}
                     team={t}
                     size="sm"
-                    className="pointer-events-none opacity-90"
-                    aria-disabled="true"
+                    className={selected ? 'font-bold' : ''}
                   />
-                )
-              })}
-            </div>
-          )}
+                </button>
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -114,25 +154,32 @@ export default function SpecialPicksCard({
             ) : null}
           </div>
 
-          {bonusEligible.size === 0 ? (
-            <div className="text-sm text-neutral-500">Eligible teams not available.</div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {[...bonusEligible].map((id) => {
-                const t = teams[id]
-                if (!t) return null
-                return (
+          <div className="flex flex-wrap gap-2">
+            {[...bonusEligible].map((id) => {
+              const t = teams[id]
+              if (!t) return null
+              const picked = pickByWrinkle.get(bonusGame.id || '')
+              const selected = picked?.team_id === id
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => chooseWrinkleTeam(bonusGame, id)}
+                  className={[
+                    'rounded-full focus:outline-none',
+                    selected ? 'ring-2 ring-neutral-400' : 'ring-0',
+                  ].join(' ')}
+                  title={selected ? 'Selected' : 'Select'}
+                >
                   <TeamPill
-                    key={id}
                     team={t}
                     size="sm"
-                    className="pointer-events-none opacity-90"
-                    aria-disabled="true"
+                    className={selected ? 'font-bold' : ''}
                   />
-                )
-              })}
-            </div>
-          )}
+                </button>
+              )
+            })}
+          </div>
         </div>
       )}
     </section>
@@ -157,4 +204,27 @@ function useWrinkles(leagueId: string, season: number, week: number) {
     return () => { dead = true }
   }, [leagueId, season, week])
   return data
+}
+
+function useWrinklePicks(leagueId: string, season: number, week: number) {
+  const [picks, setPicks] = useState<WrinklePick[]>([])
+  const [error, setError] = useState<string | null>(null)
+
+  async function load() {
+    try {
+      const j = await fetch(`/api/wrinkle-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json())
+      setPicks(Array.isArray(j?.picks) ? j.picks : [])
+      setError(null)
+    } catch (e: any) {
+      setError(e?.message || 'failed')
+      setPicks([])
+    }
+  }
+
+  useEffect(() => {
+    if (!leagueId || !season || !week) return
+    load()
+  }, [leagueId, season, week])
+
+  return { picks, refresh: load, error }
 }
