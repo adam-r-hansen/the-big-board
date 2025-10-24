@@ -14,16 +14,28 @@ function j(data: any, init?: number | ResponseInit) {
   return NextResponse.json(data, { ...base, headers })
 }
 
-// Try querying wrinke_picks (legacy) first; if error, fall back to wrinkle_picks
-async function safeSelectPicks(admin: any, profileId: string, leagueId: string, season: number, week: number) {
+// Read all wrinkle ids for this slate
+async function getWrinkleIdsForSlate(admin: any, leagueId: string, season: number, week: number) {
+  const { data, error } = await admin
+    .from('wrinkles')
+    .select('id')
+    .eq('league_id', leagueId)
+    .eq('season', season)
+    .eq('week', week)
+    .eq('status', 'active')
+  if (error) throw error
+  return (data ?? []).map((r: any) => r.id as string)
+}
+
+// Try querying wrinke_picks (legacy misspelled) first; fall back to wrinkle_picks
+async function selectPicksByWrinkleIds(admin: any, profileId: string, wrinkleIds: string[]) {
+  if (wrinkleIds.length === 0) return { data: [] as any[] }
   try {
     const { data, error } = await admin
       .from('wrinke_picks')
       .select('id, wrinkle_id, profile_id, team_id, game_id')
       .eq('profile_id', profileId)
-      .eq('league_id', leagueId)
-      .eq('season', season)
-      .eq('week', week)
+      .in('wrinkle_id', wrinkleIds)
       .order('id', { ascending: true })
     if (error) throw error
     return { data }
@@ -32,64 +44,38 @@ async function safeSelectPicks(admin: any, profileId: string, leagueId: string, 
       .from('wrinkle_picks')
       .select('id, wrinkle_id, profile_id, team_id, game_id')
       .eq('profile_id', profileId)
-      .eq('league_id', leagueId)
-      .eq('season', season)
-      .eq('week', week)
+      .in('wrinkle_id', wrinkleIds)
       .order('id', { ascending: true })
     if (error) throw error
     return { data }
   }
 }
 
-async function safeUpsertPick(admin: any, row: any) {
-  // Delete existing pick for this wrinkle/profile, then insert
-  try {
-    const { error: delErr } = await admin
-      .from('wrinke_picks')
-      .delete()
-      .eq('wrinkle_id', row.wrinkle_id)
-      .eq('profile_id', row.profile_id)
-    // ignore delErr — table may not exist
-  } catch {}
-  try {
-    const { error: delErr2 } = await admin
-      .from('wrinkle_picks')
-      .delete()
-      .eq('wrinkle_id', row.wrinkle_id)
-      .eq('profile_id', row.profile_id)
-    // ignore
-  } catch {}
+async function deleteExistingForWrinkle(admin: any, wrinkleId: string, profileId: string) {
+  try { await admin.from('wrinke_picks').delete().eq('wrinkle_id', wrinkleId).eq('profile_id', profileId) } catch {}
+  try { await admin.from('wrinkle_picks').delete().eq('wrinkle_id', wrinkleId).eq('profile_id', profileId) } catch {}
+}
 
-  // Try legacy table first
+async function insertPick(admin: any, row: { wrinkle_id: string; profile_id: string; team_id: string; game_id: string | null }) {
   try {
-    const { data, error } = await admin
-      .from('wrinke_picks')
-      .insert(row)
-      .select('id')
-      .single()
+    const { data, error } = await admin.from('wrinke_picks').insert(row).select('id').single()
     if (error) throw error
-    return { id: data?.id }
+    return { id: data?.id as string | undefined }
   } catch {
-    const { data, error } = await admin
-      .from('wrinkle_picks')
-      .insert(row)
-      .select('id')
-      .single()
+    const { data, error } = await admin.from('wrinkle_picks').insert(row).select('id').single()
     if (error) throw error
-    return { id: data?.id }
+    return { id: data?.id as string | undefined }
   }
 }
 
 async function isLocked(admin: any, wrinkleId: string): Promise<{ locked: boolean; why?: string }> {
-  // Check attached wrinkle game kickoff/status
-  const { data: g } = await admin
+  const { data } = await admin
     .from('wrinkle_games')
     .select('game_utc, status')
     .eq('wrinkle_id', wrinkleId)
     .maybeSingle()
-
-  const utc = g?.game_utc as string | undefined
-  const status = (g?.status || '').toUpperCase()
+  const utc = data?.game_utc as string | undefined
+  const status = (data?.status || '').toUpperCase()
   if (status === 'FINAL') return { locked: true, why: 'locked (final)' }
   if (utc && new Date(utc) <= new Date()) return { locked: true, why: 'locked (kickoff passed)' }
   return { locked: false }
@@ -108,7 +94,7 @@ export async function GET(req: NextRequest) {
 
   const admin = createAdminClient()
 
-  // (Optional) ensure league membership
+  // optional membership gate
   const { data: mem } = await admin
     .from('league_memberships')
     .select('profile_id')
@@ -117,8 +103,9 @@ export async function GET(req: NextRequest) {
     .maybeSingle()
   if (!mem) return j({ picks: [] }, 200)
 
-  const { data } = await safeSelectPicks(admin, auth.user.id, leagueId, season, week)
-  return j({ picks: data ?? [] }, 200)
+  const wrinkleIds = await getWrinkleIdsForSlate(admin, leagueId, season, week)
+  const { data: picks } = await selectPicksByWrinkleIds(admin, auth.user.id, wrinkleIds)
+  return j({ picks: picks ?? [] }, 200)
 }
 
 export async function POST(req: NextRequest) {
@@ -134,36 +121,27 @@ export async function POST(req: NextRequest) {
   const wrinkleId = body.wrinkleId as string
   const teamId = body.teamId as string | null | undefined
   const gameId = (body.gameId as string | null | undefined) ?? null
-
   if (!leagueId || !season || !week || !wrinkleId || !teamId) {
     return j({ error: 'leagueId, season, week, wrinkleId, teamId required' }, 400)
   }
 
   const admin = createAdminClient()
 
-  // (Optional) ensure membership
-  const { data: mem } = await admin
-    .from('league_memberships')
-    .select('profile_id')
-    .eq('league_id', leagueId)
-    .eq('profile_id', auth.user.id)
-    .maybeSingle()
-  if (!mem) return j({ error: 'forbidden' }, 403)
+  // verify wrinkleId belongs to this slate
+  const ids = await getWrinkleIdsForSlate(admin, leagueId, season, week)
+  if (!ids.includes(wrinkleId)) return j({ error: 'invalid wrinkle for slate' }, 400)
 
-  // Lock check
   const lock = await isLocked(admin, wrinkleId)
   if (lock.locked) return j({ error: lock.why }, 400)
 
   const row = {
-    league_id: leagueId,
-    season,
-    week,
     wrinkle_id: wrinkleId,
     profile_id: auth.user.id,
     team_id: teamId,
     game_id: gameId,
   }
 
-  const { id } = await safeUpsertPick(admin, row)
+  await deleteExistingForWrinkle(admin, wrinkleId, auth.user.id)
+  const { id } = await insertPick(admin, row)
   return j({ ok: true, id }, 200)
 }
