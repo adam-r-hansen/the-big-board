@@ -27,19 +27,18 @@ export async function POST(req: NextRequest) {
       week,
       name,
       status = 'active',
-      kind,
-      extraPicks = 0,
-      autoHydrate, // ignored here; hydrate is a separate call
+      kind,            // e.g. 'winless_double' | 'extra_picks' | 'custom'
+      extraPicks = 0,  // integer
+      params = {},     // JSONB, e.g. { multiplier: 2, eligibleTeamIds: ['NYJ','CAR'] }
+      // autoHydrate,  // ignored here; hydrate is a separate call
     } = body ?? {}
 
     if (!leagueId || !season || !week || !name || !kind) {
       return json({ error: 'missing required fields' }, 400)
     }
 
-    // use service-role so RLS can’t block admin actions
     const sb = createAdminClient()
 
-    // Map to DB column names (adjust if your columns differ)
     const insertRow = {
       league_id: leagueId,
       season,
@@ -48,6 +47,7 @@ export async function POST(req: NextRequest) {
       status,
       kind,
       extra_picks: extraPicks,
+      params, // <-- now persisted
     }
 
     const { data, error } = await sb
@@ -65,4 +65,3 @@ export async function POST(req: NextRequest) {
     return json({ error: e?.message ?? 'server error' }, 500)
   }
 }
-
