@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import TeamPillColors from '@/components/admin/TeamPillColors' // ← existing
+import TeamPillColors from '@/components/admin/TeamPillColors'
 
 type League = { id: string; name: string; season: number }
 type Profile = { id: string; email?: string; display_name?: string | null }
@@ -19,6 +19,14 @@ type WrinkleRow = {
   extra_picks: number
   created_at?: string
   params?: any
+}
+
+type GameRow = {
+  id: string
+  game_utc?: string | null
+  status?: string | null
+  home?: { id?: string; abbr?: string | null }
+  away?: { id?: string; abbr?: string | null }
 }
 
 // ————— UI —————
@@ -112,12 +120,17 @@ export default function AdminPage() {
   // Existing wrinkles list
   const [existing, setExisting] = useState<WrinkleRow[]>([])
 
+  // For "attach game" UI state (keyed by wrinkle.id)
+  const [gameOptions, setGameOptions] = useState<Record<string, GameRow[]>>({})
+  const [selectedGame, setSelectedGame] = useState<Record<string, string>>({})
+  const [attachBusy, setAttachBusy] = useState<Record<string, boolean>>({})
+
   // App workspace state
   const [pillLight, setPillLight] = useState('#10b981')
   const [pillDark, setPillDark] = useState('#34d399')
   const [unassigned, setUnassigned] = useState<Unassigned[]>([])
   const [assignTarget, setAssignTarget] = useState<string>('')
-  const [assignLeagueId, setAssignLeagueId] = useState<string>('') // choose league at assignment time
+  const [assignLeagueId, setAssignLeagueId] = useState<string>('')
 
   function flash(s: string) {
     setMsg(s)
@@ -149,7 +162,7 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // members for selected league
+  // members
   useEffect(() => {
     if (!leagueId) return
     ;(async () => {
@@ -173,7 +186,6 @@ export default function AdminPage() {
   useEffect(() => { refreshExisting() }, [leagueId, currentLeague?.season]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ————— actions —————
-  // App workspace
   async function scheduleSync() {
     setBusy('sync')
     try { await post('/api/admin/schedule-sync', {}) ; flash('Schedule sync started.') }
@@ -198,7 +210,6 @@ export default function AdminPage() {
     finally { setBusy('') }
   }
 
-  // League workspace
   async function sendInvite() {
     if (!inviteEmail || !leagueId) return
     setBusy('invite')
@@ -224,7 +235,6 @@ export default function AdminPage() {
         description: wrinkleDesc || '',
         status: 'active',
       })
-      // reset a bit, refresh list
       setWrinkleName('')
       setWrinkleDesc('')
       setWrinkleExtra(0)
@@ -234,10 +244,6 @@ export default function AdminPage() {
     finally { setBusy('') }
   }
 
-  async function createLeague() {
-    // unchanged
-    if (!newLeague.name) return
-  }
   const [newLeague, setNewLeague] = useState<{ name: string; season: number }>({ name: '', season: new Date().getFullYear() })
   async function _createLeague() {
     if (!newLeague.name) return
@@ -254,6 +260,12 @@ export default function AdminPage() {
     finally { setBusy('') }
   }
 
+  const [profileQuery, setProfileQuery] = useState('')
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [profileName, setProfileName] = useState('')
+  const [pickWeek, setPickWeek] = useState(1)
+  const [pickMember, setPickMember] = useState('')
+  const [pickTeam, setPickTeam] = useState('')
   async function lookupProfile() {
     if (!profileQuery) return
     setBusy('lookup')
@@ -295,19 +307,55 @@ export default function AdminPage() {
     finally { setBusy('') }
   }
 
+  // Helpers: attach game per wrinkle
+  async function loadGamesForWrinkle(w: WrinkleRow) {
+    if (!currentLeague) return
+    const key = `${w.id}`
+    try {
+      const j = await get<any>(`/api/games-for-week?season=${currentLeague.season}&week=${w.week}`)
+      const games: GameRow[] = (j?.games || []).map((x: any) => ({
+        id: x.id,
+        game_utc: x.game_utc || x.start_time || null,
+        status: x.status || null,
+        home: {
+          id: x.home?.id ?? x.home_team ?? x.homeTeamId ?? x.home_team_id,
+          abbr: x.home?.abbreviation ?? x.home_abbr ?? x.homeAbbr ?? x.home?.abbr ?? null,
+        },
+        away: {
+          id: x.away?.id ?? x.away_team ?? x.awayTeamId ?? x.away_team_id,
+          abbr: x.away?.abbreviation ?? x.away_abbr ?? x.awayAbbr ?? x.away?.abbr ?? null,
+        },
+      }))
+      setGameOptions((prev) => ({ ...prev, [key]: games }))
+      // if none selected yet, choose first unlocked
+      if (!selectedGame[key] && games[0]) {
+        setSelectedGame((p) => ({ ...p, [key]: games[0].id }))
+      }
+    } catch (e: any) {
+      flash(e?.message || 'Could not load games')
+    }
+  }
+
+  async function attachGame(wrinkleId: string) {
+    const gid = selectedGame[wrinkleId]
+    if (!gid) return
+    setAttachBusy((p) => ({ ...p, [wrinkleId]: true }))
+    try {
+      await post('/api/admin/wrinkle-games', { wrinkleId, gameId: gid })
+      flash('Game attached to wrinkle.')
+      // no need to refetch all; admin/active endpoint reads wrinkle_games when needed
+    } catch (e: any) {
+      flash(e?.message || 'Attach failed')
+    } finally {
+      setAttachBusy((p) => ({ ...p, [wrinkleId]: false }))
+    }
+  }
+
   // derived
   const leagueOptions = useMemo(
     () => leagues.map(l => <option key={l.id} value={l.id}>{l.name} · {l.season}</option>),
     [leagues]
   )
-
-  // profile editor & manual pick inputs (unchanged bits)
-  const [profileQuery, setProfileQuery] = useState('')
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [profileName, setProfileName] = useState('')
-  const [pickWeek, setPickWeek] = useState(1)
-  const [pickMember, setPickMember] = useState('')
-  const [pickTeam, setPickTeam] = useState('')
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
@@ -334,7 +382,6 @@ export default function AdminPage() {
         <>
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-8 grid gap-6">
-              {/* Schedule Sync */}
               <Card title="Schedule Sync (App-wide)">
                 <div className="flex items-center gap-2">
                   <Button disabled={busy==='sync'} onClick={scheduleSync}>
@@ -344,7 +391,6 @@ export default function AdminPage() {
                 </div>
               </Card>
 
-              {/* Unassigned Players */}
               <Card title="Unassigned Players (App-wide)">
                 <div className="flex items-center gap-2 mb-3">
                   <Button onClick={refreshUnassigned}>Refresh</Button>
@@ -378,14 +424,12 @@ export default function AdminPage() {
               </Card>
             </div>
 
-            {/* Right rail (App) */}
             <aside className="lg:col-span-4 grid gap-6">
               <TeamPillColors />
             </aside>
           </div>
         </>
       ) : (
-        // ——— LEAGUE WORKSPACE ———
         <>
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <label className="text-sm">League</label>
@@ -396,7 +440,6 @@ export default function AdminPage() {
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-8 grid gap-6">
-              {/* Email Invite */}
               <Card title="Email Invite (League)">
                 <div className="flex gap-2 items-center">
                   <input className="border rounded px-3 py-2 w-full bg-transparent" placeholder="name@email.com"
@@ -408,7 +451,6 @@ export default function AdminPage() {
                 <p className="text-xs text-neutral-500 mt-2">Sends a magic link & associates with the selected league.</p>
               </Card>
 
-              {/* Wrinkle Creator */}
               <Card title="Wrinkle Creator (League)">
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
                   <input className="border rounded px-3 py-2 md:col-span-2 bg-transparent" placeholder="Name"
@@ -433,7 +475,7 @@ export default function AdminPage() {
                 </div>
               </Card>
 
-              {/* Existing Wrinkles (by week, most recent first) */}
+              {/* Existing Wrinkles with Attach Game for bonus_game */}
               <Card title={`Existing Wrinkles — ${currentLeague?.season ?? ''}`}>
                 <div className="mb-2">
                   <Button onClick={refreshExisting}>Refresh</Button>
@@ -450,27 +492,70 @@ export default function AdminPage() {
                           <th className="py-2 pr-4">Name</th>
                           <th className="py-2 pr-4">Extra</th>
                           <th className="py-2 pr-4">Status</th>
+                          <th className="py-2 pr-4">Attach game</th>
                           <th className="py-2 pr-4">Created</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {existing.map(w => (
-                          <tr key={w.id} className="border-t border-neutral-200 dark:border-neutral-800">
-                            <td className="py-2 pr-4">Week {w.week}</td>
-                            <td className="py-2 pr-4">{w.kind}</td>
-                            <td className="py-2 pr-4">{w.name}</td>
-                            <td className="py-2 pr-4">{w.extra_picks || 0}</td>
-                            <td className="py-2 pr-4">{w.status}</td>
-                            <td className="py-2 pr-4">{w.created_at ? new Date(w.created_at).toLocaleString() : '—'}</td>
-                          </tr>
-                        ))}
+                        {existing.map(w => {
+                          const key = w.id
+                          const isBonus = (w.kind || '').toLowerCase() === 'bonus_game'
+                          const games = gameOptions[key] || []
+                          return (
+                            <tr key={w.id} className="border-t border-neutral-200 dark:border-neutral-800 align-top">
+                              <td className="py-2 pr-4">Week {w.week}</td>
+                              <td className="py-2 pr-4">{w.kind}</td>
+                              <td className="py-2 pr-4">{w.name}</td>
+                              <td className="py-2 pr-4">{w.extra_picks || 0}</td>
+                              <td className="py-2 pr-4">{w.status}</td>
+                              <td className="py-2 pr-4">
+                                {isBonus ? (
+                                  <div className="flex gap-2 items-center">
+                                    <Button
+                                      className="text-xs"
+                                      onClick={() => loadGamesForWrinkle(w)}
+                                    >
+                                      Load games
+                                    </Button>
+                                    {games.length > 0 && (
+                                      <>
+                                        <select
+                                          className="border rounded px-2 py-1 bg-transparent"
+                                          value={selectedGame[key] || ''}
+                                          onChange={(e) =>
+                                            setSelectedGame((p) => ({ ...p, [key]: e.target.value }))
+                                          }
+                                        >
+                                          {games.map(g => (
+                                            <option key={g.id} value={g.id}>
+                                              {`${g.home?.abbr || 'HOME'} @ ${g.away?.abbr || 'AWAY'} · ${g.game_utc ? new Date(g.game_utc).toLocaleString() : ''}`}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <Button
+                                          disabled={!selectedGame[key] || !!attachBusy[key]}
+                                          onClick={() => attachGame(key)}
+                                          className="text-xs"
+                                        >
+                                          {attachBusy[key] ? 'Saving…' : 'Save'}
+                                        </Button>
+                                      </>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-neutral-400">—</span>
+                                )}
+                              </td>
+                              <td className="py-2 pr-4">{w.created_at ? new Date(w.created_at).toLocaleString() : '—'}</td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
                 )}
               </Card>
 
-              {/* Create a League */}
               <Card title="Create a League">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   <input className="border rounded px-3 py-2 bg-transparent" placeholder="League name"
@@ -484,9 +569,7 @@ export default function AdminPage() {
               </Card>
             </div>
 
-            {/* Right rail (League) */}
             <aside className="lg:col-span-4 grid gap-6">
-              {/* Pill Colors (League override) */}
               <Card title="Pill Colors (League override)">
                 <div className="grid grid-cols-2 gap-3 items-center">
                   <label className="text-sm">Light</label>
@@ -501,7 +584,6 @@ export default function AdminPage() {
                 </div>
               </Card>
 
-              {/* Player Name / Profile Editor */}
               <Card title="Player Name / Profile Editor (League)">
                 <div className="flex gap-2">
                   <input className="border rounded px-3 py-2 w-full bg-transparent" placeholder="Search email or id"
@@ -522,7 +604,6 @@ export default function AdminPage() {
                 ) : null}
               </Card>
 
-              {/* Manual Pick Input */}
               <Card title="Manual Pick Input (League)">
                 <div className="grid grid-cols-1 gap-2">
                   <div className="grid grid-cols-2 gap-2">
