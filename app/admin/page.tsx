@@ -1,3 +1,4 @@
+// app/admin/page.tsx
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
@@ -7,29 +8,36 @@ import TeamPillColors from '@/components/admin/TeamPillColors'
 type League = { id: string; name: string; season: number }
 type Profile = { id: string; email?: string; display_name?: string | null }
 type Unassigned = { id: string; email: string; display_name?: string | null }
+type WrinkleInput = { name: string; description?: string; extra_picks?: number; week?: number }
 type Team = { id: string; abbreviation?: string }
 
-type WrinkleRow = {
+type WrinkleAdmin = {
   id: string
+  league_id: string
   season: number
   week: number
   name: string
   status: string
-  kind: string
   extra_picks: number
-  created_at?: string
-  params?: any
+  kind: string
 }
 
-type GameRow = {
+type GameLite = {
   id: string
-  game_utc?: string | null
-  status?: string | null
+  season: number
+  week: number
+  game_utc?: string
+  status?: string
   home?: { id?: string; abbr?: string | null }
   away?: { id?: string; abbr?: string | null }
+  // legacy shapes we normalize from:
+  home_team?: string | null
+  away_team?: string | null
+  home_abbr?: string | null
+  away_abbr?: string | null
 }
 
-// ————— UI —————
+// ————— small UI bits —————
 function Card(props: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
@@ -81,7 +89,7 @@ function Segmented({
 // ————— helpers —————
 async function get<T = any>(url: string): Promise<T> {
   const res = await fetch(url, { cache: 'no-store' })
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  if (!res.ok) throw new Error()
   return res.json()
 }
 async function post<T = any>(url: string, body: any): Promise<T> {
@@ -89,8 +97,29 @@ async function post<T = any>(url: string, body: any): Promise<T> {
   const text = await res.text()
   let data: any = {}
   try { data = text ? JSON.parse(text) : {} } catch { data = { raw: text } }
-  if (!res.ok) throw new Error(data?.error || `${res.status} ${res.statusText}`)
+  if (!res.ok) throw new Error(data?.error || )
   return data
+}
+
+// Label builder that uses the team map for proper ABBR @ ABBR + kickoff
+function gameLabel(g: GameLite, teamIndex: Record<string, { abbreviation?: string }>) {
+  // try normalized fields first
+  const homeAbbr =
+    g.home?.abbr ??
+    (g.home?.id ? teamIndex[g.home.id]?.abbreviation : undefined) ??
+    g.home_abbr ??
+    (g.home_team ? teamIndex[g.home_team]?.abbreviation : undefined) ??
+    'HOME'
+
+  const awayAbbr =
+    g.away?.abbr ??
+    (g.away?.id ? teamIndex[g.away.id]?.abbreviation : undefined) ??
+    g.away_abbr ??
+    (g.away_team ? teamIndex[g.away_team]?.abbreviation : undefined) ??
+    'AWAY'
+
+  const when = g.game_utc ?  : ''
+  return 
 }
 
 export default function AdminPage() {
@@ -100,30 +129,22 @@ export default function AdminPage() {
   // shared bootstrap
   const [leagues, setLeagues] = useState<League[]>([])
   const [teams, setTeams] = useState<Team[]>([])
+  const [teamIndex, setTeamIndex] = useState<Record<string, Team>>({})
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState<string>('')
 
   // League workspace state
   const [leagueId, setLeagueId] = useState('')
-  const currentLeague = useMemo(() => leagues.find(l => l.id === leagueId) || null, [leagues, leagueId])
-
   const [members, setMembers] = useState<Profile[]>([])
   const [inviteEmail, setInviteEmail] = useState('')
-
-  // Wrinkle creator
-  const [wrinkleName, setWrinkleName] = useState('')
-  const [wrinkleDesc, setWrinkleDesc] = useState('')
-  const [wrinkleWeek, setWrinkleWeek] = useState<number>(1)
-  const [wrinkleExtra, setWrinkleExtra] = useState<number>(0)
-  const [wrinkleKind, setWrinkleKind] = useState<'bonus_game' | 'winless_double' | 'bonus_picks_only'>('bonus_picks_only')
-
-  // Existing wrinkles list
-  const [existing, setExisting] = useState<WrinkleRow[]>([])
-
-  // For "attach game" UI state (keyed by wrinkle.id)
-  const [gameOptions, setGameOptions] = useState<Record<string, GameRow[]>>({})
-  const [selectedGame, setSelectedGame] = useState<Record<string, string>>({})
-  const [attachBusy, setAttachBusy] = useState<Record<string, boolean>>({})
+  const [wrinkle, setWrinkle] = useState<WrinkleInput>({ name: '', description: '', extra_picks: 0, week: 1 })
+  const [newLeague, setNewLeague] = useState<{ name: string; season: number }>({ name: '', season: new Date().getFullYear() })
+  const [profileQuery, setProfileQuery] = useState('')
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [profileName, setProfileName] = useState('')
+  const [pickWeek, setPickWeek] = useState(1)
+  const [pickMember, setPickMember] = useState('')
+  const [pickTeam, setPickTeam] = useState('')
 
   // App workspace state
   const [pillLight, setPillLight] = useState('#10b981')
@@ -131,6 +152,15 @@ export default function AdminPage() {
   const [unassigned, setUnassigned] = useState<Unassigned[]>([])
   const [assignTarget, setAssignTarget] = useState<string>('')
   const [assignLeagueId, setAssignLeagueId] = useState<string>('')
+
+  // Existing wrinkles list (season-scoped)
+  const [seasonWrinkles, setSeasonWrinkles] = useState<WrinkleAdmin[]>([])
+  const [seasonFilter, setSeasonFilter] = useState<number>(new Date().getFullYear())
+
+  // Per-wrinkle games + selection
+  const [gamesByWrinkle, setGamesByWrinkle] = useState<Record<string, GameLite[]>>({})
+  const [selectedGameId, setSelectedGameId] = useState<Record<string, string>>({})
+  const [savingFor, setSavingFor] = useState<string>('') // wrinkle.id while saving
 
   function flash(s: string) {
     setMsg(s)
@@ -144,15 +174,21 @@ export default function AdminPage() {
         const lj = await get<{ leagues: League[] }>('/api/my-leagues')
         const ls = lj?.leagues || []
         setLeagues(ls)
+        // default league choices
         if (!leagueId && ls[0]) setLeagueId(ls[0].id)
         if (!assignLeagueId && ls[0]) setAssignLeagueId(ls[0].id)
+        if (ls[0]) setSeasonFilter(ls[0].season)
       } catch (e: any) {
-        flash(`Leagues failed: ${e.message || e}`)
+        flash()
       }
       try {
         const tm = await get<any>('/api/team-map')
         const arr = Object.values(tm?.teams || {}) as any[]
-        setTeams(arr.map((x: any) => ({ id: x.id, abbreviation: x.abbreviation })))
+        const compact = arr.map((x: any) => ({ id: x.id, abbreviation: x.abbreviation }))
+        setTeams(compact)
+        const idx: Record<string, Team> = {}
+        for (const t of compact) idx[t.id] = t
+        setTeamIndex(idx)
       } catch {}
       try {
         const u = await get<any>('/api/admin/unassigned')
@@ -162,30 +198,40 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // members
+  // Members for selected league
   useEffect(() => {
     if (!leagueId) return
     ;(async () => {
       try {
-        const j = await get<any>(`/api/admin/league-members?leagueId=${encodeURIComponent(leagueId)}`)
+        const j = await get<any>()
         setMembers(j?.members || [])
       } catch {}
     })()
   }, [leagueId])
 
-  // existing wrinkles for selected league/season
-  async function refreshExisting() {
-    if (!leagueId || !currentLeague) return
+  // Load wrinkles for season (admin, includes prior weeks)
+  async function refreshWrinkles() {
+    if (!leagueId || !seasonFilter) return
     try {
-      const j = await get<any>(`/api/admin/wrinkles?leagueId=${encodeURIComponent(leagueId)}&season=${currentLeague.season}`)
-      setExisting(Array.isArray(j?.wrinkles) ? j.wrinkles : [])
-    } catch (e: any) {
-      flash(e.message || 'Could not load wrinkles')
+      // If you already had a list endpoint, keep using it:
+      // expected response: { wrinkles: WrinkleAdmin[] }
+      const j = await get<any>()
+      setSeasonWrinkles(Array.isArray(j?.wrinkles) ? j.wrinkles : [])
+    } catch {
+      // fallback: include actives from /api/wrinkles/active (at least shows something)
+      try {
+        const j = await get<any>()
+        const wr = (Array.isArray(j?.wrinkles) ? j.wrinkles : []).map((w: any) => ({
+          id: w.id, league_id: leagueId, season: seasonFilter, week: 1,
+          name: w.name, status: w.status, extra_picks: w.extra_picks || 0, kind: w.kind,
+        }))
+        setSeasonWrinkles(wr)
+      } catch { setSeasonWrinkles([]) }
     }
   }
-  useEffect(() => { refreshExisting() }, [leagueId, currentLeague?.season]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { refreshWrinkles() }, [leagueId, seasonFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ————— actions —————
+  // ————— actions (app-wide) —————
   async function scheduleSync() {
     setBusy('sync')
     try { await post('/api/admin/schedule-sync', {}) ; flash('Schedule sync started.') }
@@ -210,6 +256,7 @@ export default function AdminPage() {
     finally { setBusy('') }
   }
 
+  // ————— actions (league) —————
   async function sendInvite() {
     if (!inviteEmail || !leagueId) return
     setBusy('invite')
@@ -220,32 +267,20 @@ export default function AdminPage() {
     } catch (e: any) { flash(e.message || 'Invite failed') }
     finally { setBusy('') }
   }
-
   async function createWrinkle() {
-    if (!leagueId || !currentLeague || !wrinkleName || !wrinkleWeek) return
+    if (!leagueId || !wrinkle.name) return
     setBusy('wrinkle')
     try {
-      await post('/api/admin/wrinkles', {
-        leagueId,
-        season: currentLeague.season,
-        week: wrinkleWeek,
-        name: wrinkleName,
-        kind: wrinkleKind,
-        extraPicks: wrinkleExtra,
-        description: wrinkleDesc || '',
-        status: 'active',
-      })
-      setWrinkleName('')
-      setWrinkleDesc('')
-      setWrinkleExtra(0)
+      // add kind support from a simple name pattern; you may already have a picker UI
+      const kind = /monday|opening|bonus/i.test(wrinkle.name) ? 'bonus_game' : 'winless_double'
+      await post('/api/admin/wrinkles', { leagueId, season: seasonFilter, week: wrinkle.week, name: wrinkle.name, kind, extraPicks: wrinkle.extra_picks ?? 0 })
+      setWrinkle({ name: '', description: '', extra_picks: 0, week: 1 })
       flash('Wrinkle created.')
-      await refreshExisting()
+      await refreshWrinkles()
     } catch (e: any) { flash(e.message || 'Wrinkle failed') }
     finally { setBusy('') }
   }
-
-  const [newLeague, setNewLeague] = useState<{ name: string; season: number }>({ name: '', season: new Date().getFullYear() })
-  async function _createLeague() {
+  async function createLeague() {
     if (!newLeague.name) return
     setBusy('league')
     try {
@@ -259,18 +294,11 @@ export default function AdminPage() {
     } catch (e: any) { flash(e.message || 'Create league failed') }
     finally { setBusy('') }
   }
-
-  const [profileQuery, setProfileQuery] = useState('')
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [profileName, setProfileName] = useState('')
-  const [pickWeek, setPickWeek] = useState(1)
-  const [pickMember, setPickMember] = useState('')
-  const [pickTeam, setPickTeam] = useState('')
   async function lookupProfile() {
     if (!profileQuery) return
     setBusy('lookup')
     try {
-      const j = await get<any>(`/api/admin/profile?query=${encodeURIComponent(profileQuery)}`)
+      const j = await get<any>()
       const p: Profile | null = j?.profile || null
       setProfile(p)
       setProfileName(p?.display_name || '')
@@ -307,16 +335,16 @@ export default function AdminPage() {
     finally { setBusy('') }
   }
 
-  // Helpers: attach game per wrinkle
-  async function loadGamesForWrinkle(w: WrinkleRow) {
-    if (!currentLeague) return
-    const key = `${w.id}`
+  // Existing Wrinkles: load games for a specific wrinkle's week (pretty labels)
+  async function loadGamesForWrinkle(w: WrinkleAdmin) {
     try {
-      const j = await get<any>(`/api/games-for-week?season=${currentLeague.season}&week=${w.week}`)
-      const games: GameRow[] = (j?.games || []).map((x: any) => ({
+      const j = await get<any>()
+      const rows: GameLite[] = (j?.games || []).map((x: any) => ({
         id: x.id,
-        game_utc: x.game_utc || x.start_time || null,
-        status: x.status || null,
+        season: x.season,
+        week: x.week,
+        game_utc: x.game_utc || x.start_time,
+        status: x.status,
         home: {
           id: x.home?.id ?? x.home_team ?? x.homeTeamId ?? x.home_team_id,
           abbr: x.home?.abbreviation ?? x.home_abbr ?? x.homeAbbr ?? x.home?.abbr ?? null,
@@ -325,29 +353,30 @@ export default function AdminPage() {
           id: x.away?.id ?? x.away_team ?? x.awayTeamId ?? x.away_team_id,
           abbr: x.away?.abbreviation ?? x.away_abbr ?? x.awayAbbr ?? x.away?.abbr ?? null,
         },
+        home_team: x.home_team ?? null,
+        away_team: x.away_team ?? null,
+        home_abbr: x.home_abbr ?? null,
+        away_abbr: x.away_abbr ?? null,
       }))
-      setGameOptions((prev) => ({ ...prev, [key]: games }))
-      // if none selected yet, choose first unlocked
-      if (!selectedGame[key] && games[0]) {
-        setSelectedGame((p) => ({ ...p, [key]: games[0].id }))
-      }
+      setGamesByWrinkle((m) => ({ ...m, [w.id]: rows }))
+      // preselect first as convenience
+      if (!selectedGameId[w.id] && rows[0]) setSelectedGameId((m) => ({ ...m, [w.id]: rows[0].id }))
     } catch (e: any) {
       flash(e?.message || 'Could not load games')
     }
   }
 
-  async function attachGame(wrinkleId: string) {
-    const gid = selectedGame[wrinkleId]
+  async function saveGameForWrinkle(w: WrinkleAdmin) {
+    const gid = selectedGameId[w.id]
     if (!gid) return
-    setAttachBusy((p) => ({ ...p, [wrinkleId]: true }))
+    setSavingFor(w.id)
     try {
-      await post('/api/admin/wrinkle-games', { wrinkleId, gameId: gid })
-      flash('Game attached to wrinkle.')
-      // no need to refetch all; admin/active endpoint reads wrinkle_games when needed
+      await post('/api/admin/wrinkle-games', { wrinkleId: w.id, gameId: gid })
+      flash('Wrinkle game attached.')
     } catch (e: any) {
-      flash(e?.message || 'Attach failed')
+      flash(e?.message || 'Save failed')
     } finally {
-      setAttachBusy((p) => ({ ...p, [wrinkleId]: false }))
+      setSavingFor('')
     }
   }
 
@@ -376,10 +405,9 @@ export default function AdminPage() {
         </div>
       </header>
 
-      {msg ? <div className="mb-4 text-sm text-emerald-600">{msg}</div> : null}
-
       {mode === 'app' ? (
         <>
+          {msg ? <div className="mb-4 text-sm text-emerald-600">{msg}</div> : null}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-8 grid gap-6">
               <Card title="Schedule Sync (App-wide)">
@@ -436,10 +464,22 @@ export default function AdminPage() {
             <select className="border rounded px-2 py-1 bg-transparent" value={leagueId} onChange={e => setLeagueId(e.target.value)}>
               {leagueOptions}
             </select>
+
+            <label className="text-sm ml-2">Season</label>
+            <select className="border rounded px-2 py-1 bg-transparent" value={seasonFilter} onChange={(e) => setSeasonFilter(Number(e.target.value))}>
+              {Array.from({ length: 4 }).map((_, i) => {
+                const yr = new Date().getFullYear() - 1 + i
+                return <option key={yr} value={yr}>{yr}</option>
+              })}
+            </select>
+
+            <Button className="ml-2" onClick={refreshWrinkles}>Refresh</Button>
+            {msg ? <span className="text-sm text-emerald-600">{msg}</span> : null}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-8 grid gap-6">
+              {/* Email Invite */}
               <Card title="Email Invite (League)">
                 <div className="flex gap-2 items-center">
                   <input className="border rounded px-3 py-2 w-full bg-transparent" placeholder="name@email.com"
@@ -451,40 +491,35 @@ export default function AdminPage() {
                 <p className="text-xs text-neutral-500 mt-2">Sends a magic link & associates with the selected league.</p>
               </Card>
 
+              {/* Wrinkle Creator */}
               <Card title="Wrinkle Creator (League)">
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                   <input className="border rounded px-3 py-2 md:col-span-2 bg-transparent" placeholder="Name"
-                    value={wrinkleName} onChange={e => setWrinkleName(e.target.value)} />
-                  <select className="border rounded px-2 py-2 bg-transparent"
-                          value={wrinkleKind} onChange={e => setWrinkleKind(e.target.value as any)}>
-                    <option value="bonus_picks_only">Bonus picks only</option>
-                    <option value="bonus_game">Featured bonus game</option>
-                    <option value="winless_double">Winless double</option>
-                  </select>
+                         value={wrinkle.name} onChange={e => setWrinkle(v => ({ ...v, name: e.target.value }))}/>
                   <input className="border rounded px-3 py-2 bg-transparent" placeholder="Extra picks (0)" type="number"
-                    value={wrinkleExtra} onChange={e => setWrinkleExtra(Number(e.target.value))} />
+                         value={wrinkle.extra_picks ?? 0} onChange={e => setWrinkle(v => ({ ...v, extra_picks: Number(e.target.value) }))}/>
                   <input className="border rounded px-3 py-2 bg-transparent" placeholder="Week" type="number"
-                    value={wrinkleWeek} onChange={e => setWrinkleWeek(Number(e.target.value))} />
+                         value={wrinkle.week ?? 1} onChange={e => setWrinkle(v => ({ ...v, week: Number(e.target.value) }))}/>
                 </div>
                 <textarea className="border rounded px-3 py-2 w-full mt-2 bg-transparent" placeholder="Description (optional)"
-                  value={wrinkleDesc} onChange={e => setWrinkleDesc(e.target.value)} />
+                          value={wrinkle.description || ''} onChange={e => setWrinkle(v => ({ ...v, description: e.target.value }))}/>
                 <div className="mt-2">
-                  <Button disabled={!leagueId || !wrinkleName || busy==='wrinkle'} onClick={createWrinkle}>
+                  <Button disabled={!leagueId || !wrinkle.name || busy==='wrinkle'} onClick={createWrinkle}>
                     {busy==='wrinkle' ? 'Creating…' : 'Create wrinkle'}
                   </Button>
                 </div>
               </Card>
 
-              {/* Existing Wrinkles with Attach Game for bonus_game */}
-              <Card title={`Existing Wrinkles — ${currentLeague?.season ?? ''}`}>
-                <div className="mb-2">
-                  <Button onClick={refreshExisting}>Refresh</Button>
-                </div>
-                {existing.length === 0 ? (
-                  <div className="text-sm text-neutral-500">None yet for this season.</div>
+              {/* Existing Wrinkles (Season) */}
+              <Card
+                title={}
+                right={<Button onClick={refreshWrinkles}>Refresh</Button>}
+              >
+                {seasonWrinkles.length === 0 ? (
+                  <div className="text-sm text-neutral-500">None for this season.</div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-sm">
+                  <div className="w-full overflow-x-auto">
+                    <table className="w-full text-sm">
                       <thead className="text-left text-neutral-500">
                         <tr>
                           <th className="py-2 pr-4">Week</th>
@@ -492,83 +527,60 @@ export default function AdminPage() {
                           <th className="py-2 pr-4">Name</th>
                           <th className="py-2 pr-4">Extra</th>
                           <th className="py-2 pr-4">Status</th>
-                          <th className="py-2 pr-4">Attach game</th>
-                          <th className="py-2 pr-4">Created</th>
+                          <th className="py-2">Attach game</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {existing.map(w => {
-                          const key = w.id
-                          const isBonus = (w.kind || '').toLowerCase() === 'bonus_game'
-                          const games = gameOptions[key] || []
-                          return (
-                            <tr key={w.id} className="border-t border-neutral-200 dark:border-neutral-800 align-top">
-                              <td className="py-2 pr-4">Week {w.week}</td>
-                              <td className="py-2 pr-4">{w.kind}</td>
-                              <td className="py-2 pr-4">{w.name}</td>
-                              <td className="py-2 pr-4">{w.extra_picks || 0}</td>
-                              <td className="py-2 pr-4">{w.status}</td>
-                              <td className="py-2 pr-4">
-                                {isBonus ? (
-                                  <div className="flex gap-2 items-center">
-                                    <Button
-                                      className="text-xs"
-                                      onClick={() => loadGamesForWrinkle(w)}
-                                    >
-                                      Load games
-                                    </Button>
-                                    {games.length > 0 && (
-                                      <>
-                                        <select
-                                          className="border rounded px-2 py-1 bg-transparent"
-                                          value={selectedGame[key] || ''}
-                                          onChange={(e) =>
-                                            setSelectedGame((p) => ({ ...p, [key]: e.target.value }))
-                                          }
-                                        >
-                                          {games.map(g => (
-                                            <option key={g.id} value={g.id}>
-                                              {`${g.home?.abbr || 'HOME'} @ ${g.away?.abbr || 'AWAY'} · ${g.game_utc ? new Date(g.game_utc).toLocaleString() : ''}`}
-                                            </option>
-                                          ))}
-                                        </select>
-                                        <Button
-                                          disabled={!selectedGame[key] || !!attachBusy[key]}
-                                          onClick={() => attachGame(key)}
-                                          className="text-xs"
-                                        >
-                                          {attachBusy[key] ? 'Saving…' : 'Save'}
-                                        </Button>
-                                      </>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="text-neutral-400">—</span>
-                                )}
-                              </td>
-                              <td className="py-2 pr-4">{w.created_at ? new Date(w.created_at).toLocaleString() : '—'}</td>
-                            </tr>
-                          )
-                        })}
+                        {seasonWrinkles.map((w) => (
+                          <tr key={w.id} className="border-t border-neutral-200 dark:border-neutral-800 align-top">
+                            <td className="py-3 pr-4 whitespace-nowrap">Week {w.week}</td>
+                            <td className="py-3 pr-4 whitespace-nowrap">{w.kind}</td>
+                            <td className="py-3 pr-4">{w.name}</td>
+                            <td className="py-3 pr-4 text-center">{w.extra_picks || 0}</td>
+                            <td className="py-3 pr-4 whitespace-nowrap">{w.status}</td>
+                            <td className="py-3">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <Button onClick={() => loadGamesForWrinkle(w)}>Load games</Button>
+                                <select
+                                  className="border rounded px-2 py-2 bg-transparent min-w-[260px] max-w-full flex-1"
+                                  value={selectedGameId[w.id] || ''}
+                                  onChange={(e) => setSelectedGameId((m) => ({ ...m, [w.id]: e.target.value }))}
+                                >
+                                  {(gamesByWrinkle[w.id] || []).map((g) => (
+                                    <option key={g.id} value={g.id}>{gameLabel(g, teamIndex)}</option>
+                                  ))}
+                                </select>
+                                <Button
+                                  disabled={!selectedGameId[w.id] || savingFor === w.id}
+                                  onClick={() => saveGameForWrinkle(w)}
+                                >
+                                  {savingFor === w.id ? 'Saving…' : 'Save'}
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
                 )}
               </Card>
 
+              {/* Create a League */}
               <Card title="Create a League">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   <input className="border rounded px-3 py-2 bg-transparent" placeholder="League name"
-                    value={newLeague.name} onChange={e => setNewLeague(v => ({ ...v, name: e.target.value }))}/>
+                         value={newLeague.name} onChange={e => setNewLeague(v => ({ ...v, name: e.target.value }))}/>
                   <input className="border rounded px-3 py-2 bg-transparent" placeholder="Season" type="number"
-                    value={newLeague.season} onChange={e => setNewLeague(v => ({ ...v, season: Number(e.target.value) }))}/>
-                  <Button disabled={!newLeague.name || busy==='league'} onClick={_createLeague}>
+                         value={newLeague.season} onChange={e => setNewLeague(v => ({ ...v, season: Number(e.target.value) }))}/>
+                  <Button disabled={!newLeague.name || busy==='league'} onClick={createLeague}>
                     {busy==='league' ? 'Creating…' : 'Create'}
                   </Button>
                 </div>
               </Card>
             </div>
 
+            {/* Right rail (League) */}
             <aside className="lg:col-span-4 grid gap-6">
               <Card title="Pill Colors (League override)">
                 <div className="grid grid-cols-2 gap-3 items-center">
@@ -587,16 +599,16 @@ export default function AdminPage() {
               <Card title="Player Name / Profile Editor (League)">
                 <div className="flex gap-2">
                   <input className="border rounded px-3 py-2 w-full bg-transparent" placeholder="Search email or id"
-                    value={profileQuery} onChange={e => setProfileQuery(e.target.value)}/>
+                         value={profileQuery} onChange={e => setProfileQuery(e.target.value)}/>
                   <Button disabled={!profileQuery || busy==='lookup'} onClick={lookupProfile}>
                     {busy==='lookup' ? 'Searching…' : 'Lookup'}
                   </Button>
                 </div>
                 {profile ? (
                   <div className="mt-3 grid gap-2">
-                    <div className="text-xs text-neutral-500">Profile: {profile.id} {profile.email ? `· ${profile.email}` : ''}</div>
+                    <div className="text-xs text-neutral-500">Profile: {profile.id} {profile.email ?  : ''}</div>
                     <input className="border rounded px-3 py-2 bg-transparent" placeholder="Display name"
-                      value={profileName} onChange={e => setProfileName(e.target.value)}/>
+                           value={profileName} onChange={e => setProfileName(e.target.value)}/>
                     <Button disabled={!profileName || busy==='pname'} onClick={saveProfileName}>
                       {busy==='pname' ? 'Saving…' : 'Save name'}
                     </Button>
@@ -622,7 +634,7 @@ export default function AdminPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <input type="number" className="border rounded px-3 py-2 bg-transparent" placeholder="Week"
-                      value={pickWeek} onChange={e => setPickWeek(Number(e.target.value))}/>
+                           value={pickWeek} onChange={e => setPickWeek(Number(e.target.value))}/>
                     <Button disabled={!leagueId || !pickMember || !pickTeam || busy==='mpick'} onClick={setManualPick}>
                       {busy==='mpick' ? 'Saving…' : 'Save pick'}
                     </Button>
