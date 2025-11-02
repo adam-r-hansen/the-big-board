@@ -1,11 +1,15 @@
 // components/SpecialPicksCard.tsx
 'use client'
 import { useEffect, useMemo, useState } from 'react'
-import TeamPill, {
-  type TeamShape,
-  pickTeamColor,
-  readableOn,
-} from '@/components/ui/TeamPill'
+import type { TeamShape } from '@/components/ui/TeamPill'
+
+// Extend TeamShape with fields your team map includes
+type TeamLike = TeamShape & {
+  abbreviation?: string | null
+  color_secondary?: string | null
+  logo?: string | null
+  logo_dark?: string | null
+}
 
 type Wrinkle = {
   id: string
@@ -21,49 +25,73 @@ type Wrinkle = {
     away_team?: string | null
   }
 }
-
 type WrinklePick = { id: string; wrinkle_id: string; team_id: string; game_id: string | null }
 
-/** Outlined → filled selectable pill that matches the site “pick” look */
-function SelectablePill({
+/* ---------- color helpers copied from Picks page for a perfect match ---------- */
+const isHex = (x?: string | null) => !!x && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(x)
+const safe = (x: string | null | undefined, fallback: string) => (isHex(x) ? (x as string) : fallback)
+function textOn(bg: string) {
+  try {
+    const hex = bg.replace('#', '')
+    const v = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex
+    const r = parseInt(v.slice(0, 2), 16) / 255
+    const g = parseInt(v.slice(2, 4), 16) / 255
+    const b = parseInt(v.slice(4, 6), 16) / 255
+    const toLin = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4))
+    const L = 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b)
+    return L > 0.5 ? '#111827' : '#ffffff'
+  } catch {
+    return '#111827'
+  }
+}
+
+/* ---------- The *exact* pill look used on weekly picks ---------- */
+function PickPill({
   team,
-  selected,
+  picked,
   disabled,
   onClick,
 }: {
-  team: TeamShape
-  selected?: boolean
+  team: TeamLike
+  picked?: boolean
   disabled?: boolean
   onClick?: () => void
 }) {
-  // use the same palette choice as TeamPill (light mode color)
-  const base = pickTeamColor('light', team)
-  const textOnFill = readableOn(base)
-
-  const style: React.CSSProperties = selected
-    ? { background: base, color: textOnFill, borderColor: base }
-    : { background: 'transparent', color: base, borderColor: base }
+  const abbr = team?.abbreviation ?? '—'
+  const primary = safe(team?.color_primary ?? null, '#6b7280')
+  const pillStyle: React.CSSProperties = picked
+    ? { background: primary, color: textOn(primary), borderColor: primary }
+    : { background: 'transparent', color: primary, borderColor: primary }
 
   return (
     <button
       type="button"
-      onClick={disabled ? undefined : onClick}
       disabled={!!disabled}
+      onClick={disabled ? undefined : onClick}
       className={[
-        'inline-flex items-center justify-center',
-        'h-10 px-4 rounded-full border font-semibold tracking-wide',
+        // match picks page sizing/shape/weight
+        'h-12 min-w-[6.5rem] px-4 rounded-full border font-semibold tracking-wide',
         'transition-[transform,opacity] active:scale-[0.98]',
-        disabled ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90',
+        'flex items-center justify-center gap-2',
+        disabled ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-90',
       ].join(' ')}
-      style={style}
-      title={team.abbreviation || team.name || 'Pick'}
+      style={pillStyle}
+      title={abbr}
     >
-      {/* Use TeamPill only for its label rendering (keeps typography) */}
-      <TeamPill team={team} labelMode="abbr" mode="light" size="sm" className="bg-transparent border-0 p-0" />
+      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white/95 border border-black/10 overflow-hidden">
+        {team?.logo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={team.logo} alt={abbr} className="w-6 h-6 object-contain" />
+        ) : (
+          <span className="w-4 h-4 rounded-full bg-black/10" />
+        )}
+      </span>
+      <span className="truncate">{abbr}</span>
     </button>
   )
 }
 
+/* ===================== Card ===================== */
 export default function SpecialPicksCard({
   leagueId,
   season,
@@ -73,7 +101,7 @@ export default function SpecialPicksCard({
   leagueId: string
   season: number
   week: number
-  teams: Record<string, TeamShape>
+  teams: Record<string, TeamLike> // we rely on abbreviation/logo/colors
 }) {
   const data = useWrinkles(leagueId, season, week)
   const wrinkles: Wrinkle[] = data?.wrinkles || []
@@ -98,12 +126,9 @@ export default function SpecialPicksCard({
   }
 
   const hasAny =
-    wrinkles.length > 0 ||
-    extraCount > 0 ||
-    winlessEligible.size > 0 ||
-    bonusEligible.size > 0
+    wrinkles.length > 0 || extraCount > 0 || winlessEligible.size > 0 || bonusEligible.size > 0
 
-  const locked = (w: Wrinkle) => {
+  const isLocked = (w: Wrinkle) => {
     const utc = w.game?.game_utc
     return utc ? new Date(utc) <= new Date() : false
   }
@@ -128,7 +153,6 @@ export default function SpecialPicksCard({
       }
       await refreshPicks()
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error('wrinkle pick failed', e)
     }
   }
@@ -148,14 +172,12 @@ export default function SpecialPicksCard({
         <h2 className="text-lg font-semibold">Wrinkle pick</h2>
       </header>
 
-      {/* Extra picks, if any */}
       {extraCount > 0 && (
         <div className="mb-3 text-sm">
           <strong>Bonus picks</strong>: +{extraCount} extra pick{extraCount === 1 ? '' : 's'}
         </div>
       )}
 
-      {/* Winless double */}
       {winless && (
         <div className="grid gap-2 mb-3">
           <div className="text-sm">
@@ -168,13 +190,13 @@ export default function SpecialPicksCard({
               const t = teams[id]
               if (!t) return null
               const selected = pickByWrinkle.get(winless.id || '')?.team_id === id
-              const isLocked = locked(winless)
+              const locked = isLocked(winless)
               return (
-                <SelectablePill
+                <PickPill
                   key={id}
                   team={t}
-                  selected={selected}
-                  disabled={isLocked}
+                  picked={selected}
+                  disabled={locked}
                   onClick={() => chooseWrinkleTeam(winless, id)}
                 />
               )
@@ -183,7 +205,6 @@ export default function SpecialPicksCard({
         </div>
       )}
 
-      {/* Bonus game (Opening Night, etc.) */}
       {bonusGame && (
         <div className="grid gap-2">
           <div className="text-sm">
@@ -198,13 +219,13 @@ export default function SpecialPicksCard({
               const t = teams[id]
               if (!t) return null
               const selected = pickByWrinkle.get(bonusGame.id || '')?.team_id === id
-              const isLocked = locked(bonusGame)
+              const locked = isLocked(bonusGame)
               return (
-                <SelectablePill
+                <PickPill
                   key={id}
                   team={t}
-                  selected={selected}
-                  disabled={isLocked}
+                  picked={selected}
+                  disabled={locked}
                   onClick={() => chooseWrinkleTeam(bonusGame, id)}
                 />
               )
@@ -216,6 +237,7 @@ export default function SpecialPicksCard({
   )
 }
 
+/* ------------------------ data hooks ------------------------ */
 function useWrinkles(leagueId: string, season: number, week: number) {
   const [data, setData] = useState<any>(null)
   useEffect(() => {
@@ -231,9 +253,7 @@ function useWrinkles(leagueId: string, season: number, week: number) {
         if (!dead) setData(null)
       }
     })()
-    return () => {
-      dead = true
-    }
+    return () => { dead = true }
   }, [leagueId, season, week])
   return data
 }
@@ -244,9 +264,7 @@ function useWrinklePicks(leagueId: string, season: number, week: number) {
 
   async function load() {
     try {
-      const j = await fetch(`/api/wrinkle-picks?leagueId=${leagueId}&season=${season}&week=${week}`, {
-        cache: 'no-store',
-      }).then((r) => r.json())
+      const j = await fetch(`/api/wrinkle-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json())
       setPicks(Array.isArray(j?.picks) ? j.picks : [])
       setError(null)
     } catch (e: any) {
