@@ -34,7 +34,7 @@ export default function SpecialPicksCard({
   const data = useWrinkles(leagueId, season, week)
   const wrinkles: Wrinkle[] = data?.wrinkles || []
 
-  const { picks, refresh: refreshPicks, error: picksErr } = useWrinklePicks(leagueId, season, week)
+  const { picks, refresh: refreshPicks } = useWrinklePicks(leagueId, season, week)
   const pickByWrinkle = useMemo(() => {
     const m = new Map<string, WrinklePick>()
     for (const p of picks) m.set(p.wrinkle_id, p)
@@ -46,7 +46,6 @@ export default function SpecialPicksCard({
   const multiplier = winless?.params?.multiplier || 2
   const winlessEligible = new Set(winless?.params?.eligibleTeamIds || [])
 
-  // bonus_game: eligible teams are home/away of the attached wrinkle game
   const bonusGame = wrinkles.find((w) => String(w.kind).toLowerCase() === 'bonus_game')
   const bonusEligible = new Set<string>()
   if (bonusGame?.game) {
@@ -59,6 +58,11 @@ export default function SpecialPicksCard({
     extraCount > 0 ||
     winlessEligible.size > 0 ||
     bonusEligible.size > 0
+
+  const isLocked = (w: Wrinkle) => {
+    const utc = w.game?.game_utc
+    return utc ? new Date(utc) <= new Date() : false
+  }
 
   async function chooseWrinkleTeam(w: Wrinkle, teamId: string) {
     try {
@@ -80,7 +84,6 @@ export default function SpecialPicksCard({
       }
       await refreshPicks()
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error('wrinkle pick failed', e)
     }
   }
@@ -121,22 +124,21 @@ export default function SpecialPicksCard({
               if (!t) return null
               const picked = pickByWrinkle.get(winless.id || '')
               const selected = picked?.team_id === id
+              const locked = isLocked(winless)
               return (
                 <button
                   key={id}
                   type="button"
-                  onClick={() => chooseWrinkleTeam(winless, id)}
+                  onClick={() => !locked && chooseWrinkleTeam(winless, id)}
                   className={[
-                    'rounded-full focus:outline-none',
+                    'inline-flex rounded-full focus:outline-none',
                     selected ? 'ring-2 ring-neutral-400' : 'ring-0',
+                    locked ? 'opacity-50 pointer-events-none' : 'active:scale-[0.98]',
                   ].join(' ')}
+                  aria-pressed={selected}
                   title={selected ? 'Selected' : 'Select'}
                 >
-                  <TeamPill
-                    team={t}
-                    size="sm"
-                    className={selected ? 'font-bold' : ''}
-                  />
+                  <TeamPill team={t} size="sm" className={selected ? 'font-bold' : ''} />
                 </button>
               )
             })}
@@ -160,22 +162,21 @@ export default function SpecialPicksCard({
               if (!t) return null
               const picked = pickByWrinkle.get(bonusGame.id || '')
               const selected = picked?.team_id === id
+              const locked = isLocked(bonusGame)
               return (
                 <button
                   key={id}
                   type="button"
-                  onClick={() => chooseWrinkleTeam(bonusGame, id)}
+                  onClick={() => !locked && chooseWrinkleTeam(bonusGame, id)}
                   className={[
-                    'rounded-full focus:outline-none',
+                    'inline-flex rounded-full focus:outline-none',
                     selected ? 'ring-2 ring-neutral-400' : 'ring-0',
+                    locked ? 'opacity-50 pointer-events-none' : 'active:scale-[0.98]',
                   ].join(' ')}
+                  aria-pressed={selected}
                   title={selected ? 'Selected' : 'Select'}
                 >
-                  <TeamPill
-                    team={t}
-                    size="sm"
-                    className={selected ? 'font-bold' : ''}
-                  />
+                  <TeamPill team={t} size="sm" className={selected ? 'font-bold' : ''} />
                 </button>
               )
             })}
