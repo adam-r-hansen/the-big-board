@@ -2,13 +2,24 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import TeamPillColors from '@/components/admin/TeamPillColors' // ← NEW
+import TeamPillColors from '@/components/admin/TeamPillColors' // ← existing
 
 type League = { id: string; name: string; season: number }
 type Profile = { id: string; email?: string; display_name?: string | null }
 type Unassigned = { id: string; email: string; display_name?: string | null }
-type WrinkleInput = { name: string; description?: string; extra_picks?: number; week?: number }
 type Team = { id: string; abbreviation?: string }
+
+type WrinkleRow = {
+  id: string
+  season: number
+  week: number
+  name: string
+  status: string
+  kind: string
+  extra_picks: number
+  created_at?: string
+  params?: any
+}
 
 // ————— UI —————
 function Card(props: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
@@ -76,7 +87,7 @@ async function post<T = any>(url: string, body: any): Promise<T> {
 
 export default function AdminPage() {
   // workspace mode
-  const [mode, setMode] = useState<'app' | 'league'>('app')
+  const [mode, setMode] = useState<'app' | 'league'>('league')
 
   // shared bootstrap
   const [leagues, setLeagues] = useState<League[]>([])
@@ -86,16 +97,20 @@ export default function AdminPage() {
 
   // League workspace state
   const [leagueId, setLeagueId] = useState('')
+  const currentLeague = useMemo(() => leagues.find(l => l.id === leagueId) || null, [leagues, leagueId])
+
   const [members, setMembers] = useState<Profile[]>([])
   const [inviteEmail, setInviteEmail] = useState('')
-  const [wrinkle, setWrinkle] = useState<WrinkleInput>({ name: '', description: '', extra_picks: 0, week: 1 })
-  const [newLeague, setNewLeague] = useState<{ name: string; season: number }>({ name: '', season: new Date().getFullYear() })
-  const [profileQuery, setProfileQuery] = useState('')
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [profileName, setProfileName] = useState('')
-  const [pickWeek, setPickWeek] = useState(1)
-  const [pickMember, setPickMember] = useState('')
-  const [pickTeam, setPickTeam] = useState('')
+
+  // Wrinkle creator
+  const [wrinkleName, setWrinkleName] = useState('')
+  const [wrinkleDesc, setWrinkleDesc] = useState('')
+  const [wrinkleWeek, setWrinkleWeek] = useState<number>(1)
+  const [wrinkleExtra, setWrinkleExtra] = useState<number>(0)
+  const [wrinkleKind, setWrinkleKind] = useState<'bonus_game' | 'winless_double' | 'bonus_picks_only'>('bonus_picks_only')
+
+  // Existing wrinkles list
+  const [existing, setExisting] = useState<WrinkleRow[]>([])
 
   // App workspace state
   const [pillLight, setPillLight] = useState('#10b981')
@@ -109,14 +124,13 @@ export default function AdminPage() {
     setTimeout(() => setMsg(''), 3000)
   }
 
-  // ————— bootstrap (real endpoints only) —————
+  // ————— bootstrap —————
   useEffect(() => {
     ;(async () => {
       try {
         const lj = await get<{ leagues: League[] }>('/api/my-leagues')
         const ls = lj?.leagues || []
         setLeagues(ls)
-        // default league choices
         if (!leagueId && ls[0]) setLeagueId(ls[0].id)
         if (!assignLeagueId && ls[0]) setAssignLeagueId(ls[0].id)
       } catch (e: any) {
@@ -131,13 +145,11 @@ export default function AdminPage() {
         const u = await get<any>('/api/admin/unassigned')
         setUnassigned(Array.isArray(u?.rows) ? u.rows : (Array.isArray(u) ? u : []))
       } catch {}
-      // If your app-wide pill colors are persisted, you can fetch them here (endpoint optional)
-      // try { const b = await get<any>('/api/admin/branding'); setPillLight(b?.pill_light || pillLight); setPillDark(b?.pill_dark || pillDark) } catch {}
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // members for selected league (League workspace only)
+  // members for selected league
   useEffect(() => {
     if (!leagueId) return
     ;(async () => {
@@ -148,7 +160,19 @@ export default function AdminPage() {
     })()
   }, [leagueId])
 
-  // ————— actions (use existing endpoints where possible) —————
+  // existing wrinkles for selected league/season
+  async function refreshExisting() {
+    if (!leagueId || !currentLeague) return
+    try {
+      const j = await get<any>(`/api/admin/wrinkles?leagueId=${encodeURIComponent(leagueId)}&season=${currentLeague.season}`)
+      setExisting(Array.isArray(j?.wrinkles) ? j.wrinkles : [])
+    } catch (e: any) {
+      flash(e.message || 'Could not load wrinkles')
+    }
+  }
+  useEffect(() => { refreshExisting() }, [leagueId, currentLeague?.season]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ————— actions —————
   // App workspace
   async function scheduleSync() {
     setBusy('sync')
@@ -185,17 +209,37 @@ export default function AdminPage() {
     } catch (e: any) { flash(e.message || 'Invite failed') }
     finally { setBusy('') }
   }
+
   async function createWrinkle() {
-    if (!leagueId || !wrinkle.name) return
+    if (!leagueId || !currentLeague || !wrinkleName || !wrinkleWeek) return
     setBusy('wrinkle')
     try {
-      await post('/api/admin/wrinkles', { leagueId, ...wrinkle })
-      setWrinkle({ name: '', description: '', extra_picks: 0, week: 1 })
+      await post('/api/admin/wrinkles', {
+        leagueId,
+        season: currentLeague.season,
+        week: wrinkleWeek,
+        name: wrinkleName,
+        kind: wrinkleKind,
+        extraPicks: wrinkleExtra,
+        description: wrinkleDesc || '',
+        status: 'active',
+      })
+      // reset a bit, refresh list
+      setWrinkleName('')
+      setWrinkleDesc('')
+      setWrinkleExtra(0)
       flash('Wrinkle created.')
+      await refreshExisting()
     } catch (e: any) { flash(e.message || 'Wrinkle failed') }
     finally { setBusy('') }
   }
+
   async function createLeague() {
+    // unchanged
+    if (!newLeague.name) return
+  }
+  const [newLeague, setNewLeague] = useState<{ name: string; season: number }>({ name: '', season: new Date().getFullYear() })
+  async function _createLeague() {
     if (!newLeague.name) return
     setBusy('league')
     try {
@@ -209,6 +253,7 @@ export default function AdminPage() {
     } catch (e: any) { flash(e.message || 'Create league failed') }
     finally { setBusy('') }
   }
+
   async function lookupProfile() {
     if (!profileQuery) return
     setBusy('lookup')
@@ -256,6 +301,14 @@ export default function AdminPage() {
     [leagues]
   )
 
+  // profile editor & manual pick inputs (unchanged bits)
+  const [profileQuery, setProfileQuery] = useState('')
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [profileName, setProfileName] = useState('')
+  const [pickWeek, setPickWeek] = useState(1)
+  const [pickMember, setPickMember] = useState('')
+  const [pickTeam, setPickTeam] = useState('')
+
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
       <header className="mb-5 flex items-center gap-3">
@@ -275,12 +328,13 @@ export default function AdminPage() {
         </div>
       </header>
 
+      {msg ? <div className="mb-4 text-sm text-emerald-600">{msg}</div> : null}
+
       {mode === 'app' ? (
         <>
-          {msg ? <div className="mb-4 text-sm text-emerald-600">{msg}</div> : null}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-8 grid gap-6">
-              {/* Schedule Sync (App-wide) */}
+              {/* Schedule Sync */}
               <Card title="Schedule Sync (App-wide)">
                 <div className="flex items-center gap-2">
                   <Button disabled={busy==='sync'} onClick={scheduleSync}>
@@ -290,7 +344,7 @@ export default function AdminPage() {
                 </div>
               </Card>
 
-              {/* Unassigned Players (App-wide list; choose league per assignment) */}
+              {/* Unassigned Players */}
               <Card title="Unassigned Players (App-wide)">
                 <div className="flex items-center gap-2 mb-3">
                   <Button onClick={refreshUnassigned}>Refresh</Button>
@@ -326,7 +380,6 @@ export default function AdminPage() {
 
             {/* Right rail (App) */}
             <aside className="lg:col-span-4 grid gap-6">
-              {/* Team Pill Colors (App-wide, per-team via DB keys) */}
               <TeamPillColors />
             </aside>
           </div>
@@ -339,7 +392,6 @@ export default function AdminPage() {
             <select className="border rounded px-2 py-1 bg-transparent" value={leagueId} onChange={e => setLeagueId(e.target.value)}>
               {leagueOptions}
             </select>
-            {msg ? <span className="text-sm text-emerald-600">{msg}</span> : null}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -358,31 +410,74 @@ export default function AdminPage() {
 
               {/* Wrinkle Creator */}
               <Card title="Wrinkle Creator (League)">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
                   <input className="border rounded px-3 py-2 md:col-span-2 bg-transparent" placeholder="Name"
-                         value={wrinkle.name} onChange={e => setWrinkle(v => ({ ...v, name: e.target.value }))}/>
+                    value={wrinkleName} onChange={e => setWrinkleName(e.target.value)} />
+                  <select className="border rounded px-2 py-2 bg-transparent"
+                          value={wrinkleKind} onChange={e => setWrinkleKind(e.target.value as any)}>
+                    <option value="bonus_picks_only">Bonus picks only</option>
+                    <option value="bonus_game">Featured bonus game</option>
+                    <option value="winless_double">Winless double</option>
+                  </select>
                   <input className="border rounded px-3 py-2 bg-transparent" placeholder="Extra picks (0)" type="number"
-                         value={wrinkle.extra_picks ?? 0} onChange={e => setWrinkle(v => ({ ...v, extra_picks: Number(e.target.value) }))}/>
+                    value={wrinkleExtra} onChange={e => setWrinkleExtra(Number(e.target.value))} />
                   <input className="border rounded px-3 py-2 bg-transparent" placeholder="Week" type="number"
-                         value={wrinkle.week ?? 1} onChange={e => setWrinkle(v => ({ ...v, week: Number(e.target.value) }))}/>
+                    value={wrinkleWeek} onChange={e => setWrinkleWeek(Number(e.target.value))} />
                 </div>
                 <textarea className="border rounded px-3 py-2 w-full mt-2 bg-transparent" placeholder="Description (optional)"
-                          value={wrinkle.description || ''} onChange={e => setWrinkle(v => ({ ...v, description: e.target.value }))}/>
+                  value={wrinkleDesc} onChange={e => setWrinkleDesc(e.target.value)} />
                 <div className="mt-2">
-                  <Button disabled={!leagueId || !wrinkle.name || busy==='wrinkle'} onClick={createWrinkle}>
+                  <Button disabled={!leagueId || !wrinkleName || busy==='wrinkle'} onClick={createWrinkle}>
                     {busy==='wrinkle' ? 'Creating…' : 'Create wrinkle'}
                   </Button>
                 </div>
+              </Card>
+
+              {/* Existing Wrinkles (by week, most recent first) */}
+              <Card title={`Existing Wrinkles — ${currentLeague?.season ?? ''}`}>
+                <div className="mb-2">
+                  <Button onClick={refreshExisting}>Refresh</Button>
+                </div>
+                {existing.length === 0 ? (
+                  <div className="text-sm text-neutral-500">None yet for this season.</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="text-left text-neutral-500">
+                        <tr>
+                          <th className="py-2 pr-4">Week</th>
+                          <th className="py-2 pr-4">Kind</th>
+                          <th className="py-2 pr-4">Name</th>
+                          <th className="py-2 pr-4">Extra</th>
+                          <th className="py-2 pr-4">Status</th>
+                          <th className="py-2 pr-4">Created</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {existing.map(w => (
+                          <tr key={w.id} className="border-t border-neutral-200 dark:border-neutral-800">
+                            <td className="py-2 pr-4">Week {w.week}</td>
+                            <td className="py-2 pr-4">{w.kind}</td>
+                            <td className="py-2 pr-4">{w.name}</td>
+                            <td className="py-2 pr-4">{w.extra_picks || 0}</td>
+                            <td className="py-2 pr-4">{w.status}</td>
+                            <td className="py-2 pr-4">{w.created_at ? new Date(w.created_at).toLocaleString() : '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </Card>
 
               {/* Create a League */}
               <Card title="Create a League">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   <input className="border rounded px-3 py-2 bg-transparent" placeholder="League name"
-                         value={newLeague.name} onChange={e => setNewLeague(v => ({ ...v, name: e.target.value }))}/>
+                    value={newLeague.name} onChange={e => setNewLeague(v => ({ ...v, name: e.target.value }))}/>
                   <input className="border rounded px-3 py-2 bg-transparent" placeholder="Season" type="number"
-                         value={newLeague.season} onChange={e => setNewLeague(v => ({ ...v, season: Number(e.target.value) }))}/>
-                  <Button disabled={!newLeague.name || busy==='league'} onClick={createLeague}>
+                    value={newLeague.season} onChange={e => setNewLeague(v => ({ ...v, season: Number(e.target.value) }))}/>
+                  <Button disabled={!newLeague.name || busy==='league'} onClick={_createLeague}>
                     {busy==='league' ? 'Creating…' : 'Create'}
                   </Button>
                 </div>
@@ -391,7 +486,7 @@ export default function AdminPage() {
 
             {/* Right rail (League) */}
             <aside className="lg:col-span-4 grid gap-6">
-              {/* Pill Colors (League-specific override) */}
+              {/* Pill Colors (League override) */}
               <Card title="Pill Colors (League override)">
                 <div className="grid grid-cols-2 gap-3 items-center">
                   <label className="text-sm">Light</label>
@@ -410,7 +505,7 @@ export default function AdminPage() {
               <Card title="Player Name / Profile Editor (League)">
                 <div className="flex gap-2">
                   <input className="border rounded px-3 py-2 w-full bg-transparent" placeholder="Search email or id"
-                         value={profileQuery} onChange={e => setProfileQuery(e.target.value)}/>
+                    value={profileQuery} onChange={e => setProfileQuery(e.target.value)}/>
                   <Button disabled={!profileQuery || busy==='lookup'} onClick={lookupProfile}>
                     {busy==='lookup' ? 'Searching…' : 'Lookup'}
                   </Button>
@@ -419,7 +514,7 @@ export default function AdminPage() {
                   <div className="mt-3 grid gap-2">
                     <div className="text-xs text-neutral-500">Profile: {profile.id} {profile.email ? `· ${profile.email}` : ''}</div>
                     <input className="border rounded px-3 py-2 bg-transparent" placeholder="Display name"
-                           value={profileName} onChange={e => setProfileName(e.target.value)}/>
+                      value={profileName} onChange={e => setProfileName(e.target.value)}/>
                     <Button disabled={!profileName || busy==='pname'} onClick={saveProfileName}>
                       {busy==='pname' ? 'Saving…' : 'Save name'}
                     </Button>
@@ -446,7 +541,7 @@ export default function AdminPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <input type="number" className="border rounded px-3 py-2 bg-transparent" placeholder="Week"
-                           value={pickWeek} onChange={e => setPickWeek(Number(e.target.value))}/>
+                      value={pickWeek} onChange={e => setPickWeek(Number(e.target.value))}/>
                     <Button disabled={!leagueId || !pickMember || !pickTeam || busy==='mpick'} onClick={setManualPick}>
                       {busy==='mpick' ? 'Saving…' : 'Save pick'}
                     </Button>

@@ -12,6 +12,59 @@ function json(data: any, status = 200) {
   })
 }
 
+function parseMaybeJson(input: any) {
+  if (!input) return {}
+  if (typeof input === 'object') return input
+  if (typeof input === 'string') {
+    try { return JSON.parse(input) } catch { return {} }
+  }
+  return {}
+}
+
+/** GET: List wrinkles for a league (optionally filter by season). */
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url)
+    const leagueId = searchParams.get('leagueId') || ''
+    const season = searchParams.get('season')
+
+    if (!leagueId) return json({ error: 'leagueId required' }, 400)
+
+    const sb = createAdminClient()
+
+    // base query
+    let q = sb
+      .from('wrinkles')
+      .select('id, league_id, season, week, name, status, kind, extra_picks, config, created_at')
+      .eq('league_id', leagueId)
+      .order('week', { ascending: false })
+      .order('created_at', { ascending: false })
+
+    if (season) q = q.eq('season', Number(season))
+
+    const { data, error } = await q
+    if (error) return json({ error: error.message }, 400)
+
+    const rows = (data ?? []).map((w: any) => ({
+      id: w.id,
+      league_id: w.league_id,
+      season: w.season,
+      week: w.week,
+      name: w.name,
+      status: w.status,
+      kind: w.kind,
+      extra_picks: w.extra_picks || 0,
+      params: parseMaybeJson(w.config),
+      created_at: w.created_at,
+    }))
+
+    return json({ wrinkles: rows })
+  } catch (e: any) {
+    return json({ error: e?.message ?? 'server error' }, 500)
+  }
+}
+
+/** POST: Create a wrinkle for a league/week/season. */
 export async function POST(req: NextRequest) {
   try {
     let body: any = null
@@ -27,10 +80,12 @@ export async function POST(req: NextRequest) {
       week,
       name,
       status = 'active',
-      kind,            // e.g. 'winless_double' | 'extra_picks' | 'custom'
-      extraPicks = 0,  // integer
-      params = {},     // JSONB, e.g. { multiplier: 2, eligibleTeamIds: ['NYJ','CAR'] }
-      // autoHydrate,  // ignored here; hydrate is a separate call
+      kind,                // 'bonus_game' | 'winless_double' | 'bonus_picks_only' | etc.
+      extraPicks = 0,
+      description,         // optional text; we store inside config
+      // Future: multiplier, eligibleTeamIds, game binding, etc.
+      // multiplier,
+      // eligibleTeamIds,
     } = body ?? {}
 
     if (!leagueId || !season || !week || !name || !kind) {
@@ -38,6 +93,9 @@ export async function POST(req: NextRequest) {
     }
 
     const sb = createAdminClient()
+
+    // Persist description inside config for quick retrieval on the client
+    const config = description ? JSON.stringify({ description }) : JSON.stringify({})
 
     const insertRow = {
       league_id: leagueId,
@@ -47,7 +105,7 @@ export async function POST(req: NextRequest) {
       status,
       kind,
       extra_picks: extraPicks,
-      params, // <-- now persisted
+      config,
     }
 
     const { data, error } = await sb
