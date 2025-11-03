@@ -96,7 +96,7 @@ function Segmented({
 // ─── Helpers ─────────────────────────────────────────────────────────────────────
 async function get<T = any>(url: string): Promise<T> {
   const res = await fetch(url, { cache: 'no-store' })
-  if (!res.ok) throw new Error()
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json()
 }
 
@@ -118,7 +118,7 @@ async function post<T = any>(url: string, body: any): Promise<T> {
   if (!res.ok) {
     const msg =
       (data && (data.error || data.message)) ||
-      
+      `${res.status} ${res.statusText}`
     throw new Error(msg)
   }
 
@@ -140,8 +140,8 @@ function gameLabel(g: GameLite, teamIndex: Record<string, { abbreviation?: strin
     (g.away_team ? teamIndex[g.away_team]?.abbreviation : undefined) ??
     'AWAY'
 
-  const when = g.game_utc ?  : ''
-  return 
+  const when = g.game_utc ? ` · ${new Date(g.game_utc).toLocaleString()}` : ''
+  return `${homeAbbr} @ ${awayAbbr}${when}`
 }
 
 // ─── Main Admin Page ─────────────────────────────────────────────────────────────
@@ -175,7 +175,7 @@ export default function AdminPage() {
         setLeagues(ls)
         if (!leagueId && ls[0]) setLeagueId(ls[0].id)
       } catch (e: any) {
-        flash()
+        flash(`Leagues failed: ${e.message || e}`)
       }
       try {
         const tm = await get<any>('/api/team-map')
@@ -192,7 +192,7 @@ export default function AdminPage() {
   async function refreshWrinkles() {
     if (!leagueId || !seasonFilter) return
     try {
-      const j = await get<any>()
+      const j = await get<any>(`/api/admin/wrinkles/list?leagueId=${leagueId}&season=${seasonFilter}`)
       setSeasonWrinkles(Array.isArray(j?.wrinkles) ? j.wrinkles : [])
     } catch {
       setSeasonWrinkles([])
@@ -204,7 +204,7 @@ export default function AdminPage() {
 
   async function loadGamesForWrinkle(w: WrinkleAdmin) {
     try {
-      const j = await get<any>()
+      const j = await get<any>(`/api/games-for-week?season=${w.season}&week=${w.week}`)
       const rows: GameLite[] = (j?.games || []).map((x: any) => ({
         id: x.id,
         season: x.season,
@@ -264,15 +264,9 @@ export default function AdminPage() {
           ]}
         />
         <div className="ml-auto flex items-center gap-3">
-          <Link className="underline text-sm" href="/">
-            Home
-          </Link>
-          <Link className="underline text-sm" href="/picks">
-            Picks
-          </Link>
-          <Link className="underline text-sm" href="/standings">
-            Standings
-          </Link>
+          <Link className="underline text-sm" href="/">Home</Link>
+          <Link className="underline text-sm" href="/picks">Picks</Link>
+          <Link className="underline text-sm" href="/standings">Standings</Link>
         </div>
       </header>
 
@@ -304,12 +298,10 @@ export default function AdminPage() {
           })}
         </select>
 
-        <Button className="ml-2" onClick={refreshWrinkles}>
-          Refresh
-        </Button>
+        <Button className="ml-2" onClick={refreshWrinkles}>Refresh</Button>
       </div>
 
-      <Card title={}>
+      <Card title={`Existing Wrinkles — ${seasonFilter}`}>
         {seasonWrinkles.length === 0 ? (
           <div className="text-sm text-neutral-500">None for this season.</div>
         ) : (
@@ -327,10 +319,7 @@ export default function AdminPage() {
               </thead>
               <tbody>
                 {seasonWrinkles.map((w) => (
-                  <tr
-                    key={w.id}
-                    className="border-t border-neutral-200 dark:border-neutral-800 align-top"
-                  >
+                  <tr key={w.id} className="border-t border-neutral-200 dark:border-neutral-800 align-top">
                     <td className="py-3 pr-4 whitespace-nowrap">Week {w.week}</td>
                     <td className="py-3 pr-4 whitespace-nowrap">{w.kind}</td>
                     <td className="py-3 pr-4">{w.name}</td>
@@ -342,12 +331,7 @@ export default function AdminPage() {
                         <select
                           className="border rounded px-2 py-2 bg-transparent min-w-[260px] max-w-full flex-1"
                           value={selectedGameId[w.id] || ''}
-                          onChange={(e) =>
-                            setSelectedGameId((m) => ({
-                              ...m,
-                              [w.id]: e.target.value,
-                            }))
-                          }
+                          onChange={(e) => setSelectedGameId((m) => ({ ...m, [w.id]: e.target.value }))}
                         >
                           {(gamesByWrinkle[w.id] || []).map((g) => (
                             <option key={g.id} value={g.id}>
@@ -355,10 +339,7 @@ export default function AdminPage() {
                             </option>
                           ))}
                         </select>
-                        <Button
-                          disabled={!selectedGameId[w.id] || savingFor === w.id}
-                          onClick={() => saveGameForWrinkle(w)}
-                        >
+                        <Button disabled={!selectedGameId[w.id] || savingFor === w.id} onClick={() => saveGameForWrinkle(w)}>
                           {savingFor === w.id ? 'Saving…' : 'Save'}
                         </Button>
                       </div>
