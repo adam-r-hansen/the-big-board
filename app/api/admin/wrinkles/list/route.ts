@@ -1,4 +1,4 @@
-// app/api/games-for-week/route.ts
+// app/api/admin/wrinkles/list/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase'
 
@@ -15,18 +15,19 @@ function j(data: any, init?: number | ResponseInit) {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
+  const leagueId = searchParams.get('leagueId') || ''
   const season = Number(searchParams.get('season') || '0')
-  const week = Number(searchParams.get('week') || '0')
-  if (!season || !week) return j({ error: 'season and week required' }, 400)
+  if (!leagueId || !season) return j({ error: 'leagueId and season required' }, 400)
 
   const sb = createAdminClient()
   const { data, error } = await sb
-    .from('games')
-    .select('id, season, week, game_utc, status, home_team, away_team')
+    .from('wrinkles')
+    .select('id, league_id, season, week, name, status, extra_picks, kind')
+    .eq('league_id', leagueId)
     .eq('season', season)
-    .eq('week', week)
-    .order('game_utc', { ascending: true })
+    .order('week', { ascending: true })
+    .order('id', { ascending: true })
 
   if (error) return j({ error: error.message }, 400)
-  return j({ games: data ?? [] }, 200)
+  return j({ wrinkles: data ?? [] }, 200)
 }
