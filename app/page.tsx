@@ -7,7 +7,7 @@ import Link from "next/link";
 import GameCard, { type GameCardGame } from "@/components/ui/GameCard";
 import AdminNavLink from "@/components/AdminNavLink";
 import type { TeamShape } from "@/components/ui/TeamPill";
-import PickPill from "@/components/ui/PickPill";
+import TeamCard from "@/components/TeamCard";
 import { createClient as createSupabaseClient } from "@/utils/supabase/client";
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -216,6 +216,23 @@ function normalizeStandings(raw: any): Array<{ profile_id?: string; display_name
   }));
 }
 
+function getTeam(teamId: string, teamMap: TeamMap) {
+  const team = teamMap[teamId] || teamMap[teamId?.toUpperCase()];
+  if (!team) return null;
+  
+  return {
+    id: team.id || '',
+    name: (team as any)?.name || '',
+    short_name: (team as any)?.short_name || (team as any)?.name || '',
+    abbreviation: (team as any)?.abbreviation || '',
+    logo: (team as any)?.logo || '',
+    color_primary: (team as any)?.color_primary || '#6b7280',
+    color_secondary: (team as any)?.color_secondary,
+    color_pref_light: (team as any)?.color_pref_light,
+    color_pref_dark: (team as any)?.color_pref_dark,
+  };
+}
+
 function HomeInner() {
   const [season, setSeason] = useState<number>(new Date().getFullYear());
   const [week, setWeek] = useState<number>(tuesdayToMondayWeekIndex(new Date()));
@@ -334,7 +351,7 @@ function HomeInner() {
     (async () => {
       const base = `leagueId=${leagueId}&season=${season}&week=${week}`;
       const raw = await tryJson([
-        `/api/league-picks-week?${base}`,   // preferred
+        `/api/league-picks-week?${base}`,
         `/api/league-locked?${base}`,
         `/api/league-locked-picks?${base}`,
         `/api/locked-picks?${base}`,
@@ -364,12 +381,11 @@ function HomeInner() {
     return m;
   }, [games]);
 
-  // Helper to compute derived points for a member’s picks if API didn’t supply them
+  // Helper to compute derived points for a member's picks if API didn't supply them
   const withDerivedPickPoints = (m: MemberLockedPicks): { picks: Required<MemberLockedPicks>["picks"]; total: number } => {
     let total = 0;
     const picks = (m.picks || []).map((pk) => {
       const teamId = pk.team_id;
-      // find the game this team is in (by scanning this week’s games)
       const g = games.find((gg) => gg.home.id === teamId || gg.away.id === teamId);
       const computed = pickPointsForGame(teamId, g);
       const points = typeof pk.points === "number" ? pk.points : computed;
@@ -382,7 +398,7 @@ function HomeInner() {
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
       <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-xl font-bold">NFL Pick’em</h1>
+        <h1 className="text-xl font-bold">NFL Pick'em</h1>
         <div className="flex items-center gap-2">
           <AdminNavLink />
         </div>
@@ -520,16 +536,27 @@ function HomeInner() {
             ) : (
               <ul className="grid gap-2">
                 {myPicks.map((p) => {
+                  const team = getTeam(p.team_id, teamMap);
                   const g = games.find((gg) => gg.home.id === p.team_id || gg.away.id === p.team_id);
                   const s = (g?.status || (gameLocked(g) ? "LIVE" : "UPCOMING")).toUpperCase();
                   const pts = pickPointsForGame(p.team_id, g);
                   return (
-                    <li key={p.id} className="flex items-center justify-between">
-                      <PickPill teamId={p.team_id} teamMap={teamMap} />
-                      <span className="flex items-center gap-2">
+                    <li key={p.id} className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        {team && (
+                          <TeamCard
+                            team={team}
+                            variant="solid"
+                            displayText="abbreviation"
+                            disabled
+                            className="w-full"
+                          />
+                        )}
+                      </div>
+                      <div className="flex flex-col items-end shrink-0">
                         {typeof pts === "number" && <span className="text-[10px] font-bold">{pts} pts</span>}
                         <span className="text-[10px] uppercase tracking-wide text-neutral-500">{s}</span>
-                      </span>
+                      </div>
                     </li>
                   );
                 })}
@@ -537,7 +564,7 @@ function HomeInner() {
             )}
           </Card>
 
-          {/* League picks (locked) — Derived points + no clipping */}
+          {/* League picks (locked) */}
           <Card title="League picks (locked)">
             {!leagueId ? (
               <div className="text-sm text-neutral-500">Select a league to view locked picks.</div>
@@ -547,25 +574,36 @@ function HomeInner() {
               <ul className="grid gap-3">
                 {locked.map((m) => {
                   const { picks, total } = withDerivedPickPoints(m);
-                  const totalToShow = Math.max(total, Number(m.points_week ?? 0)); // <-- prefer derived if larger
+                  const totalToShow = Math.max(total, Number(m.points_week ?? 0));
                   return (
                     <li key={m.profile_id} className="border rounded-xl px-3 py-2">
-                      <div className="flex items-center justify-between text-sm">
+                      <div className="flex items-center justify-between text-sm mb-2">
                         <span className="font-medium">{m.display_name || "Member"}</span>
                         <span className="text-neutral-600">{totalToShow} pts</span>
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-3">
+                      <div className="grid grid-cols-2 gap-2">
                         {picks.length > 0 ? (
-                          picks.map((pk, idx) => (
-                            <span key={`${m.profile_id}-${idx}`} className="inline-flex items-center gap-2">
-                              <PickPill teamId={pk.team_id} teamMap={teamMap} size="xs" />
-                              {typeof pk.points === "number" && (
-                                <span className="text-[10px] font-semibold">{pk.points} pts</span>
-                              )}
-                            </span>
-                          ))
+                          picks.map((pk, idx) => {
+                            const team = getTeam(pk.team_id, teamMap);
+                            return (
+                              <div key={`${m.profile_id}-${idx}`} className="flex flex-col gap-1">
+                                {team && (
+                                  <TeamCard
+                                    team={team}
+                                    variant="solid"
+                                    displayText="abbreviation"
+                                    disabled
+                                    className="w-full"
+                                  />
+                                )}
+                                {typeof pk.points === "number" && (
+                                  <span className="text-[10px] font-semibold text-center">{pk.points} pts</span>
+                                )}
+                              </div>
+                            );
+                          })
                         ) : (
-                          <span className="text-xs text-neutral-500">No locked picks yet.</span>
+                          <span className="text-xs text-neutral-500 col-span-2">No locked picks yet.</span>
                         )}
                       </div>
                     </li>
@@ -612,7 +650,7 @@ export default function HomePage() {
     <Suspense
       fallback={
         <main className="mx-auto max-w-6xl px-4 py-6">
-          <h1 className="text-xl font-bold mb-3">NFL Pick’em</h1>
+          <h1 className="text-xl font-bold mb-3">NFL Pick'em</h1>
           <div className="text-neutral-600">Loading…</div>
         </main>
       }
