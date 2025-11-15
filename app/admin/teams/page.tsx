@@ -287,11 +287,13 @@ export default function AdminTeamsPage() {
                       style={{ backgroundColor: lightColor }}
                     >
                       <div className="flex items-center gap-3">
-                        <img
-                          src={selectedTeam.logo}
-                          alt={selectedTeam.name}
-                          className="w-12 h-12"
-                        />
+                        <div className="w-12 h-12 rounded-full bg-white flex items-center justify-center p-1.5">
+                          <img
+                            src={selectedTeam.logo}
+                            alt={selectedTeam.name}
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
                         <span className="font-semibold text-lg text-white">
                           {selectedTeam.short_name}
                         </span>
@@ -309,11 +311,13 @@ export default function AdminTeamsPage() {
                       style={{ backgroundColor: darkColor }}
                     >
                       <div className="flex items-center gap-3">
-                        <img
-                          src={selectedTeam.logo}
-                          alt={selectedTeam.name}
-                          className="w-12 h-12"
-                        />
+                        <div className="w-12 h-12 rounded-full bg-white flex items-center justify-center p-1.5">
+                          <img
+                            src={selectedTeam.logo}
+                            alt={selectedTeam.name}
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
                         <span className="font-semibold text-lg text-white">
                           {selectedTeam.short_name}
                         </span>
