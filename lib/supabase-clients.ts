@@ -19,15 +19,6 @@ import { createBrowserClient as createSSRBrowserClient } from '@supabase/ssr'
 
 /**
  * Creates a Supabase client for use in browser/client components.
- * 
- * @example
- * 'use client'
- * import { createBrowserSupabaseClient } from '@/lib/supabase-clients'
- * 
- * export default function MyComponent() {
- *   const supabase = createBrowserSupabaseClient()
- *   // Use supabase to query data...
- * }
  */
 export function createBrowserSupabaseClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -46,22 +37,13 @@ export function createBrowserSupabaseClient() {
 // ============================================================================
 // TYPE 2: SERVER CLIENT (with user session from cookies)
 // ============================================================================
-// Use this in SERVER COMPONENTS and SERVER ACTIONS
+// Use this in SERVER COMPONENTS and API ROUTES
 // This client reads the user's session from cookies and respects RLS rules
 // ============================================================================
 
 /**
  * Creates a Supabase client for use in server components with user authentication.
  * Reads the user's session from cookies.
- * 
- * @example
- * import { createServerSupabaseClient } from '@/lib/supabase-clients'
- * 
- * export default async function ServerComponent() {
- *   const supabase = await createServerSupabaseClient()
- *   const { data: { user } } = await supabase.auth.getUser()
- *   // user will be the logged-in user
- * }
  */
 export async function createServerSupabaseClient() {
   // Import cookies dynamically to avoid issues with client components
@@ -83,10 +65,19 @@ export async function createServerSupabaseClient() {
         return cookieStore.get(name)?.value
       },
       set(name: string, value: string, options: CookieOptions) {
-        cookieStore.set({ name, value, ...options })
+        try {
+          cookieStore.set({ name, value, ...options })
+        } catch (error) {
+          // Ignore errors when setting cookies in Server Components
+          // This happens during SSR and is safe to ignore
+        }
       },
       remove(name: string, options: CookieOptions) {
-        cookieStore.set({ name, value: '', ...options })
+        try {
+          cookieStore.set({ name, value: '', ...options })
+        } catch (error) {
+          // Ignore errors when removing cookies in Server Components
+        }
       },
     },
   })
@@ -105,16 +96,6 @@ export async function createServerSupabaseClient() {
  * WARNING: This bypasses ALL Row Level Security rules!
  * ONLY use this in API routes in the app/api folder
  * NEVER use this in client components or expose to browser!
- * 
- * @example
- * // app/api/standings/route.ts
- * import { createAdminSupabaseClient } from '@/lib/supabase-clients'
- * 
- * export async function GET(req: Request) {
- *   const supabase = createAdminSupabaseClient()
- *   // This can access ALL data, regardless of RLS rules
- *   const { data } = await supabase.from('picks').select('*')
- * }
  */
 export function createAdminSupabaseClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -140,9 +121,6 @@ export function createAdminSupabaseClient() {
 
 // ============================================================================
 // CONVENIENCE EXPORTS (backwards compatibility)
-// ============================================================================
-// These are shorter aliases if you prefer less typing
-// But the full names above are clearer about what they do
 // ============================================================================
 
 export const createBrowserClient = createBrowserSupabaseClient
