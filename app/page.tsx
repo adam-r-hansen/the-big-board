@@ -274,7 +274,7 @@ function HomeInner() {
     if (!authReady) return;
     (async () => {
       try {
-        const r = await fetch("/api/leagues", { cache: "no-store" });
+        const r = await fetch("/api/my-leagues", { cache: "no-store" });
         if (r.ok) {
           const data = await r.json();
           const L: League[] = Array.isArray(data?.leagues) ? data.leagues : data?.rows || data || [];
