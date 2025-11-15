@@ -9,7 +9,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { createServerClient as createSSRServerClient, type CookieOptions } from '@supabase/ssr'
 import { createBrowserClient as createSSRBrowserClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
 
 // ============================================================================
 // TYPE 1: BROWSER CLIENT
@@ -65,6 +64,8 @@ export function createBrowserSupabaseClient() {
  * }
  */
 export async function createServerSupabaseClient() {
+  // Import cookies dynamically to avoid issues with client components
+  const { cookies } = await import('next/headers')
   const cookieStore = await cookies()
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
