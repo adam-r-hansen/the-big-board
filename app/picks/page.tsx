@@ -211,10 +211,15 @@ export default function PicksPage() {
     return m
   }, [picks])
 
-  // Get all team IDs that have been used this season
+  // Get team IDs that have been used in PREVIOUS weeks (exclude current week)
   const usedTeamIds = useMemo(() => {
-    return new Set(seasonPicks.map((p) => p.team_id))
-  }, [seasonPicks])
+    const currentWeekTeamIds = new Set(picks.map((p) => p.team_id))
+    return new Set(
+      seasonPicks
+        .filter((p) => !currentWeekTeamIds.has(p.team_id))
+        .map((p) => p.team_id)
+    )
+  }, [seasonPicks, picks])
 
   const isLocked = (utc?: string) => (utc ? new Date(utc) <= new Date() : false)
 
