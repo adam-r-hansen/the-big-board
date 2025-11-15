@@ -1,50 +1,29 @@
 import { NextRequest } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
-import { createAdminClient } from '@/utils/supabase/admin'
+import { createServerSupabaseClient } from '@/lib/supabase-clients'
+import { createAdminSupabaseClient } from '@/lib/supabase-clients'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const revalidate = 0
 
-function json(data: any, init: ResponseInit = {}) {
-  const h = new Headers(init.headers)
-  h.set('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate')
-  h.set('Pragma','no-cache'); h.set('Expires','0'); h.set('Surrogate-Control','no-store')
-  return new Response(JSON.stringify(data, null, 2), { ...init, headers: h, status: init.status ?? 200 })
+function json(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+  })
 }
 
-function emailIsSiteOwner(email?: string | null) {
+function emailIsSiteOwner(email: string | null): boolean {
   if (!email) return false
-  const raw = process.env.SITE_OWNER_EMAILS || ''
-  const set = new Set(raw.toLowerCase().split(',').map(s => s.trim()).filter(Boolean))
-  return set.has(email.toLowerCase())
-}
-
-// Accept "2-3", "2,3", [2,3], 2, "all"
-function parseWeeks(input: unknown): number[] {
-  if (input === 'all') return Array.from({ length: 18 }, (_, i) => i + 1)
-  if (Array.isArray(input)) return input.map(n => Number(n)).filter(n => Number.isFinite(n))
-  if (typeof input === 'number') return [input]
-  if (typeof input === 'string') {
-    const s = input.trim()
-    if (/^\d+\s*-\s*\d+$/.test(s)) {
-      const [a,b] = s.split('-').map(x => Number(x.trim()))
-      if (Number.isFinite(a) && Number.isFinite(b)) {
-        const lo = Math.min(a,b), hi = Math.max(a,b)
-        return Array.from({ length: hi - lo + 1 }, (_,i)=> lo + i)
-      }
-    }
-    return s.split(/[,\s]+/).map(x => Number(x)).filter(n => Number.isFinite(n))
-  }
-  return []
+  const owners = (process.env.SITE_OWNER_EMAILS || '').split(',').map(e => e.trim().toLowerCase())
+  return owners.includes(email.toLowerCase())
 }
 
 type Item = { week: number; kickoff: string; home: string; away: string }
 
-async function fetchScoreboard(season: number, week: number): Promise<Item[]> {
-  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&seasontype=2&week=${week}&limit=200`
+async function fetchSiteWeek(season: number, week: number): Promise<Item[]> {
+  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&seasontype=2&week=${week}`
   const res = await fetch(url, { cache: 'no-store', headers: { 'User-Agent': 'the-big-board/1.0' } })
-  if (!res.ok) throw new Error(`scoreboard ${res.status}`)
+  if (!res.ok) throw new Error(`site ${res.status}`)
   const data: any = await res.json()
   const events: any[] = data?.events ?? []
   const out: Item[] = []
@@ -103,7 +82,7 @@ function normalizeKey(s: string): string {
 }
 
 export async function GET(_req: NextRequest) {
-  const sb = await createClient()
+  const sb = await createServerSupabaseClient()
   const { data: auth } = await sb.auth.getUser()
   const email = auth?.user?.email ?? null
   let isLeagueOwner = false
@@ -117,91 +96,55 @@ export async function GET(_req: NextRequest) {
     whoami: email,
     isSiteOwner: emailIsSiteOwner(email),
     isLeagueOwner,
-    hasServiceRole: !!process.env.SUPABASE_SERVICE_ROLE_KEY
+    hasServiceRole: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
   })
 }
 
 export async function POST(req: NextRequest) {
-  let body: any = null
-  try { body = await req.json() } catch {}
-  const season = Number(body?.season)
-  const weeksRaw = body?.weeks ?? 'all'
-  const weeks = parseWeeks(weeksRaw)
-
-  if (!Number.isFinite(season)) return json({ ok:false, error: 'season required' }, { status: 400 })
-  if (!weeks.length) return json({ ok:false, error: 'weeks invalid', got: weeksRaw }, { status: 400 })
-
-  const sb = await createClient()
+  const sb = await createServerSupabaseClient()
   const { data: auth } = await sb.auth.getUser()
-  const u = auth?.user
-  if (!u) return json({ ok:false, error: 'unauthenticated' }, { status: 401 })
+  const email = auth?.user?.email ?? null
+  if (!emailIsSiteOwner(email)) return json({ error: 'forbidden' }, 403)
 
-  // Allow SITE_OWNER_EMAILS or any league 'owner'
-  const isSiteOwner = emailIsSiteOwner(u.email)
-  let isLeagueOwner = false
-  if (!isSiteOwner) {
-    const { data: rows, error } = await sb
-      .from('league_members').select('role').eq('profile_id', u.id).eq('role','owner').limit(1)
-    if (error) return json({ ok:false, error: 'owner check failed: '+error.message }, { status: 500 })
-    isLeagueOwner = !!(rows && rows.length > 0)
-    if (!isLeagueOwner) return json({ ok:false, error: 'forbidden (owner required)' }, { status: 403 })
-  }
+  const body = await req.json().catch(() => ({ season: 2025, weeks: [1] }))
+  const season = Number(body?.season ?? 2025)
+  const weeks: number[] = Array.isArray(body?.weeks) ? body.weeks : [1]
+  const mode: 'site'|'core' = body?.mode === 'core' ? 'core' : 'site'
 
-  let admin
-  try {
-    admin = createAdminClient()
-  } catch (e: any) {
-    return json({ ok:false, error: 'admin client: '+(e?.message || String(e)), hint: 'Check SUPABASE_SERVICE_ROLE_KEY in Vercel' }, { status: 500 })
-  }
-
-  const { data: teams, error: tErr } = await admin.from('teams').select('id, abbreviation, name')
-  if (tErr) return json({ ok:false, error: 'teams read: '+tErr.message }, { status: 500 })
-  const norm = (s: string) => s.trim().toLowerCase()
-  const index = new Map<string,string>()
+  const adminSb = createAdminSupabaseClient()
+  const { data: teams } = await adminSb.from('teams').select('id, abbreviation')
+  const teamMap = new Map<string, string>()
   for (const t of teams ?? []) {
-    index.set(norm(t.abbreviation), t.id)
-    index.set(norm(t.name), t.id)
-    index.set(norm(normalizeKey(t.abbreviation)), t.id)
+    if (t.abbreviation) teamMap.set(normalizeKey(t.abbreviation), t.id)
   }
-  const findTeamId = (key: string) => index.get(norm(normalizeKey(key))) || index.get(norm(key)) || null
 
-  const allItems: Item[] = []
-  const fetchErrors: Array<{ week: number; error: string }> = []
+  const allGames: any[] = []
   for (const w of weeks) {
     try {
-      let items = await fetchScoreboard(season, w)
-      if (!items.length) items = await fetchCoreWeek(season, w)
-      allItems.push(...items)
+      const items = mode === 'core' ? await fetchCoreWeek(season, w) : await fetchSiteWeek(season, w)
+      for (const it of items) {
+        const hid = teamMap.get(normalizeKey(it.home))
+        const aid = teamMap.get(normalizeKey(it.away))
+        if (!hid || !aid) continue
+        allGames.push({
+          season, week: w, game_utc: it.kickoff,
+          home_team: hid, away_team: aid,
+          home_score: null, away_score: null, status: 'UPCOMING'
+        })
+      }
     } catch (e: any) {
-      fetchErrors.push({ week: Number(w), error: e?.message || 'fetch failed' })
+      return json({ error: e.message }, 500)
     }
   }
 
-  const rows: Array<{season:number;week:number;home_team:string;away_team:string;game_utc:string;status:string}> = []
-  const unknown: Item[] = []
-  for (const it of allItems) {
-    const homeId = findTeamId(it.home)
-    const awayId = findTeamId(it.away)
-    if (!homeId || !awayId) { unknown.push(it); continue }
-    rows.push({
-      season, week: it.week,
-      home_team: homeId, away_team: awayId,
-      game_utc: it.kickoff, status: 'UPCOMING'
-    })
-  }
+  if (!allGames.length) return json({ ok: true, imported: 0 })
 
-  let upsertError: string | null = null
-  if (rows.length) {
-    const { error } = await admin
-      .from('games')
-      .upsert(rows, { onConflict: 'season,week,home_team,away_team', ignoreDuplicates: false })
-    if (error) upsertError = error.message
-  }
+  const { data, error } = await adminSb
+    .from('games')
+    .upsert(allGames, { onConflict: 'season,week,home_team,away_team' })
+    .select()
 
-  return json({
-    ok: !upsertError,
-    season, weeks,
-    counts: { fetched: allItems.length, touched: rows.length, unknownTeams: unknown.length },
-    fetchErrors, unknown, upsertError
-  }, { status: upsertError ? 500 : 200 })
+  if (error) return json({ error: error.message }, 500)
+
+  return json({ ok: true, imported: data?.length ?? 0, games: data })
 }

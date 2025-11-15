@@ -1,42 +1,34 @@
-import { NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { createServerSupabaseClient } from '@/lib/supabase-clients'
 
-export async function GET(req: Request) {
-  const supabase = await createClient()
-  const { searchParams } = new URL(req.url)
-  const query = (searchParams.get('query') || '').trim()
+export const dynamic = 'force-dynamic'
 
-  if (!query) return NextResponse.json({ error: 'query required' }, { status: 400 })
+export async function GET(req: NextRequest) {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
 
-  let sel = supabase.from('profiles').select('id, email, display_name')
-
-  if (query.includes('@')) {
-    sel = sel.ilike('email', query) // exact or case-insensitive
-  } else if (query.length === 36 && query.includes('-')) {
-    sel = sel.eq('id', query)
-  } else {
-    sel = sel.ilike('display_name', `%${query}%`)
+  if (!user) {
+    return NextResponse.json(
+      { error: 'unauthenticated' },
+      { status: 401, headers: { 'cache-control': 'no-store' } }
+    )
   }
 
-  const { data, error } = await sel.limit(1)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-  return NextResponse.json({ profile: (data && data[0]) || null })
-}
-
-export async function POST(req: Request) {
-  const supabase = await createClient()
-  const body = await req.json().catch(() => ({}))
-  const { profileId, display_name } = body
-
-  if (!profileId) return NextResponse.json({ error: 'profileId required' }, { status: 400 })
-
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('profiles')
-    .update({ display_name })
-    .eq('id', profileId)
+    .select('*')
+    .eq('id', user.id)
+    .maybeSingle()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    return NextResponse.json(
+      { error: error.message },
+      { status: 500, headers: { 'cache-control': 'no-store' } }
+    )
+  }
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json(
+    { profile: data },
+    { headers: { 'cache-control': 'no-store' } }
+  )
 }

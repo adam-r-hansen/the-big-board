@@ -1,39 +1,24 @@
-import { NextRequest } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { createServerSupabaseClient } from '@/lib/supabase-clients'
 
-export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const revalidate = 0
 
-function json(data: any, init: ResponseInit = {}) {
-  const h = new Headers(init.headers)
-  h.set('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate')
-  h.set('Pragma','no-cache'); h.set('Expires','0'); h.set('Surrogate-Control','no-store')
-  return new Response(JSON.stringify(data), { ...init, headers: h, status: init.status ?? 200 })
-}
+export async function GET(req: NextRequest) {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
 
-function emailIsSiteOwner(email?: string | null) {
-  if (!email) return false
-  const raw = process.env.SITE_OWNER_EMAILS || ''
-  const set = new Set(raw.toLowerCase().split(',').map(s => s.trim()).filter(Boolean))
-  return set.has(email.toLowerCase())
-}
+  if (!user) {
+    return NextResponse.json(
+      { isSiteOwner: false },
+      { headers: { 'cache-control': 'no-store' } }
+    )
+  }
 
-export async function GET(_req: NextRequest) {
-  const sb = await createClient()
-  const { data: auth } = await sb.auth.getUser()
-  const u = auth?.user
-  if (!u) return json({ ok: true, isOwner: false })
+  const siteOwnerEmails = (process.env.SITE_OWNER_EMAILS || '').split(',').map(e => e.trim())
+  const isSiteOwner = siteOwnerEmails.includes(user.email || '')
 
-  if (emailIsSiteOwner(u.email)) return json({ ok: true, isOwner: true, via: 'env' })
-
-  const { data, error } = await sb
-    .from('league_members')
-    .select('role')
-    .eq('profile_id', u.id)
-    .eq('role', 'owner')
-    .limit(1)
-
-  if (error) return json({ ok: false, error: error.message }, { status: 500 })
-  return json({ ok: true, isOwner: (data?.length ?? 0) > 0, via: 'db' })
+  return NextResponse.json(
+    { isSiteOwner },
+    { headers: { 'cache-control': 'no-store' } }
+  )
 }

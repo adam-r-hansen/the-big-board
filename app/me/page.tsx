@@ -1,17 +1,33 @@
 'use client'
+
+import { createBrowserSupabaseClient } from '@/lib/supabase-clients'
 import { useEffect, useState } from 'react'
-import { createClient } from '@/utils/supabase/client'
 
 export default function MePage() {
-  const [email, setEmail] = useState<string | null>(null)
+  const [user, setUser] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const sb = createClient()
-    sb.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null))
+    const fetchUser = async () => {
+      const supabase = createBrowserSupabaseClient()
+      const { data } = await supabase.auth.getUser()
+      setUser(data.user)
+      setLoading(false)
+    }
+    fetchUser()
   }, [])
 
-  return <main style={{padding:16}}>
-    <h1>Me</h1>
-    <p>{email ? `Signed in as ${email}` : 'Not signed in'}</p>
-  </main>
+  if (loading) return <div>Loading...</div>
+
+  if (!user) return <div>Not logged in</div>
+
+  return (
+    <div className="p-8">
+      <h1 className="text-2xl font-bold mb-4">My Profile</h1>
+      <div className="space-y-2">
+        <p><strong>Email:</strong> {user.email}</p>
+        <p><strong>ID:</strong> {user.id}</p>
+      </div>
+    </div>
+  )
 }

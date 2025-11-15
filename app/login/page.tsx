@@ -1,42 +1,77 @@
 'use client'
+
+import { createBrowserSupabaseClient } from '@/lib/supabase-clients'
+import { useRouter } from 'next/navigation'
 import { useState } from 'react'
-import { createClient } from '@/utils/supabase/client'
 
 export default function LoginPage() {
+  const router = useRouter()
   const [email, setEmail] = useState('')
-  const [sent, setSent] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [password, setPassword] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  async function sendMagicLink(e: React.FormEvent) {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    setErr(null)
-    const supabase = createClient()
-    const { error } = await supabase.auth.signInWithOtp({
+    setLoading(true)
+    setError('')
+
+    const supabase = createBrowserSupabaseClient()
+
+    const { error } = await supabase.auth.signInWithPassword({
       email,
-      options: {
-      emailRedirectTo: `${location.origin}/auth/callback?next=/`,
-      },
+      password,
     })
-    if (error) setErr(error.message)
-    else setSent(true)
+
+    if (error) {
+      setError(error.message)
+      setLoading(false)
+    } else {
+      router.push('/')
+    }
   }
 
   return (
-    <main style={{maxWidth:420, margin:'48px auto', display:'grid', gap:12}}>
-      <h1 style={{fontWeight:700}}>Login</h1>
-      <form onSubmit={sendMagicLink} style={{display:'grid', gap:8}}>
-        <input
-          type="email"
-          value={email}
-          onChange={e=>setEmail(e.target.value)}
-          placeholder="you@example.com"
-          required
-          style={{border:'1px solid #ccc', padding:'.5rem'}}
-        />
-        <button type="submit" style={{border:'1px solid #ccc', padding:'.5rem'}}>Send Magic Link</button>
-      </form>
-      {sent && <p>Check your email for the login link.</p>}
-      {err && <p style={{color:'crimson'}}>{err}</p>}
-    </main>
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="w-full max-w-md space-y-4 p-8">
+        <h1 className="text-2xl font-bold">Login</h1>
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+            <label htmlFor="email" className="block text-sm font-medium">
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
+            />
+          </div>
+          <div>
+            <label htmlFor="password" className="block text-sm font-medium">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {loading ? 'Logging in...' : 'Login'}
+          </button>
+        </form>
+        {error && <p className="text-sm text-red-600">{error}</p>}
+      </div>
+    </div>
   )
 }

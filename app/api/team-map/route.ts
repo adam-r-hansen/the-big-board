@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createAdminSupabaseClient } from '@/lib/supabase-clients'
 
 type TeamRow = {
   id: string
@@ -32,9 +32,7 @@ function absoluteLogo(urlOrPath: string | null): string | null {
 }
 
 export async function GET() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
-  const key = process.env.SUPABASE_SERVICE_ROLE ?? process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
-  const sb = createClient(url, key, { auth: { persistSession: false } })
+  const sb = createAdminSupabaseClient()
 
   const { data, error } = await sb
     .from('teams')
@@ -55,4 +53,3 @@ export async function GET() {
 
   return NextResponse.json({ teams: map })
 }
-

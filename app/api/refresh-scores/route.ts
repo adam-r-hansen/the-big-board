@@ -1,39 +1,35 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseServer } from '@/lib/supabase'
-import { fetchWeekSchedule } from '@/lib/espn'
+import { NextRequest } from 'next/server'
+import { createAdminSupabaseClient } from '@/lib/supabase-clients'
 
-export async function POST(req: NextRequest) {
-  const season = Number(new URL(req.url).searchParams.get('season'))
-  const week = Number(new URL(req.url).searchParams.get('week'))
-  if (!season || !week) {
-    return NextResponse.json({ error: 'season & week required' }, { status: 400 })
-  }
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-  const sb = supabaseServer()
-  const events = await fetchWeekSchedule(season, week)
-
-  let updates = 0
-  for (const ev of events) {
-    const comp = ev.competitions?.[0]
-    if (!comp) continue
-
-    const id = Number(ev.id)
-    const h = comp.competitors.find((c: any) => c.homeAway === 'home')
-    const a = comp.competitors.find((c: any) => c.homeAway === 'away')
-
-    const { error } = await sb
-      .from('games')
-      .update({
-        home_score: h.score ? Number(h.score) : null,
-        away_score: a.score ? Number(a.score) : null,
-        status:
-          (comp.status?.type?.name || comp.status?.type?.state || 'scheduled').toLowerCase(),
-      })
-      .eq('espn_id', id)
-
-    if (!error) updates++
-  }
-
-  return NextResponse.json({ updated: updates })
+function json(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+  })
 }
 
+export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => ({}))
+  const { season, week } = body
+
+  if (!season || !week) {
+    return json({ error: 'season and week required' }, 400)
+  }
+
+  const sb = createAdminSupabaseClient()
+
+  const { data: games, error: gErr } = await sb
+    .from('games')
+    .select('*')
+    .eq('season', season)
+    .eq('week', week)
+
+  if (gErr) {
+    return json({ error: gErr.message }, 500)
+  }
+
+  return json({ ok: true, games: games ?? [] })
+}

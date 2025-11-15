@@ -1,47 +1,48 @@
-// app/api/admin/invite/route.ts
-import { NextResponse } from 'next/server'
-import { createServerClient } from '@/utils/supabase/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { createServerSupabaseClient } from '@/lib/supabase-clients'
 
-export async function POST(req: Request) {
-  try {
-    const { email, leagueId } = (await req.json()) as {
-      email?: string
-      leagueId?: string
-    }
+export const dynamic = 'force-dynamic'
 
-    if (!email || !leagueId) {
-      return NextResponse.json(
-        { error: 'email and leagueId are required' },
-        { status: 400 }
-      )
-    }
+export async function POST(req: NextRequest) {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
 
-    // Where the magic link should land after auth:
-    const site =
-      process.env.NEXT_PUBLIC_SITE_URL ||
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://www.the-big-board.fun')
-
-    const redirectTo = `${site}/?leagueId=${encodeURIComponent(leagueId)}`
-
-    // IMPORTANT: await the server client (your util returns a Promise)
-    const supabase = await createServerClient()
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: redirectTo,
-      },
-    })
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    return NextResponse.json({ ok: true })
-  } catch (e: any) {
+  if (!user) {
     return NextResponse.json(
-      { error: e?.message || 'Unexpected error' },
-      { status: 500 }
+      { error: 'unauthenticated' },
+      { status: 401, headers: { 'cache-control': 'no-store' } }
     )
   }
+
+  const body = await req.json().catch(() => ({}))
+  const { leagueId, email, role = 'member' } = body
+
+  if (!leagueId || !email) {
+    return NextResponse.json(
+      { error: 'leagueId and email required' },
+      { status: 400, headers: { 'cache-control': 'no-store' } }
+    )
+  }
+
+  const { data, error } = await supabase
+    .from('league_invites')
+    .insert({
+      league_id: leagueId,
+      email,
+      role,
+    })
+    .select()
+    .single()
+
+  if (error) {
+    return NextResponse.json(
+      { error: error.message },
+      { status: 500, headers: { 'cache-control': 'no-store' } }
+    )
+  }
+
+  return NextResponse.json(
+    { ok: true, invite: data },
+    { headers: { 'cache-control': 'no-store' } }
+  )
 }

@@ -1,9 +1,9 @@
 // components/SiteHeader.tsx
 import Link from 'next/link'
-import { createClient } from '@/utils/supabase/server'
+import { createServerSupabaseClient } from '@/lib/supabase-clients'
 
 export default async function SiteHeader() {
-  const supabase = await createClient()
+  const supabase = await createServerSupabaseClient()
   const { data } = await supabase.auth.getUser()
   const user = data?.user ?? null
 

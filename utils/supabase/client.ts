@@ -1,11 +1,3 @@
 // utils/supabase/client.ts
-import { createBrowserClient } from "@supabase/ssr";
-
-export function createClient() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
-}
-
-export default createClient;
+// Legacy compatibility - redirects to new unified clients
+export { createBrowserSupabaseClient as createClient } from '@/lib/supabase-clients'

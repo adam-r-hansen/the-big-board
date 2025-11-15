@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { createServerSupabaseClient } from '@/lib/supabase-clients'
 
 export const runtime = 'nodejs'
 export const revalidate = 0
@@ -15,12 +15,11 @@ function jsonNoStore(data: any, init: ResponseInit = {}) {
 export async function POST(req: NextRequest) {
   const { leagueId, email, role } = await req.json().catch(()=> ({} as any))
   if (!leagueId || !email || !role) return jsonNoStore({ error: 'leagueId, email, role required' }, { status: 400 })
-  const sb = await createClient()
+  const sb = await createServerSupabaseClient()
   const { data: auth } = await sb.auth.getUser()
   const u = auth?.user
   if (!u) return jsonNoStore({ error: 'unauthenticated' }, { status: 401 })
 
-  // ensure caller admin of the league
   const { data: me, error: meErr } = await sb.from('league_members')
     .select('role').eq('league_id', leagueId).eq('profile_id', u.id).maybeSingle()
   if (meErr) return jsonNoStore({ error: meErr.message }, { status: 500 })
@@ -31,6 +30,5 @@ export async function POST(req: NextRequest) {
     .select('id, token, expires_at').maybeSingle()
   if (error) return jsonNoStore({ error: error.message }, { status: 500 })
 
-  // For MVP we just return token; later, send an email.
   return jsonNoStore({ ok: true, invite: data })
 }

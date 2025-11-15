@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { createServerSupabaseClient } from '@/lib/supabase-clients'
 
 export const runtime = 'nodejs'
 export const revalidate = 0
@@ -14,7 +14,7 @@ function jsonNoStore(data: any, init: ResponseInit = {}) {
 
 // GET: leagues where I'm admin or owner
 export async function GET(_req: NextRequest) {
-  const sb = await createClient()
+  const sb = await createServerSupabaseClient()
   const { data: auth } = await sb.auth.getUser()
   const u = auth?.user
   if (!u) return jsonNoStore({ error: 'unauthenticated' }, { status: 401 })
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     return jsonNoStore({ error: 'name and season required' }, { status: 400 })
   }
 
-  const sb = await createClient()
+  const sb = await createServerSupabaseClient()
   const { data: auth } = await sb.auth.getUser()
   const u = auth?.user
   if (!u) return jsonNoStore({ error: 'unauthenticated' }, { status: 401 })

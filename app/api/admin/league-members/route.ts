@@ -1,25 +1,43 @@
-import { NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { createServerSupabaseClient } from '@/lib/supabase-clients'
 
-export async function GET(req: Request) {
-  const supabase = await createClient()
-  const { searchParams } = new URL(req.url)
-  const leagueId = searchParams.get('leagueId') || ''
+export const dynamic = 'force-dynamic'
 
-  if (!leagueId) return NextResponse.json({ error: 'leagueId required' }, { status: 400 })
+export async function GET(req: NextRequest) {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    return NextResponse.json(
+      { error: 'unauthenticated' },
+      { status: 401, headers: { 'cache-control': 'no-store' } }
+    )
+  }
+
+  const url = new URL(req.url)
+  const leagueId = url.searchParams.get('leagueId')
+
+  if (!leagueId) {
+    return NextResponse.json(
+      { error: 'leagueId required' },
+      { status: 400, headers: { 'cache-control': 'no-store' } }
+    )
+  }
 
   const { data, error } = await supabase
-    .from('league_memberships')
-    .select('profile_id, profiles:profiles(id, email, display_name)')
+    .from('league_members')
+    .select('*, profiles(*)')
     .eq('league_id', leagueId)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    return NextResponse.json(
+      { error: error.message },
+      { status: 500, headers: { 'cache-control': 'no-store' } }
+    )
+  }
 
-  const members = ((data as any[]) ?? []).map(r => ({
-    id: r?.profiles?.id ?? r?.profile_id,
-    email: r?.profiles?.email ?? null,
-    display_name: r?.profiles?.display_name ?? null,
-  }))
-
-  return NextResponse.json({ members })
+  return NextResponse.json(
+    { members: data ?? [] },
+    { headers: { 'cache-control': 'no-store' } }
+  )
 }

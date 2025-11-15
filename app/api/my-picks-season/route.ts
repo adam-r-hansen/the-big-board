@@ -1,38 +1,47 @@
-// app/api/my-picks-season/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { createServerSupabaseClient } from '@/lib/supabase-clients'
 
-export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const revalidate = 0
-
-function j(data: any, init?: number | ResponseInit) {
-  const base: ResponseInit = typeof init === 'number' ? { status: init } : init || {}
-  const headers = new Headers(base.headers)
-  headers.set('Cache-Control', 'no-store')
-  return NextResponse.json(data, { ...base, headers })
-}
 
 export async function GET(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: auth, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !auth?.user) return j({ error: 'unauthenticated' }, 401)
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
 
-  const { searchParams } = new URL(req.url)
-  const leagueId = searchParams.get('leagueId') || ''
-  const season = Number(searchParams.get('season') || '0')
+  if (!user) {
+    return NextResponse.json(
+      { error: 'unauthenticated' },
+      { status: 401, headers: { 'cache-control': 'no-store' } }
+    )
+  }
 
-  if (!leagueId || !season) return j({ error: 'leagueId, season required' }, 400)
+  const url = new URL(req.url)
+  const leagueId = url.searchParams.get('leagueId')
+  const season = url.searchParams.get('season')
+
+  if (!leagueId || !season) {
+    return NextResponse.json(
+      { error: 'leagueId and season required' },
+      { status: 400, headers: { 'cache-control': 'no-store' } }
+    )
+  }
 
   const { data, error } = await supabase
     .from('picks')
-    .select('id, team_id, game_id, season, week')
-    .eq('profile_id', auth.user.id)
+    .select('*')
+    .eq('profile_id', user.id)
     .eq('league_id', leagueId)
-    .eq('season', season)
+    .eq('season', parseInt(season))
     .order('week', { ascending: true })
-    .order('id', { ascending: true })
 
-  if (error) return j({ error: error.message }, 400)
-  return j({ picks: data ?? [] }, 200)
+  if (error) {
+    return NextResponse.json(
+      { error: error.message },
+      { status: 500, headers: { 'cache-control': 'no-store' } }
+    )
+  }
+
+  return NextResponse.json(
+    { picks: data ?? [] },
+    { headers: { 'cache-control': 'no-store' } }
+  )
 }

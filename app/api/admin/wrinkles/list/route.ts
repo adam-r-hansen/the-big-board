@@ -1,33 +1,37 @@
-// app/api/admin/wrinkles/list/route.ts
-import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase'
+import { NextRequest } from 'next/server'
+import { createAdminSupabaseClient } from '@/lib/supabase-clients'
 
 export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-function j(data: any, init?: number | ResponseInit) {
-  const base: ResponseInit = typeof init === 'number' ? { status: init } : init || {}
-  const headers = new Headers(base.headers)
-  headers.set('Cache-Control', 'no-store')
-  return NextResponse.json(data, { ...base, headers })
+function json(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+  })
 }
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url)
-  const leagueId = searchParams.get('leagueId') || ''
-  const season = Number(searchParams.get('season') || '0')
-  if (!leagueId || !season) return j({ error: 'leagueId and season required' }, 400)
+  const url = new URL(req.url)
+  const leagueId = url.searchParams.get('leagueId')
+  const season = url.searchParams.get('season')
 
-  const sb = createAdminClient()
+  if (!leagueId || !season) {
+    return json({ error: 'leagueId and season required' }, 400)
+  }
+
+  const sb = createAdminSupabaseClient()
+
   const { data, error } = await sb
     .from('wrinkles')
-    .select('id, league_id, season, week, name, status, extra_picks, kind')
+    .select('*')
     .eq('league_id', leagueId)
-    .eq('season', season)
+    .eq('season', parseInt(season))
     .order('week', { ascending: true })
-    .order('id', { ascending: true })
 
-  if (error) return j({ error: error.message }, 400)
-  return j({ wrinkles: data ?? [] }, 200)
+  if (error) {
+    return json({ error: error.message }, 500)
+  }
+
+  return json({ wrinkles: data ?? [] })
 }

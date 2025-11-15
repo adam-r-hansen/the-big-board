@@ -1,42 +1,33 @@
-import { NextResponse } from 'next/server'
-import { supabaseServer } from '@/lib/supabase'
-import { fetchTeams } from '@/lib/espn'
+import { NextRequest } from 'next/server'
+import { createAdminSupabaseClient } from '@/lib/supabase-clients'
 
-export async function POST() {
-  const sb = supabaseServer()
-  const data = await fetchTeams()
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-  const teams = (data?.sports?.[0]?.leagues?.[0]?.teams || []).map((t: any) => t.team)
-
-  const rows = teams.map((t: any) => {
-    const logos = Array.isArray(t.logos) ? t.logos : []
-    const logoFull = logos.find((l: any) => !l.rel || l.rel.includes('full')) || logos[0]
-    const logoDark = logos.find((l: any) => Array.isArray(l.rel) && l.rel.includes('dark'))
-
-    const hex = (s?: string) => (s ? (s.startsWith('#') ? s : `#${s}`) : null)
-
-    return {
-      espn_id: t.id ? Number(t.id) : null,
-      name: t.displayName,
-      short_name: t.shortDisplayName,
-      abbreviation: t.abbreviation,
-      color_primary: hex(t.color),
-      color_secondary: hex(t.alternateColor),
-      // tertiary/quaternary will be enriched in a separate step
-      color_tertiary: null,
-      color_quaternary: null,
-      logo: logoFull?.href || null,
-      logo_dark: logoDark?.href || null,
-      wordmark: null,
-    }
+function json(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
   })
-
-  const { data: up, error } = await sb
-    .from('teams')
-    .upsert(rows, { onConflict: 'espn_id' })
-    .select('id, name, abbreviation, color_primary, color_secondary')
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ inserted: up?.length ?? 0 })
 }
 
+export async function POST(req: NextRequest) {
+  const sb = createAdminSupabaseClient()
+  const body = await req.json().catch(() => ({ teams: [] }))
+  const teams = Array.isArray(body?.teams) ? body.teams : []
+
+  if (!teams.length) {
+    return json({ error: 'No teams provided' }, 400)
+  }
+
+  const { data, error } = await sb
+    .from('teams')
+    .upsert(teams, { onConflict: 'abbreviation' })
+    .select()
+
+  if (error) {
+    return json({ error: error.message }, 500)
+  }
+
+  return json({ ok: true, count: data?.length ?? 0, teams: data })
+}

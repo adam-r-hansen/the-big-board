@@ -1,25 +1,32 @@
-import { NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { createServerSupabaseClient } from '@/lib/supabase-clients'
 
-const ALLOWED = new Set(['color_primary','color_secondary','color_tertiary','color_quaternary'])
+export const dynamic = 'force-dynamic'
 
-export async function POST(req: Request) {
-  const supabase = await createClient()
-  const { data: { user }, error: userErr } = await supabase.auth.getUser()
-  if (userErr) return NextResponse.json({ error: userErr.message }, { status: 401 })
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+export async function GET(req: NextRequest) {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
 
-  const { teamId, ui_light_color_key, ui_dark_color_key } = await req.json().catch(() => ({}))
-  if (!teamId) return NextResponse.json({ error: 'teamId required' }, { status: 400 })
-  if (!ALLOWED.has(ui_light_color_key) || !ALLOWED.has(ui_dark_color_key)) {
-    return NextResponse.json({ error: 'Invalid color key' }, { status: 400 })
+  if (!user) {
+    return NextResponse.json(
+      { error: 'unauthenticated' },
+      { status: 401, headers: { 'cache-control': 'no-store' } }
+    )
   }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('teams')
-    .update({ ui_light_color_key, ui_dark_color_key })
-    .eq('id', teamId)
+    .select('id, abbreviation, color_primary, color_secondary')
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true })
+  if (error) {
+    return NextResponse.json(
+      { error: error.message },
+      { status: 500, headers: { 'cache-control': 'no-store' } }
+    )
+  }
+
+  return NextResponse.json(
+    { teams: data ?? [] },
+    { headers: { 'cache-control': 'no-store' } }
+  )
 }
