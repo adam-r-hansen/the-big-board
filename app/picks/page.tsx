@@ -1,16 +1,20 @@
-// app/picks/page.tsx
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import SpecialPicksCard from '@/components/SpecialPicksCard'
+import TeamCard from '@/components/TeamCard'
+import { getTeamCardVariant } from '@/lib/teamCardHelpers'
 
 type League = { id: string; name: string; season: number }
 type Team = {
   id: string
   abbreviation: string | null
   name?: string | null
+  short_name?: string | null
   color_primary?: string | null
   color_secondary?: string | null
+  color_pref_light?: string | null
+  color_pref_dark?: string | null
   logo?: string | null
   logo_dark?: string | null
 }
@@ -18,8 +22,11 @@ type TeamLike = {
   id?: string
   abbreviation?: string
   name?: string
+  short_name?: string
   color_primary?: string
   color_secondary?: string
+  color_pref_light?: string | null
+  color_pref_dark?: string | null
   logo?: string
   logo_dark?: string
 }
@@ -36,12 +43,12 @@ type Pick = { id: string; team_id: string; game_id: string | null }
 
 /** NFL helper: Thursday after Labor Day (Labor Day = first Monday in September) */
 function nflWeek1ThursdayUTC(season: number) {
-  const d = new Date(Date.UTC(season, 8, 1, 0, 0, 0)) // Sept 1, <season> @ 00:00 UTC
-  const day = d.getUTCDay() // 0=Sun..6=Sat
-  const offsetToMonday = (8 - day) % 7 // days to next Monday
+  const d = new Date(Date.UTC(season, 8, 1, 0, 0, 0))
+  const day = d.getUTCDay()
+  const offsetToMonday = (8 - day) % 7
   d.setUTCDate(d.getUTCDate() + offsetToMonday)
   d.setUTCHours(0, 0, 0, 0)
-  d.setUTCDate(d.getUTCDate() + 3) // Thursday after Labor Day
+  d.setUTCDate(d.getUTCDate() + 3)
   return d
 }
 
@@ -53,65 +60,6 @@ function guessCurrentNflWeek(season: number): number {
   const msPerWeek = 7 * 24 * 60 * 60 * 1000
   const w = 1 + Math.floor((now - week1) / msPerWeek)
   return Math.max(1, Math.min(18, w))
-}
-
-/* ---------------- Shared visual helpers (pills) ---------------- */
-const isHex = (x?: string | null) => !!x && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(x)
-const safe = (x: string | null | undefined, fallback: string) => (isHex(x) ? (x as string) : fallback)
-
-function textOn(bg: string) {
-  try {
-    const hex = bg.replace('#', '')
-    const v = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex
-    const r = parseInt(v.slice(0, 2), 16) / 255
-    const g = parseInt(v.slice(2, 4), 16) / 255
-    const b = parseInt(v.slice(4, 6), 16) / 255
-    const toLin = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4))
-    const L = 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b)
-    return L > 0.5 ? '#111827' : '#ffffff'
-  } catch {
-    return '#111827'
-  }
-}
-
-function TeamPickPill({
-  team,
-  picked,
-  disabled,
-  onClick,
-}: {
-  team?: TeamLike
-  picked?: boolean
-  disabled?: boolean
-  onClick?: () => void
-}) {
-  const abbr = team?.abbreviation ?? '—'
-  const primary = safe(team?.color_primary ?? null, '#6b7280')
-
-  const pillStyle: React.CSSProperties = picked
-    ? { background: primary, color: textOn(primary), borderColor: primary }
-    : { background: 'transparent', color: primary, borderColor: primary }
-
-  return (
-    <button
-      type="button"
-      disabled={!!disabled}
-      onClick={disabled ? undefined : onClick}
-      className={[
-        'w-full h-14 rounded-full border px-4 font-semibold tracking-wide',
-        'transition-[transform,opacity] active:scale-[0.98]',
-        'flex items-center justify-center gap-2',
-        disabled ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-90',
-      ].join(' ')}
-      style={pillStyle}
-    >
-      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white/95 border border-black/10 overflow-hidden">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        {team?.logo ? <img src={team.logo} alt={abbr} className="w-6 h-6 object-contain" /> : <span className="w-4 h-4 rounded-full bg-black/10" />}
-      </span>
-      <span className="truncate">{abbr}</span>
-    </button>
-  )
 }
 
 /* ---------------- Section container ---------------- */
@@ -137,11 +85,7 @@ export default function PicksPage() {
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<string>('')
-
-  // season-to-date
   const [seasonPicks, setSeasonPicks] = useState<Pick[]>([])
-
-  // Join-by-invite fallback
   const [invite, setInvite] = useState('')
   const [joining, setJoining] = useState(false)
 
@@ -171,7 +115,7 @@ export default function PicksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Auto-detect current week once per season (don’t fight the user)
+  // Auto-detect current week
   useEffect(() => {
     if (!season) return
     try {
@@ -195,8 +139,11 @@ export default function PicksPage() {
         id: t.id,
         abbreviation: t.abbreviation ?? undefined,
         name: t.name ?? undefined,
+        short_name: t.short_name ?? undefined,
         color_primary: t.color_primary ?? undefined,
         color_secondary: t.color_secondary ?? undefined,
+        color_pref_light: t.color_pref_light ?? undefined,
+        color_pref_dark: t.color_pref_dark ?? undefined,
         logo: t.logo ?? undefined,
         logo_dark: t.logo_dark ?? undefined,
       }
@@ -206,7 +153,7 @@ export default function PicksPage() {
     return idx
   }, [teamMap])
 
-  // Load games + picks (for current week)
+  // Load games + picks
   useEffect(() => {
     if (!leagueId || !season || !week) return
     ;(async () => {
@@ -243,7 +190,7 @@ export default function PicksPage() {
     })()
   }, [leagueId, season, week])
 
-  // Load season-to-date picks (for right rail list)
+  // Load season picks
   useEffect(() => {
     if (!leagueId || !season) return
     ;(async () => {
@@ -264,6 +211,11 @@ export default function PicksPage() {
     return m
   }, [picks])
 
+  // Get all team IDs that have been used this season
+  const usedTeamIds = useMemo(() => {
+    return new Set(seasonPicks.map((p) => p.team_id))
+  }, [seasonPicks])
+
   const isLocked = (utc?: string) => (utc ? new Date(utc) <= new Date() : false)
 
   async function safeJson(res: Response) {
@@ -282,6 +234,7 @@ export default function PicksPage() {
     const j = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then((r) => r.json())
     setPicks((j.picks ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
   }
+
   async function deletePickById(pickId: string) {
     const res = await fetch(`/api/picks?id=${pickId}`, { method: 'DELETE', cache: 'no-store' })
     if (!res.ok) throw new Error((await safeJson(res))?.error || 'Unpick failed')
@@ -318,7 +271,6 @@ export default function PicksPage() {
     }
   }
 
-  // Invite-join fallback when no leagues
   function extractLeagueId(input: string) {
     const s = input.trim()
     if (!s) return ''
@@ -359,7 +311,7 @@ export default function PicksPage() {
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
-      {/* Header (removed duplicate Standings/Stats links) */}
+      {/* Header */}
       <section className="mb-4 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <Image alt="" src="/favicon.ico" width={24} height={24} className="rounded" />
@@ -367,7 +319,6 @@ export default function PicksPage() {
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-3">
-          {/* League label / selector */}
           {noLeagues ? null : singleLeague ? (
             <span className="text-sm text-neutral-600">
               League: <strong>{leagues[0].name}</strong>
@@ -382,7 +333,6 @@ export default function PicksPage() {
             </select>
           )}
 
-          {/* Always show Season + Week selectors when user has any league */}
           {!noLeagues && (
             <>
               <select
@@ -436,7 +386,7 @@ export default function PicksPage() {
         </section>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* LEFT 2/3 — wrinkle + games */}
+          {/* LEFT 2/3 */}
           <div className="lg:col-span-8 grid gap-6">
             <SpecialPicksCard leagueId={leagueId} season={season} week={week} teams={teamIndex as unknown as Record<string, any>} />
 
@@ -452,9 +402,14 @@ export default function PicksPage() {
                 const existing = pickByGame.get(g.id)
                 const weeklyQuotaFull = (picks?.length ?? 0) >= 2 && !existing
 
+                const homeAlreadyUsed = homeId ? usedTeamIds.has(homeId) : false
+                const awayAlreadyUsed = awayId ? usedTeamIds.has(awayId) : false
+                const homePicked = homeId ? picks.some((p) => p.team_id === homeId) : false
+                const awayPicked = awayId ? picks.some((p) => p.team_id === awayId) : false
+
                 return (
                   <article key={g.id} className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
-                    <div className="mb-2 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
+                    <div className="mb-3 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
                       <span>
                         {new Date(g.game_utc).toLocaleString()} • Week {g.week}
                       </span>
@@ -462,21 +417,47 @@ export default function PicksPage() {
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="flex-1">
-                        <TeamPickPill
-                          team={homeTeam}
-                          picked={homeId ? picks.some((p) => p.team_id === homeId) : false}
-                          disabled={locked || weeklyQuotaFull || !homeId}
-                          onClick={() => homeId && togglePick(homeId, g.id)}
-                        />
+                        {homeTeam && (
+                          <TeamCard
+                            team={{
+                              id: homeTeam.id || '',
+                              name: homeTeam.name || '',
+                              short_name: homeTeam.short_name || homeTeam.name || '',
+                              abbreviation: homeTeam.abbreviation || '',
+                              logo: homeTeam.logo || '',
+                              color_primary: homeTeam.color_primary || '#6b7280',
+                              color_secondary: homeTeam.color_secondary,
+                              color_pref_light: homeTeam.color_pref_light,
+                              color_pref_dark: homeTeam.color_pref_dark,
+                            }}
+                            variant={getTeamCardVariant('picks', homePicked, homeAlreadyUsed)}
+                            displayText="short"
+                            onClick={() => homeId && !locked && !weeklyQuotaFull && !homeAlreadyUsed && togglePick(homeId, g.id)}
+                            disabled={locked || weeklyQuotaFull || !homeId || homeAlreadyUsed}
+                          />
+                        )}
                       </div>
-                      <div className="text-neutral-400">—</div>
+                      <div className="text-neutral-400 font-semibold">@</div>
                       <div className="flex-1">
-                        <TeamPickPill
-                          team={awayTeam}
-                          picked={awayId ? picks.some((p) => p.team_id === awayId) : false}
-                          disabled={locked || weeklyQuotaFull || !awayId}
-                          onClick={() => awayId && togglePick(awayId, g.id)}
-                        />
+                        {awayTeam && (
+                          <TeamCard
+                            team={{
+                              id: awayTeam.id || '',
+                              name: awayTeam.name || '',
+                              short_name: awayTeam.short_name || awayTeam.name || '',
+                              abbreviation: awayTeam.abbreviation || '',
+                              logo: awayTeam.logo || '',
+                              color_primary: awayTeam.color_primary || '#6b7280',
+                              color_secondary: awayTeam.color_secondary,
+                              color_pref_light: awayTeam.color_pref_light,
+                              color_pref_dark: awayTeam.color_pref_dark,
+                            }}
+                            variant={getTeamCardVariant('picks', awayPicked, awayAlreadyUsed)}
+                            displayText="short"
+                            onClick={() => awayId && !locked && !weeklyQuotaFull && !awayAlreadyUsed && togglePick(awayId, g.id)}
+                            disabled={locked || weeklyQuotaFull || !awayId || awayAlreadyUsed}
+                          />
+                        )}
                       </div>
                     </div>
                   </article>
@@ -485,7 +466,7 @@ export default function PicksPage() {
             </SectionCard>
           </div>
 
-          {/* RIGHT 1/3 — My picks & Season picks (tighter spacing on desktop) */}
+          {/* RIGHT 1/3 */}
           <aside className="lg:col-span-4 grid gap-4 lg:gap-3">
             <SectionCard title={`My picks — Week ${week}`}>
               {picks.length === 0 ? (
@@ -493,17 +474,32 @@ export default function PicksPage() {
               ) : (
                 <ul className="grid gap-2">
                   {picks.map((p) => {
-                    const t =
-                      (teamIndex as any)[p.team_id] ||
-                      (teamIndex as any)[(teamIndex as any)[p.team_id]?.abbreviation?.toUpperCase() || '']
+                    const t = (teamIndex as any)[p.team_id]
                     const locked = p.game_id ? isLocked(games.find((g) => g.id === p.game_id)?.game_utc) : false
                     return (
-                      <li key={p.id} className="flex items-center justify-between">
+                      <li key={p.id} className="flex items-center gap-2">
                         <div className="min-w-0 flex-1">
-                          <TeamPickPill team={t} picked disabled />
+                          {t && (
+                            <TeamCard
+                              team={{
+                                id: t.id || '',
+                                name: t.name || '',
+                                short_name: t.short_name || t.name || '',
+                                abbreviation: t.abbreviation || '',
+                                logo: t.logo || '',
+                                color_primary: t.color_primary || '#6b7280',
+                                color_secondary: t.color_secondary,
+                                color_pref_light: t.color_pref_light,
+                                color_pref_dark: t.color_pref_dark,
+                              }}
+                              variant="solid"
+                              displayText="short"
+                              disabled
+                            />
+                          )}
                         </div>
                         <button
-                          className="ml-2 text-xs underline disabled:opacity-50 shrink-0"
+                          className="text-xs underline disabled:opacity-50 shrink-0 px-2"
                           disabled={locked}
                           onClick={async () => {
                             try {
@@ -533,12 +529,27 @@ export default function PicksPage() {
               ) : (
                 <div className="grid gap-2">
                   {seasonPicks.map((p) => {
-                    const t =
-                      (teamIndex as any)[p.team_id] ||
-                      (teamIndex as any)[(teamIndex as any)[p.team_id]?.abbreviation?.toUpperCase() || '']
+                    const t = (teamIndex as any)[p.team_id]
                     return (
                       <div key={p.id} className="min-w-0">
-                        <TeamPickPill team={t} picked disabled />
+                        {t && (
+                          <TeamCard
+                            team={{
+                              id: t.id || '',
+                              name: t.name || '',
+                              short_name: t.short_name || t.name || '',
+                              abbreviation: t.abbreviation || '',
+                              logo: t.logo || '',
+                              color_primary: t.color_primary || '#6b7280',
+                              color_secondary: t.color_secondary,
+                              color_pref_light: t.color_pref_light,
+                              color_pref_dark: t.color_pref_dark,
+                            }}
+                            variant="solid"
+                            displayText="short"
+                            disabled
+                          />
+                        )}
                       </div>
                     )
                   })}
