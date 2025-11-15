@@ -26,8 +26,16 @@ export async function GET(req: NextRequest) {
     )
   }
 
+  // Transform the nested structure to flat structure
+  const leagues = (data ?? []).map((item: any) => ({
+    id: item.leagues?.id,
+    name: item.leagues?.name,
+    season: item.leagues?.season,
+    role: item.role
+  })).filter((l: any) => l.id)
+
   return NextResponse.json(
-    { leagues: data ?? [] },
+    { leagues },
     { headers: { 'cache-control': 'no-store' } }
   )
 }
