@@ -2,9 +2,9 @@
 
 import { createBrowserSupabaseClient } from '@/lib/supabase-clients'
 import { useSearchParams } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 
-export default function InvitePage() {
+function InvitePageContent() {
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
@@ -55,5 +55,13 @@ export default function InvitePage() {
         {status === 'error' && <p className="text-red-600">{message}</p>}
       </div>
     </div>
+  )
+}
+
+export default function InvitePage() {
+  return (
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center"><p>Loading...</p></div>}>
+      <InvitePageContent />
+    </Suspense>
   )
 }
