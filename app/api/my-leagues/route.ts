@@ -14,28 +14,56 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  const { data, error } = await supabase
-    .from('league_members')
-    .select('*, leagues(*)')
+  // Get all league_memberships for this user
+  const { data: memberships, error: membershipError } = await supabase
+    .from('league_memberships')
+    .select('league_id, role')
     .eq('profile_id', user.id)
 
-  if (error) {
+  if (membershipError) {
     return NextResponse.json(
-      { error: error.message },
+      { error: membershipError.message },
       { status: 500, headers: { 'cache-control': 'no-store' } }
     )
   }
 
-  // Transform the nested structure to flat structure
-  const leagues = (data ?? []).map((item: any) => ({
-    id: item.leagues?.id,
-    name: item.leagues?.name,
-    season: item.leagues?.season,
-    role: item.role
-  })).filter((l: any) => l.id)
+  if (!memberships || memberships.length === 0) {
+    return NextResponse.json(
+      { leagues: [] },
+      { headers: { 'cache-control': 'no-store' } }
+    )
+  }
+
+  // Get the league IDs
+  const leagueIds = memberships.map(m => m.league_id)
+
+  // Fetch the actual league data
+  const { data: leagues, error: leaguesError } = await supabase
+    .from('leagues')
+    .select('id, name, season, created_at')
+    .in('id', leagueIds)
+    .order('season', { ascending: false })
+
+  if (leaguesError) {
+    return NextResponse.json(
+      { error: leaguesError.message },
+      { status: 500, headers: { 'cache-control': 'no-store' } }
+    )
+  }
+
+  // Combine the data - add role to each league
+  const leaguesWithRoles = (leagues ?? []).map(league => {
+    const membership = memberships.find(m => m.league_id === league.id)
+    return {
+      id: league.id,
+      name: league.name,
+      season: league.season,
+      role: membership?.role || 'member'
+    }
+  })
 
   return NextResponse.json(
-    { leagues },
+    { leagues: leaguesWithRoles },
     { headers: { 'cache-control': 'no-store' } }
   )
 }
