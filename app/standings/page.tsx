@@ -1,244 +1,195 @@
 'use client'
-
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
-type League = {
-  id: string
-  name: string
-  season: number
-  created_at: string
+type League = { id: string; name: string; season: number }
+
+type Row = {
+  profile_id: string
+  display_name: string
+  points: number
+  correct: number
+  longest_streak: number
+  wrinkle_points: number
+  rank: number
+  back_from_first: number
+  back_to_playoffs: number
 }
 
-export default function AdminPage() {
-  const [leagues, setLeagues] = useState<League[]>([])
-  const [name, setName] = useState('')
-  const [season, setSeason] = useState(new Date().getFullYear())
-  const [msg, setMsg] = useState('')
-  const [busyCreate, setBusyCreate] = useState(false)
-  const [joinInput, setJoinInput] = useState('')
-  const [joinMsg, setJoinMsg] = useState('')
-  const [busyJoin, setBusyJoin] = useState(false)
+function fmtPts(n: number) {
+  const s = n.toFixed(1)
+  return s.endsWith('.0') ? s.slice(0, -2) : s
+}
 
+export default function StandingsPage() {
+  const [leagues, setLeagues] = useState<League[]>([])
+  const [leagueId, setLeagueId] = useState('')
+  const [season, setSeason] = useState<number>(new Date().getFullYear())
+  const [week, setWeek] = useState<number | null>(null) // null = overall
+  const [rows, setRows] = useState<Row[]>([])
+  const [leagueName, setLeagueName] = useState('—')
+  const [loading, setLoading] = useState(false)
+
+  // Load leagues on mount
   useEffect(() => {
-    loadLeagues()
+    fetch('/api/my-leagues', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => {
+        const ls: League[] = j.leagues || []
+        setLeagues(ls)
+        if (ls.length === 1) {
+          setLeagueId(ls[0].id)
+          setSeason(ls[0].season)
+        } else if (ls.length > 0) {
+          setLeagueId(ls[0].id)
+          setSeason(ls[0].season)
+        }
+      })
+      .catch(() => {})
   }, [])
 
-  async function loadLeagues() {
-    try {
-      const res = await fetch('/api/leagues', { cache: 'no-store' })
-      const j = await res.json()
-      if (res.ok) {
-        setLeagues(j.leagues || [])
-      }
-    } catch (err: any) {
-      console.error('Failed to load leagues:', err)
-    }
-  }
+  // Load standings when leagueId, season, or week changes
+  useEffect(() => {
+    if (!leagueId || !season) return
+    setLoading(true)
+    const qs = new URLSearchParams({ leagueId, season: String(season) })
+    if (week !== null) qs.set('week', String(week))
 
-  async function createLeague(e: React.FormEvent) {
-    e.preventDefault()
-    setMsg('')
-    setBusyCreate(true)
-    try {
-      const res = await fetch('/api/leagues', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, season }),
+    fetch(`/api/standings?${qs.toString()}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((data) => {
+        setRows(data.rows || [])
+        setLeagueName(data.leagueName || '—')
       })
-      const j = await res.json()
-      if (!res.ok) throw new Error(j?.error || 'Create failed')
-      setMsg('League created! ✅')
-      setName('')
-      await loadLeagues()
-    } catch (err: any) {
-      setMsg(err?.message || 'Create failed')
-    } finally {
-      setBusyCreate(false)
-    }
-  }
-
-  async function joinExisting(e: React.FormEvent) {
-    e.preventDefault()
-    setJoinMsg('')
-    setBusyJoin(true)
-    try {
-      let leagueId = joinInput.trim()
-      if (joinInput.includes('/join?leagueId=')) {
-        const url = new URL(joinInput)
-        leagueId = url.searchParams.get('leagueId') || ''
-      }
-      if (!leagueId) throw new Error('Invalid league ID or link')
-
-      const res = await fetch('/api/leagues/join', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ leagueId }),
+      .catch(() => {
+        setRows([])
+        setLeagueName('—')
       })
-      const j = await res.json()
-      if (!res.ok) throw new Error(j?.error || 'Join failed')
-      setJoinMsg(j.already ? 'You are already a member. ✅' : 'Joined! ✅')
-      setJoinInput('')
-      await loadLeagues()
-    } catch (err: any) {
-      setJoinMsg(err?.message || 'Join failed')
-    } finally {
-      setBusyJoin(false)
-    }
-  }
+      .finally(() => setLoading(false))
+  }, [leagueId, season, week])
 
-  function inviteLink(id: string) {
-    if (typeof window === 'undefined') return ''
-    return `${window.location.origin}/join?leagueId=${id}`
-  }
-
-  async function copyLink(id: string) {
-    try {
-      await navigator.clipboard.writeText(inviteLink(id))
-      setMsg('Invite link copied!')
-      setTimeout(() => setMsg(''), 1500)
-    } catch {
-      setMsg('Copy failed')
-      setTimeout(() => setMsg(''), 2000)
-    }
-  }
+  const noLeagues = leagues.length === 0
+  const singleLeague = leagues.length === 1
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-6">
-      <h1 className="text-2xl font-bold mb-4">Admin</h1>
+    <main className="mx-auto max-w-6xl px-4 py-8">
+      {/* Header with controls */}
+      <section className="mb-6 flex flex-wrap items-center gap-3">
+        <h1 className="text-3xl font-semibold">Standings</h1>
 
-      {/* Quick Links Section */}
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 mb-6">
-        <h2 className="text-lg font-semibold mb-3">Admin Tools</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Link
-            href="/admin/teams"
-            className="p-4 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:border-blue-500 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all group"
-          >
-            <div className="font-semibold text-blue-600 dark:text-blue-400 group-hover:text-blue-700 dark:group-hover:text-blue-300">
-              🎨 Team Colors
-            </div>
-            <div className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
-              Manage light & dark mode colors for all teams
-            </div>
+        <div className="ml-auto flex items-center gap-3">
+          <Link className="underline text-sm" href="/">
+            Home
           </Link>
-          
-          <Link
-            href="/admin/schedule"
-            className="p-4 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:border-blue-500 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all group"
-          >
-            <div className="font-semibold text-blue-600 dark:text-blue-400 group-hover:text-blue-700 dark:group-hover:text-blue-300">
-              📅 Global Schedule
-            </div>
-            <div className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
-              Sync schedule from ESPN
-            </div>
+          <Link className="underline text-sm" href="/picks">
+            Picks
           </Link>
 
-          <Link
-            href="/admin/invites"
-            className="p-4 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:border-blue-500 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all group"
+          {/* League selector (if multiple leagues) */}
+          {!noLeagues && !singleLeague && (
+            <select
+              className="border rounded px-2 py-1 bg-transparent"
+              value={leagueId}
+              onChange={(e) => setLeagueId(e.target.value)}
+            >
+              {leagues.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name} · {l.season}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {/* Season selector */}
+          <select
+            className="border rounded px-2 py-1 bg-transparent"
+            value={season}
+            onChange={(e) => setSeason(Number(e.target.value))}
           >
-            <div className="font-semibold text-blue-600 dark:text-blue-400 group-hover:text-blue-700 dark:group-hover:text-blue-300">
-              ✉️ Invites
-            </div>
-            <div className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
-              Manage league invitations
-            </div>
-          </Link>
+            {Array.from({ length: 3 }).map((_, i) => {
+              const yr = new Date().getFullYear() - 1 + i
+              return (
+                <option key={yr} value={yr}>
+                  {yr}
+                </option>
+              )
+            })}
+          </select>
+
+          {/* Week selector (with "Overall" option) */}
+          <select
+            className="border rounded px-2 py-1 bg-transparent"
+            value={week === null ? 'overall' : week}
+            onChange={(e) => {
+              const val = e.target.value
+              setWeek(val === 'overall' ? null : Number(val))
+            }}
+          >
+            <option value="overall">Overall</option>
+            {Array.from({ length: 18 }).map((_, i) => {
+              const wk = i + 1
+              return (
+                <option key={wk} value={wk}>
+                  Week {wk}
+                </option>
+              )
+            })}
+          </select>
         </div>
       </section>
 
-      {/* Create a league */}
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 mb-6">
-        <h2 className="text-lg font-semibold mb-3">Create a league</h2>
-        <form onSubmit={createLeague} className="grid gap-3 max-w-xl">
-          <label className="grid gap-1">
-            <span className="text-sm text-neutral-600 dark:text-neutral-400">Name</span>
-            <input
-              className="border rounded px-3 py-2 bg-transparent dark:border-neutral-700"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="2025 Big Board"
-              required
-            />
-          </label>
-          <label className="grid gap-1">
-            <span className="text-sm text-neutral-600 dark:text-neutral-400">Season</span>
-            <input
-              type="number"
-              className="border rounded px-3 py-2 bg-transparent dark:border-neutral-700"
-              value={season}
-              onChange={(e) => setSeason(Number(e.target.value))}
-              min={2000}
-              max={3000}
-              required
-            />
-          </label>
-          <div className="flex items-center gap-3">
-            <button
-              disabled={busyCreate}
-              className="px-4 py-2 rounded-lg border dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50"
-            >
-              {busyCreate ? 'Creating…' : 'Create league'}
-            </button>
-            {msg && <span className="text-sm">{msg}</span>}
+      {/* League name display (if single league) */}
+      {singleLeague && (
+        <div className="mb-4 text-lg text-neutral-500">
+          League: <span className="font-medium text-neutral-800 dark:text-neutral-200">{leagues[0].name}</span>
+        </div>
+      )}
+
+      {/* Standings table */}
+      <section className="rounded-3xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-xl font-semibold">
+            {week === null ? 'Overall Standings' : `Week ${week} Standings`}
+          </h2>
+          <div className="text-sm text-neutral-500">Top 4 advance to playoffs</div>
+        </div>
+
+        {loading ? (
+          <div className="text-neutral-500">Loading...</div>
+        ) : rows.length === 0 ? (
+          <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 p-6 text-neutral-600">
+            {noLeagues ? 'Join a league to see standings.' : 'No standings data yet.'}
           </div>
-        </form>
-      </section>
-
-      {/* Join a league */}
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 mb-6">
-        <h2 className="text-lg font-semibold mb-3">Join a league</h2>
-        <form onSubmit={joinExisting} className="flex flex-col sm:flex-row gap-3 max-w-xl">
-          <input
-            className="border rounded px-3 py-2 bg-transparent dark:border-neutral-700 flex-1"
-            placeholder="Paste invite link or league id…"
-            value={joinInput}
-            onChange={(e) => setJoinInput(e.target.value)}
-          />
-          <button
-            disabled={busyJoin}
-            className="px-4 py-2 rounded-lg border dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50"
-          >
-            {busyJoin ? 'Joining…' : 'Join'}
-          </button>
-        </form>
-        {joinMsg && <p className="text-sm mt-2">{joinMsg}</p>}
-      </section>
-
-      {/* Your leagues */}
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
-        <h2 className="text-lg font-semibold mb-3">Your leagues</h2>
-        {leagues.length === 0 ? (
-          <div className="text-sm text-neutral-500 dark:text-neutral-400">No leagues yet</div>
         ) : (
-          <ul className="grid gap-2">
-            {leagues.map((league) => (
-              <li
-                key={league.id}
-                className="flex items-center justify-between border rounded-lg px-3 py-2 dark:border-neutral-700"
-              >
-                <div>
-                  <Link
-                    href={`/admin/leagues/${league.id}`}
-                    className="font-semibold hover:underline"
+          <div className="overflow-x-auto">
+            <table className="w-full border-separate" style={{ borderSpacing: 0 }}>
+              <thead>
+                <tr className="text-left text-neutral-600 dark:text-neutral-400">
+                  <th className="w-12 border-b border-neutral-300 dark:border-neutral-700 py-2 pr-3">#</th>
+                  <th className="border-b border-neutral-300 dark:border-neutral-700 py-2 pr-3">Member</th>
+                  <th className="w-24 border-b border-neutral-300 dark:border-neutral-700 py-2 text-right">Pts</th>
+                  <th className="w-24 border-b border-neutral-300 dark:border-neutral-700 py-2 text-right">Correct</th>
+                  <th className="w-28 border-b border-neutral-300 dark:border-neutral-700 py-2 text-right">Back</th>
+                  <th className="w-32 border-b border-neutral-300 dark:border-neutral-700 py-2 text-right">Back to 4th</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr
+                    key={r.profile_id}
+                    className="border-b border-neutral-200 dark:border-neutral-800 last:border-b-0"
                   >
-                    {league.name}
-                  </Link>
-                  <div className="text-xs text-neutral-500 dark:text-neutral-400">
-                    Season {league.season}
-                  </div>
-                </div>
-                <button
-                  onClick={() => copyLink(league.id)}
-                  className="text-xs px-2 py-1 rounded border dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800"
-                >
-                  Copy invite link
-                </button>
-              </li>
-            ))}
-          </ul>
+                    <td className="py-3 pr-3">{r.rank}</td>
+                    <td className="py-3 pr-3">{r.display_name || '—'}</td>
+                    <td className="py-3 text-right font-medium">{fmtPts(r.points)}</td>
+                    <td className="py-3 text-right">{r.correct}</td>
+                    <td className="py-3 text-right">{fmtPts(r.back_from_first)}</td>
+                    <td className="py-3 text-right">{fmtPts(r.back_to_playoffs)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     </main>
