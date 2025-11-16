@@ -3,8 +3,8 @@ import NavBar from '@/components/NavBar'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Big Board Pick'em',
-  description: 'NFL pick'em',
+  title: 'Big Board Pickem',
+  description: 'NFL pickem',
 }
 
 export default function RootLayout({
