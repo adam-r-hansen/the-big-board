@@ -9,7 +9,7 @@ type PickRow = { email: string; name: string; team_abbr: string|null }
 
 export default function LeagueManagePage() {
   const { leagueId } = useParams<{ leagueId: string }>()
-  const [tab, setTab] = useState<'members'|'picks'>('members')
+  const [tab, setTab] = useState<'members'|'picks'|'records'>('members')
 
   // Members
   const [members, setMembers] = useState<Member[]>([])
@@ -26,6 +26,12 @@ export default function LeagueManagePage() {
   const [pEmail, setPEmail] = useState('')
   const [teamAbbr, setTeamAbbr] = useState('')
   const [force, setForce] = useState(false)
+
+  // Team Records
+  const [recordsWeek, setRecordsWeek] = useState<number>(1)
+  const [recordsSeason, setRecordsSeason] = useState<number>(thisSeason)
+  const [refreshing, setRefreshing] = useState(false)
+  const [recordsMsg, setRecordsMsg] = useState('')
 
   async function loadMembers() {
     setMsg('')
@@ -82,6 +88,35 @@ export default function LeagueManagePage() {
     } finally { setLoading(false) }
   }
 
+  async function refreshTeamRecords() {
+    setRefreshing(true)
+    setRecordsMsg('')
+    
+    try {
+      const res = await fetch('/api/team-records/calculate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ 
+          season: recordsSeason, 
+          week: recordsWeek 
+        }),
+      })
+      
+      const j = await res.json()
+      
+      if (!res.ok) {
+        throw new Error(j?.error || 'Failed to refresh team records')
+      }
+      
+      setRecordsMsg(`✅ Team records calculated for Week ${recordsWeek}`)
+      setTimeout(() => setRecordsMsg(''), 3000)
+    } catch (err: any) {
+      setRecordsMsg(`❌ ${err?.message || 'Failed to refresh team records'}`)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   useEffect(() => { if (tab==='members') loadMembers() }, [tab, leagueId])
   useEffect(() => { if (tab==='picks') loadPicks() }, [tab, leagueId, season, week])
 
@@ -97,6 +132,7 @@ export default function LeagueManagePage() {
       <div className="flex gap-2">
         <button onClick={()=>setTab('members')} className={`px-3 py-1.5 rounded-md border ${tab==='members'?'bg-neutral-100 dark:bg-neutral-800':''}`}>Members</button>
         <button onClick={()=>setTab('picks')} className={`px-3 py-1.5 rounded-md border ${tab==='picks'?'bg-neutral-100 dark:bg-neutral-800':''}`}>Picks</button>
+        <button onClick={()=>setTab('records')} className={`px-3 py-1.5 rounded-md border ${tab==='records'?'bg-neutral-100 dark:bg-neutral-800':''}`}>Team Records</button>
       </div>
 
       {tab==='members' && (
@@ -156,6 +192,65 @@ export default function LeagueManagePage() {
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {tab==='records' && (
+        <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 grid gap-4">
+          <h2 className="text-xl font-semibold">Team Records Calculator</h2>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Calculate team win/loss records entering each week. This is needed for Winless Double and OOF wrinkles.
+          </p>
+          
+          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
+            <label className="grid gap-1">
+              <span className="text-sm text-neutral-600 dark:text-neutral-400">Season</span>
+              <input
+                type="number"
+                className="h-10 w-28 rounded-md border px-3"
+                value={recordsSeason}
+                onChange={(e) => setRecordsSeason(Number(e.target.value))}
+              />
+            </label>
+            
+            <label className="grid gap-1 flex-1">
+              <span className="text-sm text-neutral-600 dark:text-neutral-400">
+                Calculate records entering week:
+              </span>
+              <select
+                className="h-10 rounded-md border px-3"
+                value={recordsWeek}
+                onChange={(e) => setRecordsWeek(Number(e.target.value))}
+              >
+                {Array.from({ length: 18 }).map((_, i) => {
+                  const wk = i + 1
+                  return (
+                    <option key={wk} value={wk}>
+                      Week {wk}
+                    </option>
+                  )
+                })}
+              </select>
+            </label>
+            
+            <button
+              onClick={refreshTeamRecords}
+              disabled={refreshing}
+              className="h-10 px-4 rounded-md bg-black text-white disabled:opacity-60"
+            >
+              {refreshing ? 'Calculating...' : 'Refresh Records'}
+            </button>
+          </div>
+          
+          {recordsMsg && (
+            <div className="text-sm">
+              {recordsMsg}
+            </div>
+          )}
+          
+          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+            This calculates each team's record based on completed games before the selected week.
+          </div>
         </section>
       )}
     </main>
