@@ -99,11 +99,11 @@ export default function TeamCard({
         backgroundColor: variant === 'solid' ? teamColor : 'transparent',
       }}
     >
-      <div className="p-4">
-        <div className="flex items-center gap-3">
+      <div className="p-2 sm:p-3 md:p-4">
+        <div className="flex items-center gap-2 sm:gap-3">
           {/* Logo with white circular background for solid cards */}
           {variant === 'solid' ? (
-            <div className="w-12 h-12 rounded-full bg-white flex items-center justify-center p-1.5 flex-shrink-0">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-full bg-white flex items-center justify-center p-1 sm:p-1.5 flex-shrink-0">
               <img
                 src={team.logo}
                 alt={team.name}
@@ -114,13 +114,13 @@ export default function TeamCard({
             <img
               src={team.logo}
               alt={team.name}
-              className="w-12 h-12 object-contain flex-shrink-0"
+              className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 object-contain flex-shrink-0"
             />
           )}
           
           {/* Team name/text */}
           <span
-            className={`font-semibold text-lg ${
+            className={`font-semibold text-sm sm:text-base md:text-lg truncate ${
               variant === 'solid' ? 'text-white' : ''
             }`}
             style={{
