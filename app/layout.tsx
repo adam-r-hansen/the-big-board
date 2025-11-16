@@ -1,10 +1,16 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import SiteHeader from '@/components/SiteHeader'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Big Board Pick’em',
-  description: 'NFL pick’em',
+  title: 'Big Board Pick'em',
+  description: 'NFL pick'em',
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
 }
 
 export default function RootLayout({
@@ -21,4 +27,3 @@ export default function RootLayout({
     </html>
   )
 }
-
