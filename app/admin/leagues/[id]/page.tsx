@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
 type League = {
@@ -10,8 +10,8 @@ type League = {
   start_week: number
 }
 
-export default function LeagueAdminPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params)
+export default function LeagueAdminPage({ params }: { params: { id: string } }) {
+  const [id, setId] = useState<string>('')
   const [league, setLeague] = useState<League | null>(null)
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState('')
@@ -19,7 +19,14 @@ export default function LeagueAdminPage({ params }: { params: Promise<{ id: stri
   const [selectedWeek, setSelectedWeek] = useState(1)
 
   useEffect(() => {
-    loadLeague()
+    // Unwrap params for Next.js 15
+    Promise.resolve(params).then((p) => {
+      setId(p.id)
+    })
+  }, [params])
+
+  useEffect(() => {
+    if (id) loadLeague()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
