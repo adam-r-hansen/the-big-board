@@ -3,12 +3,13 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 
 type Member = { profile_id: string; role: 'owner'|'admin'|'member'; name: string; avatar: string|null; email: string|null }
+type User = { profile_id: string; email: string; display_name: string }
 type Team = { id: string; name: string; abbreviation: string }
-type Game = { id: string; home_team: string; away_team: string; game_utc: string; status: string }
 
 export default function LeagueAdminPage() {
   const { leagueId } = useParams<{ leagueId: string }>()
   const [members, setMembers] = useState<Member[]>([])
+  const [allUsers, setAllUsers] = useState<User[]>([])
   const [log, setLog] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<'admin'|'member'>('member')
@@ -41,6 +42,18 @@ export default function LeagueAdminPage() {
     setMembers(mappedMembers)
   }
 
+  async function loadAllUsers() {
+    try {
+      const res = await fetch(`/api/leagues/${leagueId}/memberships`, { cache:'no-store' })
+      const j = await res.json()
+      if (res.ok) {
+        setAllUsers(j.users ?? [])
+      }
+    } catch (e) {
+      console.error('Failed to load users:', e)
+    }
+  }
+
   // Load all teams on mount
   useEffect(() => {
     ;(async () => {
@@ -52,7 +65,10 @@ export default function LeagueAdminPage() {
   }, [])
 
   useEffect(() => { 
-    if (leagueId) loadMembers() 
+    if (leagueId) {
+      loadMembers()
+      loadAllUsers()
+    }
   }, [leagueId])
 
   // Load games and extract available teams when season/week changes
@@ -104,9 +120,8 @@ export default function LeagueAdminPage() {
         const j = await res.json()
         if (res.ok) {
           const picks = (j.picks || []).filter((p: any) => {
-            // Match by email since that's what we store in selectedUser
-            const member = members.find(m => m.profile_id === selectedUser)
-            return p.email === member?.email
+            const user = allUsers.find(u => u.profile_id === selectedUser)
+            return p.email === user?.email
           })
           setUserPicks(picks.map((p: any) => ({ team_id: p.team_abbr })))
         } else {
@@ -118,7 +133,7 @@ export default function LeagueAdminPage() {
         setLoadingPicks(false)
       }
     })()
-  }, [selectedUser, pickSeason, pickWeek, leagueId, members])
+  }, [selectedUser, pickSeason, pickWeek, leagueId, allUsers])
 
   async function setRole(profileId: string, role: string) {
     setLog('')
@@ -158,9 +173,9 @@ export default function LeagueAdminPage() {
     if (!selectedUser || !selectedTeam) return
     
     setLog('')
-    const member = members.find(m => m.profile_id === selectedUser)
-    if (!member?.email) {
-      setLog('Member email not found')
+    const user = allUsers.find(u => u.profile_id === selectedUser)
+    if (!user?.email) {
+      setLog('User email not found')
       return
     }
 
@@ -174,7 +189,7 @@ export default function LeagueAdminPage() {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        email: member.email,
+        email: user.email,
         season: pickSeason,
         week: pickWeek,
         teamAbbr: team.abbreviation,
@@ -188,7 +203,7 @@ export default function LeagueAdminPage() {
       return
     }
 
-    setLog(`✓ Pick created for ${member.name}: ${team.abbreviation} (Week ${pickWeek})`)
+    setLog(`✓ Pick created for ${user.display_name}: ${team.abbreviation} (Week ${pickWeek})`)
     setSelectedTeam('')
     
     // Reload picks to update the UI
@@ -198,7 +213,7 @@ export default function LeagueAdminPage() {
     )
     const reloadJ = await reloadRes.json()
     if (reloadRes.ok) {
-      const picks = (reloadJ.picks || []).filter((p: any) => p.email === member.email)
+      const picks = (reloadJ.picks || []).filter((p: any) => p.email === user.email)
       setUserPicks(picks.map((p: any) => ({ team_id: p.team_abbr })))
     }
   }
@@ -262,9 +277,9 @@ export default function LeagueAdminPage() {
               onChange={e => setSelectedUser(e.target.value)}
             >
               <option value="">Select a user...</option>
-              {members.map(m => (
-                <option key={m.profile_id} value={m.profile_id}>
-                  {m.name}
+              {allUsers.map(u => (
+                <option key={u.profile_id} value={u.profile_id}>
+                  {u.display_name}
                 </option>
               ))}
             </select>
