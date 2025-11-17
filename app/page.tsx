@@ -34,12 +34,13 @@ type Pick = {
   game_id?: string | null;
   status?: "UPCOMING" | "LIVE" | "FINAL" | string;
   points?: number | null;
+  winless_double?: boolean;
 };
 type MemberLockedPicks = {
   profile_id: string;
   display_name?: string | null;
   points_week?: number | null;
-  picks?: Array<{ team_id: string; status?: string; points?: number | null }>;
+  picks?: Array<{ team_id: string; status?: string; points?: number | null; winless_double?: boolean }>;
 };
 
 /** Reusable card */
@@ -133,6 +134,7 @@ function normalizeLockedMembersShape(raw: any): MemberLockedPicks[] {
           team_id: p.team_id ?? p.team ?? p.teamId ?? p.abbr ?? p.abbreviation ?? "",
           status: p.status ?? p.state ?? undefined,
           points: p.points ?? p.pts ?? undefined,
+          winless_double: p.winless_double ?? false,
         }))
       : [],
   }));
@@ -175,6 +177,8 @@ function groupLockedFromRows(raw: any): MemberLockedPicks[] {
         ? r.pick_points
         : null;
 
+    const winlessDouble = r.winless_double ?? false;
+
     let entry = byMember.get(profile_id);
     if (!entry) {
       entry = {
@@ -187,7 +191,7 @@ function groupLockedFromRows(raw: any): MemberLockedPicks[] {
     }
 
     if (team_id) {
-      entry.picks!.push({ team_id, status, points: rowPoints });
+      entry.picks!.push({ team_id, status, points: rowPoints, winless_double: winlessDouble });
     }
 
     if (typeof rowPoints === "number") {
@@ -554,7 +558,10 @@ function HomeInner() {
                         )}
                       </div>
                       <div className="flex flex-col items-end shrink-0">
-                        {typeof pts === "number" && <span className="text-[10px] font-bold">{pts} pts</span>}
+                        <div className="flex items-center gap-1">
+                          {typeof pts === "number" && <span className="text-[10px] font-bold">{pts} pts</span>}
+                          {p.winless_double && <span className="text-[8px] font-bold bg-purple-600 text-white px-1 py-0.5 rounded">2×</span>}
+                        </div>
                         <span className="text-[10px] uppercase tracking-wide text-neutral-500">{s}</span>
                       </div>
                     </li>
@@ -596,9 +603,14 @@ function HomeInner() {
                                     className="w-full"
                                   />
                                 )}
-                                {typeof pk.points === "number" && (
-                                  <span className="text-[10px] font-semibold text-center">{pk.points} pts</span>
-                                )}
+                                <div className="flex items-center justify-center gap-1">
+                                  {typeof pk.points === "number" && (
+                                    <span className="text-[10px] font-semibold">{pk.points} pts</span>
+                                  )}
+                                  {pk.winless_double && (
+                                    <span className="text-[8px] font-bold bg-purple-600 text-white px-1 py-0.5 rounded">2×</span>
+                                  )}
+                                </div>
                               </div>
                             );
                           })
