@@ -39,6 +39,7 @@ type Pick = {
 type MemberLockedPicks = {
   profile_id: string;
   display_name?: string | null;
+  preferred_color?: string | null;
   points_week?: number | null;
   picks?: Array<{ team_id: string; status?: string; points?: number | null; winless_double?: boolean }>;
 };
@@ -128,6 +129,7 @@ function normalizeLockedMembersShape(raw: any): MemberLockedPicks[] {
   return raw.members.map((m: any) => ({
     profile_id: m.profile_id ?? m.user_id ?? m.id ?? String(Math.random()),
     display_name: m.display_name ?? m.name ?? m.username ?? null,
+    preferred_color: m.preferred_color ?? m.preferredColor ?? null,
     points_week: m.points_week ?? m.week_points ?? m.points ?? 0,
     picks: Array.isArray(m.picks)
       ? m.picks.map((p: any) => ({
@@ -178,12 +180,15 @@ function groupLockedFromRows(raw: any): MemberLockedPicks[] {
         : null;
 
     const winlessDouble = r.winless_double ?? false;
+    
+    const preferredColor = r.preferred_color || r.preferredColor || null;
 
     let entry = byMember.get(profile_id);
     if (!entry) {
       entry = {
         profile_id,
         display_name: getName(r),
+        preferred_color: preferredColor,
         points_week: 0,
         picks: [],
       };
@@ -582,8 +587,15 @@ function HomeInner() {
                 {locked.map((m) => {
                   const { picks, total } = withDerivedPickPoints(m);
                   const totalToShow = Math.max(total, Number(m.points_week ?? 0));
+                  const borderColor = m.preferred_color || '#000000';
                   return (
-                    <li key={m.profile_id} className="border rounded-xl px-3 py-2">
+                    <li 
+                      key={m.profile_id} 
+                      className="rounded-xl px-3 py-2"
+                      style={{ 
+                        border: `3px solid ${borderColor}` 
+                      }}
+                    >
                       <div className="flex items-center justify-between text-sm mb-2">
                         <span className="font-medium">{m.display_name || "Member"}</span>
                         <span className="text-neutral-600">{totalToShow} pts</span>
