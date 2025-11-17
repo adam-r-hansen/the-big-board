@@ -1,257 +1,344 @@
 'use client'
-
-import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 
-type Member = { profile_id: string; name: string; email: string|null; role: string }
-type PickRow = { email: string; name: string; team_abbr: string|null }
+type Member = { profile_id: string; role: 'owner'|'admin'|'member'; name: string; avatar: string|null; email: string|null }
+type Team = { id: string; name: string; abbreviation: string }
+type Game = { id: string; home_team: string; away_team: string; game_utc: string; status: string }
 
-export default function LeagueManagePage() {
+export default function LeagueAdminPage() {
   const { leagueId } = useParams<{ leagueId: string }>()
-  const [tab, setTab] = useState<'members'|'picks'|'records'>('members')
-
-  // Members
   const [members, setMembers] = useState<Member[]>([])
-  const [mEmail, setMEmail] = useState('')
-  const [mRole, setMRole] = useState<'member'|'admin'>('member')
-  const [loading, setLoading] = useState(false)
-  const [msg, setMsg] = useState('')
+  const [log, setLog] = useState('')
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState<'admin'|'member'>('member')
 
-  // Picks
-  const thisSeason = useMemo(() => new Date().getFullYear(), [])
-  const [season, setSeason] = useState<number>(thisSeason)
-  const [week, setWeek] = useState<number>(1)
-  const [rows, setRows] = useState<PickRow[]>([])
-  const [pEmail, setPEmail] = useState('')
-  const [teamAbbr, setTeamAbbr] = useState('')
-  const [force, setForce] = useState(false)
-
-  // Team Records
-  const [recordsWeek, setRecordsWeek] = useState<number>(1)
-  const [recordsSeason, setRecordsSeason] = useState<number>(thisSeason)
-  const [refreshing, setRefreshing] = useState(false)
-  const [recordsMsg, setRecordsMsg] = useState('')
+  // Manual Pick Helper state
+  const [selectedUser, setSelectedUser] = useState('')
+  const [pickSeason, setPickSeason] = useState<number>(new Date().getFullYear())
+  const [pickWeek, setPickWeek] = useState<number>(1)
+  const [selectedTeam, setSelectedTeam] = useState('')
+  const [availableTeams, setAvailableTeams] = useState<Team[]>([])
+  const [userPicks, setUserPicks] = useState<{team_id: string}[]>([])
+  const [allTeams, setAllTeams] = useState<Record<string, Team>>({})
+  const [loadingPicks, setLoadingPicks] = useState(false)
 
   async function loadMembers() {
-    setMsg('')
-    const res = await fetch(`/api/leagues/${leagueId}/members`, { cache: 'no-store' })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) { setMsg(j?.error || 'Load members failed'); return }
+    setLog('')
+    const res = await fetch(`/api/leagues/${leagueId}/members`, { cache:'no-store' })
+    const j = await res.json()
+    if (!res.ok) { setLog(j.error || 'load members failed'); return }
     setMembers(j.members ?? [])
   }
-  async function addMember() {
-    setMsg(''); setLoading(true)
-    try {
-      const res = await fetch(`/api/leagues/${leagueId}/members`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: mEmail.trim(), role: mRole })
-      })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok || !j.ok) { setMsg(j?.error || 'Add failed'); return }
-      setMEmail(''); setMRole('member'); await loadMembers()
-    } finally { setLoading(false) }
-  }
 
-  async function loadPicks() {
-    setMsg('')
-    const res = await fetch(`/api/admin/leagues/${leagueId}/picks?season=${season}&week=${week}`, { cache: 'no-store' })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) { setMsg(j?.error || 'Load picks failed'); return }
-    setRows(j.picks ?? [])
-  }
-  async function setPick() {
-    setMsg(''); setLoading(true)
-    try {
-      const res = await fetch(`/api/admin/leagues/${leagueId}/picks`, {
-        method: 'POST',
-        headers: { 'content-type':'application/json' },
-        body: JSON.stringify({ email: pEmail.trim(), season, week, teamAbbr: teamAbbr.trim(), force })
-      })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok || !j.ok) { setMsg(j?.error || 'Set pick failed'); return }
-      await loadPicks()
-    } finally { setLoading(false) }
-  }
-  async function removePick(email: string, team?: string) {
-    setMsg(''); setLoading(true)
-    try {
-      const res = await fetch(`/api/admin/leagues/${leagueId}/picks`, {
-        method: 'DELETE',
-        headers: { 'content-type':'application/json' },
-        body: JSON.stringify({ email, season, week, teamAbbr: team })
-      })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok || !j.ok) { setMsg(j?.error || 'Remove pick failed'); return }
-      await loadPicks()
-    } finally { setLoading(false) }
-  }
+  // Load all teams on mount
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const tm = await fetch('/api/team-map', { cache: 'no-store' }).then(r => r.json())
+        setAllTeams(tm?.teams || {})
+      } catch {}
+    })()
+  }, [])
 
-  async function refreshTeamRecords() {
-    setRefreshing(true)
-    setRecordsMsg('')
-    
-    try {
-      const res = await fetch('/api/team-records/calculate', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ 
-          season: recordsSeason, 
-          week: recordsWeek 
-        }),
-      })
-      
-      const j = await res.json()
-      
-      if (!res.ok) {
-        throw new Error(j?.error || 'Failed to refresh team records')
+  useEffect(() => { 
+    if (leagueId) loadMembers() 
+  }, [leagueId])
+
+  // Load games and extract available teams when season/week changes
+  useEffect(() => {
+    if (!pickSeason || !pickWeek) return
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/games-for-week?season=${pickSeason}&week=${pickWeek}`, { cache: 'no-store' })
+        const j = await res.json()
+        const games: any[] = j.games || j || []
+        
+        // Extract unique team IDs from games
+        const teamIds = new Set<string>()
+        games.forEach(g => {
+          const homeId = g.home?.id || g.home_team
+          const awayId = g.away?.id || g.away_team
+          if (homeId) teamIds.add(homeId)
+          if (awayId) teamIds.add(awayId)
+        })
+
+        // Map team IDs to team objects
+        const teams: Team[] = Array.from(teamIds)
+          .map(id => allTeams[id])
+          .filter(Boolean)
+          .sort((a, b) => a.abbreviation.localeCompare(b.abbreviation))
+
+        setAvailableTeams(teams)
+      } catch (e) {
+        console.error('Failed to load games:', e)
+        setAvailableTeams([])
       }
-      
-      setRecordsMsg(`✅ Team records calculated for Week ${recordsWeek}`)
-      setTimeout(() => setRecordsMsg(''), 3000)
-    } catch (err: any) {
-      setRecordsMsg(`❌ ${err?.message || 'Failed to refresh team records'}`)
-    } finally {
-      setRefreshing(false)
+    })()
+  }, [pickSeason, pickWeek, allTeams])
+
+  // Load user's existing picks when user/season/week changes
+  useEffect(() => {
+    if (!selectedUser || !pickSeason || !pickWeek) {
+      setUserPicks([])
+      return
+    }
+    
+    setLoadingPicks(true)
+    ;(async () => {
+      try {
+        const res = await fetch(
+          `/api/admin/leagues/${leagueId}/picks?season=${pickSeason}&week=${pickWeek}`,
+          { cache: 'no-store' }
+        )
+        const j = await res.json()
+        if (res.ok) {
+          const picks = (j.picks || []).filter((p: any) => {
+            // Match by email since that's what we store in selectedUser
+            const member = members.find(m => m.profile_id === selectedUser)
+            return p.email === member?.email
+          })
+          setUserPicks(picks.map((p: any) => ({ team_id: p.team_abbr })))
+        } else {
+          setUserPicks([])
+        }
+      } catch {
+        setUserPicks([])
+      } finally {
+        setLoadingPicks(false)
+      }
+    })()
+  }, [selectedUser, pickSeason, pickWeek, leagueId, members])
+
+  async function setRole(profileId: string, role: string) {
+    setLog('')
+    const res = await fetch(`/api/leagues/${leagueId}/members`, {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ action:'setRole', profileId, role })
+    })
+    const j = await res.json()
+    if (!res.ok) { setLog(j.error || 'set role failed'); return }
+    loadMembers()
+  }
+
+  async function removeMember(profileId: string) {
+    setLog('')
+    const res = await fetch(`/api/leagues/${leagueId}/members`, {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ action:'remove', profileId })
+    })
+    const j = await res.json()
+    if (!res.ok) { setLog(j.error || 'remove failed'); return }
+    loadMembers()
+  }
+
+  async function createInvite() {
+    setLog('')
+    const res = await fetch('/api/invites', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ leagueId, email: inviteEmail, role: inviteRole })
+    })
+    const j = await res.json()
+    if (!res.ok) { setLog(j.error || 'invite failed'); return }
+    setLog(`Invite created. Token: ${j.invite.token} (expires: ${j.invite.expires_at})`)
+    setInviteEmail('')
+  }
+
+  async function createManualPick() {
+    if (!selectedUser || !selectedTeam) return
+    
+    setLog('')
+    const member = members.find(m => m.profile_id === selectedUser)
+    if (!member?.email) {
+      setLog('Member email not found')
+      return
+    }
+
+    const team = availableTeams.find(t => t.id === selectedTeam)
+    if (!team) {
+      setLog('Team not found')
+      return
+    }
+
+    const res = await fetch(`/api/admin/leagues/${leagueId}/picks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: member.email,
+        season: pickSeason,
+        week: pickWeek,
+        teamAbbr: team.abbreviation,
+        force: false
+      })
+    })
+
+    const j = await res.json()
+    if (!res.ok) {
+      setLog(`Failed to create pick: ${j.error || 'Unknown error'}`)
+      return
+    }
+
+    setLog(`✓ Pick created for ${member.name}: ${team.abbreviation} (Week ${pickWeek})`)
+    setSelectedTeam('')
+    
+    // Reload picks to update the UI
+    const reloadRes = await fetch(
+      `/api/admin/leagues/${leagueId}/picks?season=${pickSeason}&week=${pickWeek}`,
+      { cache: 'no-store' }
+    )
+    const reloadJ = await reloadRes.json()
+    if (reloadRes.ok) {
+      const picks = (reloadJ.picks || []).filter((p: any) => p.email === member.email)
+      setUserPicks(picks.map((p: any) => ({ team_id: p.team_abbr })))
     }
   }
 
-  useEffect(() => { if (tab==='members') loadMembers() }, [tab, leagueId])
-  useEffect(() => { if (tab==='picks') loadPicks() }, [tab, leagueId, season, week])
+  // Check if a team has already been picked
+  const isTeamPicked = (teamId: string) => {
+    const team = allTeams[teamId]
+    if (!team) return false
+    return userPicks.some(p => p.team_id === team.abbreviation)
+  }
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8 grid gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Manage League</h1>
-        <Link href="/admin" className="text-sm underline">← Back to Admin</Link>
-      </div>
+    <main className="mx-auto max-w-5xl px-4 py-6 grid gap-6">
+      <h1 className="text-2xl font-bold">League Admin</h1>
 
-      {msg && <p className="text-sm text-red-600">{msg}</p>}
-
-      <div className="flex gap-2">
-        <button onClick={()=>setTab('members')} className={`px-3 py-1.5 rounded-md border ${tab==='members'?'bg-neutral-100 dark:bg-neutral-800':''}`}>Members</button>
-        <button onClick={()=>setTab('picks')} className={`px-3 py-1.5 rounded-md border ${tab==='picks'?'bg-neutral-100 dark:bg-neutral-800':''}`}>Picks</button>
-        <button onClick={()=>setTab('records')} className={`px-3 py-1.5 rounded-md border ${tab==='records'?'bg-neutral-100 dark:bg-neutral-800':''}`}>Team Records</button>
-      </div>
-
-      {tab==='members' && (
-        <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 grid gap-4">
-          <h2 className="text-xl font-semibold">Members</h2>
-          <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
-            <input className="flex-1 h-10 rounded-md border px-3" placeholder="user@email.com" value={mEmail} onChange={e=>setMEmail(e.target.value)} />
-            <select className="h-10 rounded-md border px-2" value={mRole} onChange={e=>setMRole(e.target.value as any)}>
-              <option value="member">member</option>
-              <option value="admin">admin</option>
-            </select>
-            <button className="h-10 px-4 rounded-md bg-black text-white disabled:opacity-60" disabled={loading || !mEmail.trim()} onClick={addMember}>
-              Add
-            </button>
-          </div>
+      <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+        <h2 className="font-semibold mb-3">Members & Roles</h2>
+        {members.length === 0 ? <div className="text-sm text-neutral-500">No members.</div> : (
           <ul className="grid gap-2">
             {members.map(m => (
-              <li key={m.profile_id} className="flex items-center justify-between border rounded-lg px-3 py-2">
-                <span>{m.name}{m.email ? ` — ${m.email}` : ''}</span>
-                <span className="text-xs uppercase tracking-wide text-neutral-500">{m.role}</span>
+              <li key={m.profile_id} className="flex items-center justify-between">
+                <span>{m.name}</span>
+                <div className="flex items-center gap-2">
+                  <select className="h-8 border rounded px-2" value={m.role} onChange={e=>setRole(m.profile_id, e.target.value)}>
+                    <option value="owner">owner</option>
+                    <option value="admin">admin</option>
+                    <option value="member">member</option>
+                  </select>
+                  <button className="h-8 px-3 border rounded" onClick={()=>removeMember(m.profile_id)}>Remove</button>
+                </div>
               </li>
             ))}
           </ul>
-        </section>
-      )}
+        )}
+      </section>
 
-      {tab==='picks' && (
-        <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 grid gap-4">
-          <h2 className="text-xl font-semibold">Picks — manage by week</h2>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="text-sm">Season
-              <input className="ml-2 h-9 w-28 rounded-md border px-2" type="number" value={season} onChange={e=>setSeason(+e.target.value)} />
-            </label>
-            <label className="text-sm">Week
-              <input className="ml-2 h-9 w-20 rounded-md border px-2" type="number" value={week} onChange={e=>setWeek(+e.target.value)} />
-            </label>
-            <button className="h-9 px-3 rounded-md border" onClick={loadPicks}>Refresh</button>
-          </div>
+      <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+        <h2 className="font-semibold mb-3">Invite User</h2>
+        <div className="flex flex-wrap gap-2 items-center">
+          <input className="h-9 rounded-md border px-2" placeholder="email@example.com" value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} />
+          <select className="h-9 rounded-md border px-2" value={inviteRole} onChange={e=>setInviteRole(e.target.value as any)}>
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+          </select>
+          <button className="h-9 px-4 rounded-md border" disabled={!inviteEmail} onClick={createInvite}>Create invite</button>
+        </div>
+        <p className="text-xs text-neutral-500 mt-2">MVP: we return a token you can DM; acceptance route coming next.</p>
+      </section>
 
-          <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
-            <input className="flex-1 h-10 rounded-md border px-3" placeholder="member@email.com" value={pEmail} onChange={e=>setPEmail(e.target.value)} />
-            <input className="w-28 h-10 rounded-md border px-3" placeholder="Team (e.g., KC)" value={teamAbbr} onChange={e=>setTeamAbbr(e.target.value)} />
-            <label className="text-sm flex items-center gap-2">
-              <input type="checkbox" checked={force} onChange={e=>setForce(e.target.checked)} />
-              Force (override lock/limit)
-            </label>
-            <button className="h-10 px-4 rounded-md bg-black text-white disabled:opacity-60" disabled={loading || !pEmail.trim() || !teamAbbr.trim()} onClick={setPick}>
-              Set Pick
-            </button>
-          </div>
-
-          <ul className="grid gap-2">
-            {rows.map(r => (
-              <li key={`${r.email}-${r.team_abbr}`} className="flex items-center justify-between border rounded-lg px-3 py-2">
-                <span>{r.name} — {r.email} — <b>{r.team_abbr ?? '—'}</b></span>
-                <button className="text-sm underline" onClick={()=>removePick(r.email, r.team_abbr ?? undefined)}>Unpick</button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {tab==='records' && (
-        <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 grid gap-4">
-          <h2 className="text-xl font-semibold">Team Records Calculator</h2>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Calculate team win/loss records entering each week. This is needed for Winless Double and OOF wrinkles.
-          </p>
-          
-          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
-            <label className="grid gap-1">
-              <span className="text-sm text-neutral-600 dark:text-neutral-400">Season</span>
-              <input
-                type="number"
-                className="h-10 w-28 rounded-md border px-3"
-                value={recordsSeason}
-                onChange={(e) => setRecordsSeason(Number(e.target.value))}
-              />
-            </label>
-            
-            <label className="grid gap-1 flex-1">
-              <span className="text-sm text-neutral-600 dark:text-neutral-400">
-                Calculate records entering week:
-              </span>
-              <select
-                className="h-10 rounded-md border px-3"
-                value={recordsWeek}
-                onChange={(e) => setRecordsWeek(Number(e.target.value))}
-              >
-                {Array.from({ length: 18 }).map((_, i) => {
-                  const wk = i + 1
-                  return (
-                    <option key={wk} value={wk}>
-                      Week {wk}
-                    </option>
-                  )
-                })}
-              </select>
-            </label>
-            
-            <button
-              onClick={refreshTeamRecords}
-              disabled={refreshing}
-              className="h-10 px-4 rounded-md bg-black text-white disabled:opacity-60"
+      <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+        <h2 className="font-semibold mb-3">Manual Pick Helper</h2>
+        <p className="text-sm text-neutral-500 mb-4">Create picks on behalf of league members</p>
+        
+        <div className="grid gap-4">
+          {/* User Selection */}
+          <div>
+            <label className="block text-sm font-medium mb-1">User</label>
+            <select 
+              className="w-full h-10 rounded-md border border-neutral-300 dark:border-neutral-700 px-3"
+              value={selectedUser}
+              onChange={e => setSelectedUser(e.target.value)}
             >
-              {refreshing ? 'Calculating...' : 'Refresh Records'}
-            </button>
+              <option value="">Select a user...</option>
+              {members.map(m => (
+                <option key={m.profile_id} value={m.profile_id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
           </div>
-          
-          {recordsMsg && (
-            <div className="text-sm">
-              {recordsMsg}
+
+          {/* Season & Week */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Season</label>
+              <input 
+                type="number" 
+                className="w-full h-10 rounded-md border border-neutral-300 dark:border-neutral-700 px-3"
+                value={pickSeason}
+                onChange={e => setPickSeason(+e.target.value)}
+              />
             </div>
-          )}
-          
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
-            This calculates each team's record based on completed games before the selected week.
+            <div>
+              <label className="block text-sm font-medium mb-1">Week</label>
+              <input 
+                type="number" 
+                min="1" 
+                max="18"
+                className="w-full h-10 rounded-md border border-neutral-300 dark:border-neutral-700 px-3"
+                value={pickWeek}
+                onChange={e => setPickWeek(+e.target.value)}
+              />
+            </div>
           </div>
-        </section>
+
+          {/* Team Selection */}
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Team {loadingPicks && <span className="text-xs text-neutral-400">(loading picks...)</span>}
+            </label>
+            <select 
+              className="w-full h-10 rounded-md border border-neutral-300 dark:border-neutral-700 px-3"
+              value={selectedTeam}
+              onChange={e => setSelectedTeam(e.target.value)}
+              disabled={!selectedUser || availableTeams.length === 0}
+            >
+              <option value="">
+                {availableTeams.length === 0 
+                  ? 'No teams available for this week' 
+                  : 'Select a team...'}
+              </option>
+              {availableTeams.map(t => {
+                const picked = isTeamPicked(t.id)
+                return (
+                  <option 
+                    key={t.id} 
+                    value={t.id}
+                    style={picked ? { color: '#999' } : undefined}
+                  >
+                    {t.abbreviation} - {t.name} {picked ? '(already picked)' : ''}
+                  </option>
+                )
+              })}
+            </select>
+            {userPicks.length > 0 && (
+              <p className="text-xs text-neutral-500 mt-1">
+                Current picks: {userPicks.map(p => p.team_id).join(', ')}
+              </p>
+            )}
+          </div>
+
+          {/* Save Button */}
+          <button
+            className="h-10 px-6 rounded-md bg-black text-white dark:bg-white dark:text-black disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!selectedUser || !selectedTeam}
+            onClick={createManualPick}
+          >
+            Save Pick
+          </button>
+        </div>
+      </section>
+
+      {log && (
+        <div className={`text-sm p-3 rounded-md ${
+          log.startsWith('✓') 
+            ? 'bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-400' 
+            : 'bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+        }`}>
+          {log}
+        </div>
       )}
     </main>
   )
