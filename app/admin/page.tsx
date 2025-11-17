@@ -95,7 +95,7 @@ export default function AdminPage() {
 
   async function loadLeagues() {
     try {
-      const res = await fetch('/api/leagues', { cache: 'no-store' })
+      const res = await fetch('/api/my-leagues', { cache: 'no-store' })
       const j = await res.json()
       if (res.ok) {
         setLeagues(j.leagues || [])
