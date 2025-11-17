@@ -6,6 +6,7 @@ type Row = {
   pickId: string
   profileId: string
   name: string
+  preferredColor: string | null
   team: {
     id: string
     abbreviation: string | null
@@ -116,11 +117,11 @@ export async function GET(req: NextRequest) {
   })
   if (locked.length === 0) return NextResponse.json({ rows: [] })
 
-  // 3) Profiles (display_name/email; there is no full_name in your table)
+  // 3) Profiles (display_name/email/preferred_color)
   const profileIds = Array.from(new Set(locked.map(p => p.profile_id as string)))
   const { data: profiles, error: profErr } = await supabase
     .from('profiles')
-    .select('id, display_name, email')
+    .select('id, display_name, email, preferred_color')
     .in('id', profileIds)
 
   if (profErr) return NextResponse.json({ error: profErr.message }, { status: 500 })
@@ -147,6 +148,7 @@ export async function GET(req: NextRequest) {
       pickId: p.id as string,
       profileId: p.profile_id as string,
       name: safeName(pr?.display_name ?? null, pr?.email ?? null),
+      preferredColor: pr?.preferred_color ?? null,
       team: t
         ? {
             id: t.id as string,
