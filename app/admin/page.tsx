@@ -353,6 +353,17 @@ export default function AdminPage() {
 
           {selectedLeague && (
             <div className="grid gap-4">
+              {/* Manage League Button */}
+              <div className="pb-4 border-b dark:border-neutral-700">
+                <Link 
+                  href={`/admin/leagues/${selectedLeagueId}`}
+                  className="inline-block px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
+                >
+                  👥 Manage League (Members, Invites, Manual Picks)
+                </Link>
+                <p className="text-xs text-neutral-500 mt-2">Manage members, roles, invites, and create picks for users</p>
+              </div>
+
               {/* Wrinkles Management */}
               <div className="border-t pt-4 dark:border-neutral-700">
                 <h3 className="font-semibold mb-3">🎲 Manage Wrinkles</h3>
