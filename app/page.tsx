@@ -551,9 +551,9 @@ function HomeInner() {
                   const s = (g?.status || (gameLocked(g) ? "LIVE" : "UPCOMING")).toUpperCase();
                   const pts = pickPointsForGame(p.team_id, g);
                   return (
-                    <li key={p.id} className="flex items-center gap-2">
-                      <div className="flex-1 min-w-0">
-                        {team && (
+                    <li key={p.id} className="relative">
+                      {team && (
+                        <div className="relative">
                           <TeamCard
                             team={team}
                             variant="solid"
@@ -561,15 +561,26 @@ function HomeInner() {
                             disabled
                             className="w-full"
                           />
-                        )}
-                      </div>
-                      <div className="flex flex-col items-end shrink-0">
-                        <div className="flex items-center gap-1">
-                          {typeof pts === "number" && <span className="text-[10px] font-bold">{pts} pts</span>}
-                          {p.winless_double && <span className="text-[8px] font-bold bg-purple-600 text-white px-1 py-0.5 rounded">2×</span>}
+                          {/* Points and status overlay in bottom-right corner */}
+                          <div className="absolute bottom-2 right-3 flex flex-col items-end">
+                            {typeof pts === "number" && (
+                              <div className="flex items-center gap-1">
+                                <span className="text-[11px] font-bold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+                                  {pts} pts
+                                </span>
+                                {p.winless_double && (
+                                  <span className="text-[8px] font-bold bg-purple-600 text-white px-1 py-0.5 rounded">
+                                    2×
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <span className="text-[9px] uppercase tracking-wide text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+                              {s}
+                            </span>
+                          </div>
                         </div>
-                        <span className="text-[10px] uppercase tracking-wide text-neutral-500">{s}</span>
-                      </div>
+                      )}
                     </li>
                   );
                 })}
