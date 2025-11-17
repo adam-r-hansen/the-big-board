@@ -5,7 +5,13 @@ import { createClient } from '@/utils/supabase/server'
 export const dynamic = 'force-dynamic'
 
 type Member = { id: string; display_name: string | null; email: string | null }
-type Pick = { id: string; profile_id: string; team_id: string; game_id: string }
+type Pick = { 
+  id: string
+  profile_id: string
+  team_id: string
+  game_id: string
+  winless_double?: boolean
+}
 type Game = {
   id: string
   status: string
@@ -105,10 +111,10 @@ export async function GET(req: NextRequest) {
     for (const p of profs ?? []) profiles[(p as any).id] = p as any
   }
 
-  // Weekly picks
+  // Weekly picks - NOW INCLUDING winless_double field
   let picksQ = supabase
     .from('picks')
-    .select('id, profile_id, team_id, game_id, season, week')
+    .select('id, profile_id, team_id, game_id, season, week, winless_double')
     .eq('league_id', leagueId)
     .eq('season', season)
   if (week != null) picksQ = picksQ.eq('week', week)
@@ -165,15 +171,29 @@ export async function GET(req: NextRequest) {
       const g = gamesMap.get(p.game_id)
       const when = g?.game_utc ? Date.parse(g.game_utc) : 0
       const correct = g ? isCorrect(g, p.team_id) : false
-      const pts = g ? winnerScore(g, p.team_id) : 0
+      let pts = g ? winnerScore(g, p.team_id) : 0
+      
+      // Check if this is a regular pick with winless_double
+      const isRegularPick = myPicks.includes(p as any)
+      const hasWinlessDouble = isRegularPick && (p as any).winless_double === true
+      
+      // For winless double: user gets 2x, but wrinkle_points only gets the bonus
+      let wrinkleBonus = 0
+      if (hasWinlessDouble && pts > 0) {
+        wrinkleBonus = pts // The bonus amount
+        pts = pts * 2     // User sees doubled points
+      }
+      
       const isWrinkle = myWrn.includes(p as any)
-      return { when, correct, pts, isWrinkle }
+      
+      return { when, correct, pts, isWrinkle, wrinkleBonus }
     }).sort((a, b) => a.when - b.when)
 
     let cur = 0, best = 0, correctCount = 0, wrinklePts = 0, totalPts = 0
     for (const e of events) {
       totalPts += e.pts
       if (e.isWrinkle) wrinklePts += e.pts
+      if (e.wrinkleBonus) wrinklePts += e.wrinkleBonus // Add winless double bonus to wrinkle points
       if (e.correct) { correctCount += 1; cur += 1; best = Math.max(best, cur) } else { cur = 0 }
     }
 
