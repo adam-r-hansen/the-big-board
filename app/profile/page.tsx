@@ -223,10 +223,9 @@ export default function ProfilePage() {
               <div>
                 <label className="block text-sm font-medium mb-2">Preview</label>
                 <div
-                  className="rounded-2xl border-2 px-4 py-3 text-center font-semibold"
+                  className="rounded-2xl border-2 px-4 py-3 text-center font-semibold text-neutral-900 dark:text-neutral-100"
                   style={{
                     borderColor: selectedColor,
-                    color: selectedColor,
                     backgroundColor: 'transparent',
                   }}
                 >
