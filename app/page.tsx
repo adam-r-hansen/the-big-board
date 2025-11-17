@@ -49,12 +49,10 @@ type PlayerStats = {
   correctPicks: number;
   accuracy: number;
   avgPerPick: number;
-  wrinklePoints: number;
   longestStreak: number;
   avgPerWeek: number;
   avgLast3Weeks: number;
   pointsBehind: number;
-  hasWrinkles: boolean;
 };
 
 /** Reusable card */
@@ -772,12 +770,6 @@ function HomeInner() {
                                 <span>Avg per week (last 3):</span>
                                 <span className="font-semibold">{stats.avgLast3Weeks} pts</span>
                               </div>
-                              {stats.hasWrinkles && (
-                                <div className="flex justify-between">
-                                  <span>Wrinkle points:</span>
-                                  <span className="font-semibold">{stats.wrinklePoints} pts</span>
-                                </div>
-                              )}
                             </div>
                           ) : null}
                         </div>

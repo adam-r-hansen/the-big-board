@@ -73,11 +73,10 @@ export async function GET(req: NextRequest) {
     return g.away_team === teamId ? as : 0
   }
 
-  // Calculate stats
+  // Calculate stats for this player
   let totalPoints = 0
   let decidedPicks = 0
   let correctPicks = 0
-  let wrinklePoints = 0
   let longestStreak = 0
   let currentStreak = 0
   const weeklyPoints = new Map<number, number>()
@@ -85,7 +84,6 @@ export async function GET(req: NextRequest) {
   for (const p of allPicks) {
     const g = p.game_id ? gamesById.get(p.game_id) : undefined
     const pts = pickPoints(p.team_id, g)
-    const isWrinkle = 'wrinkle_id' in p
 
     if (typeof pts === 'number') {
       totalPoints += pts
@@ -97,10 +95,6 @@ export async function GET(req: NextRequest) {
         if (currentStreak > longestStreak) longestStreak = currentStreak
       } else {
         currentStreak = 0
-      }
-
-      if (isWrinkle) {
-        wrinklePoints += pts
       }
 
       // Track weekly points
@@ -126,18 +120,30 @@ export async function GET(req: NextRequest) {
     ? last3Weeks.reduce((acc, w) => acc + (weeklyPoints.get(w) ?? 0), 0) / last3Weeks.length
     : 0
 
-  // Get leader's points to calculate points behind
-  const { data: standingsData, error: standErr } = await supabase
+  // Get ALL players' points to calculate points behind leader
+  const { data: allPicksData, error: allPicksErr } = await supabase
     .from('picks')
     .select('profile_id, team_id, game_id')
     .eq('league_id', leagueId)
     .eq('season', season)
 
   let leaderPoints = totalPoints
-  if (!standErr && standingsData) {
+
+  if (!allPicksErr && allPicksData) {
+    // Also get all wrinkle picks for all players
+    let allWrinklePicks: any[] = []
+    if (wrinkleIds.length) {
+      const { data: allWpRows, error: allWpErr } = await supabase
+        .from('wrinkle_picks')
+        .select('profile_id, team_id, game_id')
+        .in('wrinkle_id', wrinkleIds)
+      if (!allWpErr) allWrinklePicks = allWpRows ?? []
+    }
+
+    const allPlayerPicks = [...allPicksData, ...allWrinklePicks]
     const profilePoints = new Map<string, number>()
     
-    for (const pick of standingsData) {
+    for (const pick of allPlayerPicks) {
       const g = pick.game_id ? gamesById.get(pick.game_id) : undefined
       const pts = pickPoints(pick.team_id, g)
       if (typeof pts === 'number') {
@@ -145,7 +151,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    leaderPoints = Math.max(...Array.from(profilePoints.values()), totalPoints)
+    // Find the max points (leader)
+    const allPoints = Array.from(profilePoints.values())
+    if (allPoints.length > 0) {
+      leaderPoints = Math.max(...allPoints)
+    }
   }
 
   const pointsBehind = leaderPoints - totalPoints
@@ -156,11 +166,9 @@ export async function GET(req: NextRequest) {
     correctPicks,
     accuracy: Number((accuracy * 100).toFixed(1)),
     avgPerPick: Number(avgPerPick.toFixed(1)),
-    wrinklePoints,
     longestStreak,
     avgPerWeek: Number(avgPerWeek.toFixed(1)),
     avgLast3Weeks: Number(avgLast3Weeks.toFixed(1)),
     pointsBehind,
-    hasWrinkles: wrinkleIds.length > 0,
   })
 }
