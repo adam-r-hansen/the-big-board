@@ -210,7 +210,7 @@ function groupLockedFromRows(raw: any): MemberLockedPicks[] {
 }
 
 /** Normalize standings to simple rows */
-function normalizeStandings(raw: any): Array<{ profile_id?: string; display_name?: string; points_total?: number }> {
+function normalizeStandings(raw: any): Array<{ profile_id?: string; display_name?: string; points_total?: number; preferred_color?: string | null }> {
   const arr =
     (Array.isArray(raw) && raw) ||
     raw?.standings ||
@@ -222,6 +222,7 @@ function normalizeStandings(raw: any): Array<{ profile_id?: string; display_name
     profile_id: r.profile_id ?? r.user_id ?? r.id,
     display_name: r.display_name ?? r.name ?? r.username ?? r.email ?? "Member",
     points_total: r.points_total ?? r.total_points ?? r.points ?? 0,
+    preferred_color: r.preferred_color ?? r.preferredColor ?? null,
   }));
 }
 
@@ -654,12 +655,21 @@ function HomeInner() {
               <div className="text-sm text-neutral-500">No standings yet.</div>
             ) : (
               <ol className="grid gap-2">
-                {standRows.map((r: any, idx: number) => (
-                  <li key={r.profile_id || r.id || idx} className="flex items-center justify-between">
-                    <span className="truncate">{r.display_name || "Member"}</span>
-                    <span className="text-sm font-semibold">{r.points_total ?? 0} pts</span>
-                  </li>
-                ))}
+                {standRows.map((r: any, idx: number) => {
+                  const borderColor = r.preferred_color || '#000000';
+                  return (
+                    <li 
+                      key={r.profile_id || r.id || idx} 
+                      className="flex items-center justify-between rounded-lg px-3 py-2"
+                      style={{
+                        border: `3px solid ${borderColor}`
+                      }}
+                    >
+                      <span className="truncate">{r.display_name || "Member"}</span>
+                      <span className="text-sm font-semibold">{r.points_total ?? 0} pts</span>
+                    </li>
+                  );
+                })}
               </ol>
             )}
           </Card>
