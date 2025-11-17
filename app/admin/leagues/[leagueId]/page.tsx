@@ -28,7 +28,17 @@ export default function LeagueAdminPage() {
     const res = await fetch(`/api/leagues/${leagueId}/members`, { cache:'no-store' })
     const j = await res.json()
     if (!res.ok) { setLog(j.error || 'load members failed'); return }
-    setMembers(j.members ?? [])
+    
+    // Map API response to our Member type
+    const mappedMembers = (j.members ?? []).map((m: any) => ({
+      profile_id: m.profile_id,
+      role: m.role,
+      name: m.profiles?.display_name || m.profiles?.email || 'Unknown',
+      email: m.profiles?.email || null,
+      avatar: null
+    }))
+    
+    setMembers(mappedMembers)
   }
 
   // Load all teams on mount
