@@ -43,6 +43,19 @@ type MemberLockedPicks = {
   points_week?: number | null;
   picks?: Array<{ team_id: string; status?: string; points?: number | null; winless_double?: boolean }>;
 };
+type PlayerStats = {
+  totalPoints: number;
+  decidedPicks: number;
+  correctPicks: number;
+  accuracy: number;
+  avgPerPick: number;
+  wrinklePoints: number;
+  longestStreak: number;
+  avgPerWeek: number;
+  avgLast3Weeks: number;
+  pointsBehind: number;
+  hasWrinkles: boolean;
+};
 
 /** Reusable card */
 function Card(props: { title: string; right?: ReactNode; className?: string; children: ReactNode }) {
@@ -258,6 +271,11 @@ function HomeInner() {
   const [locked, setLocked] = useState<MemberLockedPicks[]>([]);
   const [authReady, setAuthReady] = useState(false);
 
+  // Expanded player stats state
+  const [expandedPlayerId, setExpandedPlayerId] = useState<string | null>(null);
+  const [playerStats, setPlayerStats] = useState<Record<string, PlayerStats>>({});
+  const [loadingStats, setLoadingStats] = useState<string | null>(null);
+
   const picksUsed = myPicks.length;
   const picksAllowed = 2;
   const picksLocked = myPicks.filter((p) => p.status === "FINAL" || p.status === "LIVE").length;
@@ -404,6 +422,36 @@ function HomeInner() {
     });
     return { picks, total };
   };
+
+  // Toggle player stats expansion
+  async function togglePlayerStats(profileId: string) {
+    if (expandedPlayerId === profileId) {
+      // Collapse
+      setExpandedPlayerId(null);
+    } else {
+      // Expand
+      setExpandedPlayerId(profileId);
+      
+      // Load stats if not already cached
+      if (!playerStats[profileId]) {
+        setLoadingStats(profileId);
+        try {
+          const res = await fetch(
+            `/api/player-stats?leagueId=${encodeURIComponent(leagueId)}&profileId=${encodeURIComponent(profileId)}&season=${season}`,
+            { cache: "no-store" }
+          );
+          if (res.ok) {
+            const stats = await res.json();
+            setPlayerStats(prev => ({ ...prev, [profileId]: stats }));
+          }
+        } catch (e) {
+          console.error('Failed to load player stats:', e);
+        } finally {
+          setLoadingStats(null);
+        }
+      }
+    }
+  }
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
@@ -649,7 +697,7 @@ function HomeInner() {
             )}
           </Card>
 
-          {/* Standings (mini) */}
+          {/* Standings (mini) with expandable stats */}
           <Card
             title="Standings (mini)"
             right={
@@ -668,16 +716,72 @@ function HomeInner() {
               <ol className="grid gap-2">
                 {standRows.map((r: any, idx: number) => {
                   const borderColor = r.preferred_color || '#000000';
+                  const isExpanded = expandedPlayerId === r.profile_id;
+                  const stats = playerStats[r.profile_id];
+                  const isLoading = loadingStats === r.profile_id;
+                  
                   return (
                     <li 
                       key={r.profile_id || r.id || idx} 
-                      className="flex items-center justify-between rounded-lg px-3 py-2"
+                      className="rounded-lg overflow-hidden transition-all duration-300"
                       style={{
                         border: `3px solid ${borderColor}`
                       }}
                     >
-                      <span className="truncate">{r.display_name || "Member"}</span>
-                      <span className="text-sm font-semibold">{r.points_total ?? 0} pts</span>
+                      <button
+                        onClick={() => togglePlayerStats(r.profile_id)}
+                        className="w-full flex items-center justify-between px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
+                      >
+                        <span className="truncate">{r.display_name || "Member"}</span>
+                        <span className="text-sm font-semibold">{r.points_total ?? 0} pts</span>
+                      </button>
+                      
+                      {/* Expanded stats */}
+                      <div 
+                        className="overflow-hidden transition-all duration-300"
+                        style={{
+                          maxHeight: isExpanded ? '500px' : '0px',
+                        }}
+                      >
+                        <div className="px-3 pb-3 pt-1 border-t" style={{ borderColor }}>
+                          {isLoading ? (
+                            <div className="text-xs text-neutral-500 py-2">Loading stats...</div>
+                          ) : stats ? (
+                            <div className="text-xs space-y-1 text-neutral-700 dark:text-neutral-300">
+                              <div className="flex justify-between">
+                                <span>Pick accuracy:</span>
+                                <span className="font-semibold">{stats.correctPicks}/{stats.decidedPicks} ({stats.accuracy}%)</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Avg per pick:</span>
+                                <span className="font-semibold">{stats.avgPerPick} pts</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Longest streak:</span>
+                                <span className="font-semibold">{stats.longestStreak} wins</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Points behind leader:</span>
+                                <span className="font-semibold">{stats.pointsBehind} pts</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Avg per week:</span>
+                                <span className="font-semibold">{stats.avgPerWeek} pts</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Avg per week (last 3):</span>
+                                <span className="font-semibold">{stats.avgLast3Weeks} pts</span>
+                              </div>
+                              {stats.hasWrinkles && (
+                                <div className="flex justify-between">
+                                  <span>Wrinkle points:</span>
+                                  <span className="font-semibold">{stats.wrinklePoints} pts</span>
+                                </div>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
                     </li>
                   );
                 })}
