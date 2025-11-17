@@ -40,23 +40,40 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ leagueId: s
     return jsonNoStore({ error: 'forbidden' }, { status: 403 })
   }
 
-  // Get all memberships with profile info
-  const { data: memberships, error } = await sb
+  // Get all memberships
+  const { data: memberships, error: membershipError } = await sb
     .from('league_memberships')
-    .select('profile_id, profiles(email, display_name)')
+    .select('profile_id')
     .eq('league_id', leagueId)
-    .order('profiles(display_name)', { ascending: true })
 
-  if (error) {
-    return jsonNoStore({ error: error.message }, { status: 500 })
+  if (membershipError) {
+    return jsonNoStore({ error: membershipError.message }, { status: 500 })
+  }
+
+  if (!memberships || memberships.length === 0) {
+    return jsonNoStore({ users: [] })
+  }
+
+  // Get profile info for all members
+  const profileIds = memberships.map(m => m.profile_id)
+  const { data: profiles, error: profileError } = await sb
+    .from('profiles')
+    .select('id, email, display_name')
+    .in('id', profileIds)
+
+  if (profileError) {
+    return jsonNoStore({ error: profileError.message }, { status: 500 })
   }
 
   // Map to consistent format
-  const users = (memberships || []).map((m: any) => ({
-    profile_id: m.profile_id,
-    email: m.profiles?.email || null,
-    display_name: m.profiles?.display_name || m.profiles?.email || 'Unknown'
+  const users = (profiles || []).map((p: any) => ({
+    profile_id: p.id,
+    email: p.email || null,
+    display_name: p.display_name || p.email || 'Unknown'
   }))
+
+  // Sort by display name
+  users.sort((a, b) => a.display_name.localeCompare(b.display_name))
 
   return jsonNoStore({ users })
 }
