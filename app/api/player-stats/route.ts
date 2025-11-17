@@ -16,17 +16,17 @@ export async function GET(req: NextRequest) {
 
   const supabase = await createClient()
 
-  // Get all picks for this player in this league/season
+  // Get all picks for this player in THIS SPECIFIC LEAGUE/SEASON
   const { data: picks, error: picksErr } = await supabase
     .from('picks')
-    .select('id, team_id, game_id, week')
+    .select('id, team_id, game_id, week, winless_double')
     .eq('league_id', leagueId)
     .eq('profile_id', profileId)
     .eq('season', season)
 
   if (picksErr) return NextResponse.json({ error: picksErr.message }, { status: 500 })
 
-  // Get wrinkle picks
+  // Get wrinkle picks for THIS LEAGUE
   const { data: wrinkleDefs, error: wDefErr } = await supabase
     .from('wrinkles')
     .select('id')
@@ -57,20 +57,26 @@ export async function GET(req: NextRequest) {
     if (!gErr) gamesById = new Map((g || []).map((x: any) => [x.id, x]))
   }
 
-  function pickPoints(teamId: string, g: any): number | null {
+  function pickPoints(teamId: string, g: any, isWinlessDouble: boolean = false): number | null {
     if (!g) return null
     const s = (g.status || '').toUpperCase()
     if (s !== 'FINAL') return null
     const hs = g.home_score ?? null
     const as = g.away_score ?? null
     if (hs == null || as == null) return 0
+    
+    let basePoints = 0
     if (hs === as) {
-      if (g.home_team === teamId) return hs / 2
-      if (g.away_team === teamId) return as / 2
-      return 0
+      if (g.home_team === teamId) basePoints = hs / 2
+      else if (g.away_team === teamId) basePoints = as / 2
+    } else if (hs > as) {
+      basePoints = g.home_team === teamId ? hs : 0
+    } else {
+      basePoints = g.away_team === teamId ? as : 0
     }
-    if (hs > as) return g.home_team === teamId ? hs : 0
-    return g.away_team === teamId ? as : 0
+    
+    // Apply winless double multiplier
+    return isWinlessDouble ? basePoints * 2 : basePoints
   }
 
   // Calculate stats for this player
@@ -83,7 +89,8 @@ export async function GET(req: NextRequest) {
 
   for (const p of allPicks) {
     const g = p.game_id ? gamesById.get(p.game_id) : undefined
-    const pts = pickPoints(p.team_id, g)
+    const isWinlessDouble = p.winless_double ?? false
+    const pts = pickPoints(p.team_id, g, isWinlessDouble)
 
     if (typeof pts === 'number') {
       totalPoints += pts
@@ -120,17 +127,17 @@ export async function GET(req: NextRequest) {
     ? last3Weeks.reduce((acc, w) => acc + (weeklyPoints.get(w) ?? 0), 0) / last3Weeks.length
     : 0
 
-  // Get ALL players' points to calculate points behind leader
+  // Get ALL players' points in THIS LEAGUE to calculate points behind leader
   const { data: allPicksData, error: allPicksErr } = await supabase
     .from('picks')
-    .select('profile_id, team_id, game_id')
+    .select('profile_id, team_id, game_id, winless_double')
     .eq('league_id', leagueId)
     .eq('season', season)
 
   let leaderPoints = totalPoints
 
   if (!allPicksErr && allPicksData) {
-    // Also get all wrinkle picks for all players
+    // Also get all wrinkle picks for all players in THIS LEAGUE
     let allWrinklePicks: any[] = []
     if (wrinkleIds.length) {
       const { data: allWpRows, error: allWpErr } = await supabase
@@ -145,13 +152,14 @@ export async function GET(req: NextRequest) {
     
     for (const pick of allPlayerPicks) {
       const g = pick.game_id ? gamesById.get(pick.game_id) : undefined
-      const pts = pickPoints(pick.team_id, g)
+      const isWinlessDouble = pick.winless_double ?? false
+      const pts = pickPoints(pick.team_id, g, isWinlessDouble)
       if (typeof pts === 'number') {
         profilePoints.set(pick.profile_id, (profilePoints.get(pick.profile_id) ?? 0) + pts)
       }
     }
 
-    // Find the max points (leader)
+    // Find the max points (leader) in THIS LEAGUE
     const allPoints = Array.from(profilePoints.values())
     if (allPoints.length > 0) {
       leaderPoints = Math.max(...allPoints)
