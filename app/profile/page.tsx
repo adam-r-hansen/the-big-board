@@ -91,12 +91,14 @@ export default function ProfilePage() {
     const team = teams.find(t => t.id === selectedTeamId)
     if (!team) return []
     
-    return [
-      { key: 'primary', label: 'Primary', hex: team.color_primary },
-      { key: 'secondary', label: 'Secondary', hex: team.color_secondary },
-      { key: 'tertiary', label: 'Tertiary', hex: team.color_tertiary },
-      { key: 'quaternary', label: 'Quaternary', hex: team.color_quaternary },
-    ].filter(opt => opt.hex) // Only show colors that exist
+    const options: ColorOption[] = [
+      { key: 'primary' as const, label: 'Primary', hex: team.color_primary },
+      { key: 'secondary' as const, label: 'Secondary', hex: team.color_secondary },
+      { key: 'tertiary' as const, label: 'Tertiary', hex: team.color_tertiary },
+      { key: 'quaternary' as const, label: 'Quaternary', hex: team.color_quaternary },
+    ]
+    
+    return options.filter(opt => opt.hex) // Only show colors that exist
   })()
 
   // When team changes, auto-select primary color if available
