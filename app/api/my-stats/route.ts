@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@/utils/supabase/server'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -48,20 +49,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'leagueId and season required' }, { status: 400 })
   }
 
-  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-    auth: { persistSession: false }
-  })
-
-  const { data: user } = await supabase.auth.getUser()
-  if (!user?.user) {
+  // Use server-side Supabase client for auth
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  
+  if (authError || !user) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
   }
-  const userId = user.user.id
+  const userId = user.id
+
+  // Use service role for data queries
+  const service = createSupabaseClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    auth: { persistSession: false }
+  })
 
   type Row = { id: string; week: number; team_id: string; game_id: string; wrinkle: boolean; wrinkle_kind?: string }
 
   // Regular picks
-  const { data: picks } = await supabase
+  const { data: picks } = await service
     .from('picks')
     .select('id, week, team_id, game_id')
     .eq('league_id', leagueId)
@@ -77,7 +82,7 @@ export async function GET(req: NextRequest) {
   }))
 
   // Wrinkle picks with kind
-  const { data: wrinkles } = await supabase
+  const { data: wrinkles } = await service
     .from('wrinkles')
     .select('id, week, kind')
     .eq('league_id', leagueId)
@@ -85,7 +90,7 @@ export async function GET(req: NextRequest) {
 
   const wrIndex = new Map((wrinkles ?? []).map((w: any) => [w.id, { week: w.week, kind: w.kind }]))
 
-  const { data: wrinklePicks } = await supabase
+  const { data: wrinklePicks } = await service
     .from('wrinkle_picks')
     .select('id, wrinkle_id, team_id, game_id')
     .eq('profile_id', userId)
@@ -111,7 +116,7 @@ export async function GET(req: NextRequest) {
   const gameIds = Array.from(new Set(all.map(r => r.game_id).filter(Boolean))) as string[]
   let gamesById = new Map<string, GameRow>()
   if (gameIds.length) {
-    const { data: g } = await supabase
+    const { data: g } = await service
       .from('games')
       .select('id, game_utc, home_team, away_team, home_score, away_score, status')
       .in('id', gameIds)
