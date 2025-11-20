@@ -20,6 +20,18 @@ type Team = {
   logo_dark?: string | null
 }
 
+type TeamCardTeam = {
+  id: string
+  name: string
+  short_name: string
+  abbreviation: string
+  logo: string
+  color_primary: string
+  color_secondary?: string
+  color_pref_light?: string | null
+  color_pref_dark?: string | null
+}
+
 type Member = {
   profile_id: string
   display_name: string
@@ -69,7 +81,7 @@ function Card(props: { title: string; right?: React.ReactNode; children: React.R
   )
 }
 
-function getTeam(teamId: string, teamMap: Record<string, Team>) {
+function getTeam(teamId: string, teamMap: Record<string, Team>): TeamCardTeam | null {
   const team = teamMap[teamId] || teamMap[teamId?.toUpperCase()]
   if (!team) return null
   
@@ -80,9 +92,9 @@ function getTeam(teamId: string, teamMap: Record<string, Team>) {
     abbreviation: team.abbreviation || '',
     logo: team.logo || '',
     color_primary: team.color_primary || '#6b7280',
-    color_secondary: team.color_secondary,
-    color_pref_light: team.color_pref_light,
-    color_pref_dark: team.color_pref_dark,
+    color_secondary: team.color_secondary || undefined,
+    color_pref_light: team.color_pref_light || undefined,
+    color_pref_dark: team.color_pref_dark || undefined,
   }
 }
 
