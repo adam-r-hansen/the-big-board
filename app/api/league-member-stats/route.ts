@@ -144,7 +144,6 @@ export async function GET(req: NextRequest) {
       return aDate.localeCompare(bDate)
     })
 
-    const totalPicks = memberPicks.length
     const decided = finalPicks.length
     const correct = sortedFinals.filter((p: any) => isCorrect(p.game, p.team_id)).length
     const accuracy = decided > 0 ? correct / decided : 0
@@ -180,7 +179,7 @@ export async function GET(req: NextRequest) {
     return {
       profile_id: mid,
       display_name: displayName,
-      total_picks: totalPicks,
+      total_picks: decided, // CHANGED: only show decided picks
       decided_picks: decided,
       correct_picks: correct,
       accuracy: Number(accuracy.toFixed(3)),

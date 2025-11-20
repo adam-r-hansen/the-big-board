@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import LeagueMemberStatsTable from '@/components/stats/LeagueMemberStatsTable'
+import TeamCard from '@/components/TeamCard'
 
 type League = { id: string; name: string; season: number }
 
@@ -10,19 +11,13 @@ type Team = {
   id: string
   abbreviation: string | null
   name?: string | null
+  short_name?: string | null
   color_primary?: string | null
   color_secondary?: string | null
+  color_pref_light?: string | null
+  color_pref_dark?: string | null
   logo?: string | null
   logo_dark?: string | null
-}
-type TeamLike = {
-  id?: string
-  abbreviation?: string
-  name?: string
-  color_primary?: string
-  color_secondary?: string
-  logo?: string
-  logo_dark?: string
 }
 
 type Member = {
@@ -48,14 +43,18 @@ type MyLogRow = {
   week: number; team_id: string; game_id: string | null; status: string;
   result: 'W'|'L'|'T'|'—'; score: { home: number|null; away: number|null } | null; points: number | null; wrinkle: boolean
 }
-type LeagueLeaders = {
-  avg_points_per_pick: Array<{ profile_id: string; display_name: string; decided: number; points_total: number; avg_points_per_pick: number }>
-  accuracy: Array<{ profile_id: string; display_name: string; correct: number; decided: number; accuracy: number }>
-  longest_streak: Array<{ profile_id: string; display_name: string; longest_streak: number }>
-}
 type LeagueLogRow = {
-  week: number; profile_id: string; display_name: string; team_id: string; game_id: string | null;
-  status: string; result: 'W'|'L'|'T'|'—'; score: { home: number|null; away: number|null } | null; points: number | null; wrinkle: boolean
+  week: number
+  profile_id: string
+  display_name: string
+  preferred_color?: string | null
+  team_id: string
+  game_id: string | null
+  status: string
+  result: 'W'|'L'|'T'|'—'
+  score: { home: number|null; away: number|null } | null
+  points: number | null
+  wrinkle: boolean
 }
 
 function Card(props: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
@@ -70,63 +69,21 @@ function Card(props: { title: string; right?: React.ReactNode; children: React.R
   )
 }
 
-// --- Chip + team index (same look & feel as Home) ---
-function Chip({
-  label,
-  primary = '#6b7280',
-  secondary = '#374151',
-  subtle = false,
-  badge,
-  title,
-  className = '',
-}: {
-  label: React.ReactNode
-  primary?: string
-  secondary?: string
-  subtle?: boolean
-  badge?: React.ReactNode
-  title?: string
-  className?: string
-}) {
-  return (
-    <span
-      title={title}
-      className={[
-        'inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm font-semibold',
-        'overflow-hidden text-ellipsis whitespace-nowrap',
-        subtle ? 'opacity-80' : '',
-        className,
-      ].join(' ')}
-      style={{
-        borderColor: primary,
-        color: primary,
-        background: subtle ? `linear-gradient(0deg, ${secondary}10, transparent)` : 'transparent',
-      }}
-    >
-      {label}
-      {badge ? <span className="text-xs font-normal">{badge}</span> : null}
-    </span>
-  )
-}
-
-function useTeamIndex(teamMap: Record<string, Team>) {
-  return useMemo(() => {
-    const idx: Record<string, TeamLike> = {}
-    for (const t of Object.values(teamMap || {})) {
-      const v: TeamLike = {
-        id: t.id,
-        abbreviation: t.abbreviation ?? undefined,
-        name: t.name ?? undefined,
-        color_primary: t.color_primary ?? undefined,
-        color_secondary: t.color_secondary ?? undefined,
-        logo: t.logo ?? undefined,
-        logo_dark: t.logo_dark ?? undefined,
-      }
-      if (t.id) idx[t.id] = v
-      if (t.abbreviation) idx[t.abbreviation.toUpperCase()] = v
-    }
-    return idx
-  }, [teamMap])
+function getTeam(teamId: string, teamMap: Record<string, Team>) {
+  const team = teamMap[teamId] || teamMap[teamId?.toUpperCase()]
+  if (!team) return null
+  
+  return {
+    id: team.id || '',
+    name: team.name || '',
+    short_name: team.short_name || team.name || '',
+    abbreviation: team.abbreviation || '',
+    logo: team.logo || '',
+    color_primary: team.color_primary || '#6b7280',
+    color_secondary: team.color_secondary,
+    color_pref_light: team.color_pref_light,
+    color_pref_dark: team.color_pref_dark,
+  }
 }
 
 export default function StatsPage() {
@@ -134,14 +91,15 @@ export default function StatsPage() {
   const [leagueId, setLeagueId] = useState<string>('')
   const [season, setSeason] = useState<number>(new Date().getFullYear())
   const [includeLive, setIncludeLive] = useState(false)
+  
+  // NEW: Week selector for League Pick Log
+  const [selectedWeek, setSelectedWeek] = useState<number>(1)
 
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
-  const teamIndex = useTeamIndex(teamMap)
 
   const [mySummary, setMySummary] = useState<MySummary | null>(null)
   const [myLog, setMyLog] = useState<MyLogRow[]>([])
   
-  // NEW: League member stats
   const [leagueMembers, setLeagueMembers] = useState<Member[]>([])
   
   const [leagueLog, setLeagueLog] = useState<LeagueLogRow[]>([])
@@ -191,14 +149,24 @@ export default function StatsPage() {
   const seasonOptions = useMemo(() => Array.from({ length: 3 }).map((_, i) => new Date().getFullYear() - 1 + i), [])
   const leagueName = useMemo(() => leagues.find(l => l.id === leagueId)?.name || 'League', [leagues, leagueId])
 
-  function teamChipForId(teamId?: string) {
-    if (!teamId) return <Chip label="—" />
-    const t = teamIndex[teamId]
-    const label = t?.abbreviation || '—'
-    const primary = t?.color_primary || '#6b7280'
-    const secondary = t?.color_secondary || '#374151'
-    return <Chip label={label} primary={primary} secondary={secondary} subtle />
-  }
+  // Get available weeks from league log
+  const availableWeeks = useMemo(() => {
+    const weeks = new Set(leagueLog.map(r => r.week))
+    return Array.from(weeks).sort((a, b) => a - b)
+  }, [leagueLog])
+
+  // Filter league log by selected week
+  const filteredLeagueLog = useMemo(() => {
+    if (!selectedWeek) return leagueLog
+    return leagueLog.filter(r => r.week === selectedWeek)
+  }, [leagueLog, selectedWeek])
+
+  // Set initial week when data loads
+  useEffect(() => {
+    if (availableWeeks.length > 0 && !selectedWeek) {
+      setSelectedWeek(availableWeeks[availableWeeks.length - 1]) // Most recent week
+    }
+  }, [availableWeeks, selectedWeek])
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
@@ -228,7 +196,7 @@ export default function StatsPage() {
       {!err && (
         <div className="grid grid-cols-1 gap-6">
           
-          {/* NEW: League Member Stats Table */}
+          {/* League Member Stats Table */}
           <Card title={`League Member Stats — ${leagueName}`}>
             {leagueMembers.length === 0 ? (
               <div className="text-sm text-neutral-500">Loading...</div>
@@ -291,22 +259,23 @@ export default function StatsPage() {
                         <th className="py-2 pr-3">Week</th>
                         <th className="py-2 pr-3">Team</th>
                         <th className="py-2 pr-3">Result</th>
-                        <th className="py-2 pr-3">Score</th>
                         <th className="py-2 pr-3">Points</th>
                         <th className="py-2 pr-0">Wr</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {myLog.map((r, idx) => (
-                        <tr key={idx} className="border-t">
-                          <td className="py-2 pr-3">{r.week}</td>
-                          <td className="py-2 pr-3">{teamChipForId(r.team_id)}</td>
-                          <td className="py-2 pr-3">{r.result}</td>
-                          <td className="py-2 pr-3">{r.score ? `${r.score.home ?? '–'}-${r.score.away ?? '–'}` : '—'}</td>
-                          <td className="py-2 pr-3">{r.points ?? '—'}</td>
-                          <td className="py-2 pr-0">{r.wrinkle ? '✓' : '—'}</td>
-                        </tr>
-                      ))}
+                      {myLog.map((r, idx) => {
+                        const team = getTeam(r.team_id, teamMap)
+                        return (
+                          <tr key={idx} className="border-t">
+                            <td className="py-2 pr-3">{r.week}</td>
+                            <td className="py-2 pr-3">{team?.abbreviation || '—'}</td>
+                            <td className="py-2 pr-3">{r.result}</td>
+                            <td className="py-2 pr-3">{r.points ?? '—'}</td>
+                            <td className="py-2 pr-0">{r.wrinkle ? '✓' : '—'}</td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -314,36 +283,59 @@ export default function StatsPage() {
             </Card>
           </div>
 
-          {/* League Pick Log */}
-          <Card title="League Pick Log" right={<span className="text-xs text-neutral-500">{includeLive ? 'Finals + Live' : 'Finals only'}</span>}>
-            {leagueLog.length === 0 ? <div className="text-sm text-neutral-500">No picks yet.</div> : (
-              <div className="overflow-x-auto max-h-[28rem] overflow-y-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="text-left text-neutral-500 sticky top-0 bg-white/90 dark:bg-neutral-900/90 backdrop-blur">
-                    <tr>
-                      <th className="py-2 pr-3">Week</th>
-                      <th className="py-2 pr-3">Member</th>
-                      <th className="py-2 pr-3">Team</th>
-                      <th className="py-2 pr-3">Result</th>
-                      <th className="py-2 pr-3">Score</th>
-                      <th className="py-2 pr-3">Points</th>
-                      <th className="py-2 pr-0">Wrinkle</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {leagueLog.map((r, idx) => (
-                      <tr key={idx} className="border-t">
-                        <td className="py-2 pr-3">{r.week}</td>
-                        <td className="py-2 pr-3">{r.display_name}</td>
-                        <td className="py-2 pr-3">{teamChipForId(r.team_id)}</td>
-                        <td className="py-2 pr-3">{r.result}</td>
-                        <td className="py-2 pr-3">{r.score ? `${r.score.home ?? '–'}-${r.score.away ?? '–'}` : '—'}</td>
-                        <td className="py-2 pr-3">{r.points ?? '—'}</td>
-                        <td className="py-2 pr-0">{r.wrinkle ? '✓' : '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          {/* League Pick Log with Week Selector */}
+          <Card 
+            title={`League Pick Log — Week ${selectedWeek}`}
+            right={
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-neutral-500">{includeLive ? 'Finals + Live' : 'Finals only'}</span>
+                <select 
+                  className="border rounded px-2 py-1 text-sm bg-transparent" 
+                  value={selectedWeek} 
+                  onChange={e => setSelectedWeek(Number(e.target.value))}
+                >
+                  {availableWeeks.map(wk => (
+                    <option key={wk} value={wk}>Week {wk}</option>
+                  ))}
+                </select>
+              </div>
+            }
+          >
+            {filteredLeagueLog.length === 0 ? (
+              <div className="text-sm text-neutral-500">No picks for this week.</div>
+            ) : (
+              <div className="grid gap-3">
+                {filteredLeagueLog.map((r, idx) => {
+                  const team = getTeam(r.team_id, teamMap)
+                  const borderColor = r.preferred_color || '#000000'
+                  const resultColor = r.result === 'W' ? 'text-green-600' : r.result === 'L' ? 'text-red-600' : 'text-neutral-600'
+                  
+                  return (
+                    <div
+                      key={idx}
+                      className="rounded-xl p-3"
+                      style={{ border: `3px solid ${borderColor}` }}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium text-sm">{r.display_name}</span>
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className={`font-semibold ${resultColor}`}>{r.result}</span>
+                          <span className="text-neutral-600">{r.points ?? 0} pts</span>
+                          {r.wrinkle && <span className="text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded">W</span>}
+                        </div>
+                      </div>
+                      {team && (
+                        <TeamCard
+                          team={team}
+                          variant="solid"
+                          displayText="abbreviation"
+                          disabled
+                          className="w-full"
+                        />
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </Card>
