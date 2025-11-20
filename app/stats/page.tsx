@@ -104,7 +104,6 @@ export default function StatsPage() {
   const [season, setSeason] = useState<number>(new Date().getFullYear())
   const [includeLive, setIncludeLive] = useState(false)
   
-  // NEW: Week selector for League Pick Log
   const [selectedWeek, setSelectedWeek] = useState<number>(1)
 
   const [teamMap, setTeamMap] = useState<Record<string, Team>>({})
@@ -217,140 +216,145 @@ export default function StatsPage() {
             )}
           </Card>
 
-          {/* My Personal Stats */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card title={`My Season (${season})`}>
-              {!mySummary ? (
-                <div className="text-sm text-neutral-500">Loading…</div>
-              ) : (
-                <div className="grid gap-3">
-                  <div className="flex justify-between">
-                    <span className="text-neutral-600">Total Picks</span>
-                    <span className="font-semibold">{mySummary.picks_total}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-neutral-600">Decided</span>
-                    <span className="font-semibold">{mySummary.decided_picks}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-neutral-600">Correct</span>
-                    <span className="font-semibold">{mySummary.correct}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-neutral-600">Accuracy</span>
-                    <span className="font-semibold">{(mySummary.accuracy * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-neutral-600">Total Points</span>
-                    <span className="font-semibold">{mySummary.points_total.toFixed(1)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-neutral-600">Avg / Pick</span>
-                    <span className="font-semibold">{mySummary.avg_points_per_pick.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-neutral-600">Longest Streak</span>
-                    <span className="font-semibold">{mySummary.longest_streak}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-neutral-600">Wrinkle Points</span>
-                    <span className="font-semibold">{mySummary.wrinkle_points.toFixed(1)}</span>
-                  </div>
+          {/* My Season Summary - full width */}
+          <Card title={`My Season (${season})`}>
+            {!mySummary ? (
+              <div className="text-sm text-neutral-500">Loading…</div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="text-center">
+                  <div className="text-xs text-neutral-500 mb-1">Total Picks</div>
+                  <div className="text-2xl font-semibold">{mySummary.picks_total}</div>
                 </div>
-              )}
-            </Card>
+                <div className="text-center">
+                  <div className="text-xs text-neutral-500 mb-1">Correct</div>
+                  <div className="text-2xl font-semibold">{mySummary.correct}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-neutral-500 mb-1">Accuracy</div>
+                  <div className="text-2xl font-semibold">{(mySummary.accuracy * 100).toFixed(1)}%</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-neutral-500 mb-1">Total Points</div>
+                  <div className="text-2xl font-semibold">{mySummary.points_total.toFixed(1)}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-neutral-500 mb-1">Avg / Pick</div>
+                  <div className="text-2xl font-semibold">{mySummary.avg_points_per_pick.toFixed(2)}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-neutral-500 mb-1">Longest Streak</div>
+                  <div className="text-2xl font-semibold">{mySummary.longest_streak}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-neutral-500 mb-1">Decided</div>
+                  <div className="text-2xl font-semibold">{mySummary.decided_picks}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-neutral-500 mb-1">Wrinkle Points</div>
+                  <div className="text-2xl font-semibold">{mySummary.wrinkle_points.toFixed(1)}</div>
+                </div>
+              </div>
+            )}
+          </Card>
 
+          {/* NEW LAYOUT: 1/3 My Pick Log + 2/3 League Pick Log */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* My Pick Log - 1/3 width */}
             <Card title="My Pick Log" right={<span className="text-xs text-neutral-500">{includeLive ? 'Finals + Live' : 'Finals only'}</span>}>
               {myLog.length === 0 ? (
                 <div className="text-sm text-neutral-500">No picks yet.</div>
               ) : (
-                <div className="overflow-x-auto max-h-96 overflow-y-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="text-left text-neutral-500 sticky top-0 bg-white/90 dark:bg-neutral-900/90 backdrop-blur">
-                      <tr>
-                        <th className="py-2 pr-3">Week</th>
-                        <th className="py-2 pr-3">Team</th>
-                        <th className="py-2 pr-3">Result</th>
-                        <th className="py-2 pr-3">Points</th>
-                        <th className="py-2 pr-0">Wr</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {myLog.map((r, idx) => {
-                        const team = getTeam(r.team_id, teamMap)
-                        return (
-                          <tr key={idx} className="border-t">
-                            <td className="py-2 pr-3">{r.week}</td>
-                            <td className="py-2 pr-3">{team?.abbreviation || '—'}</td>
-                            <td className="py-2 pr-3">{r.result}</td>
-                            <td className="py-2 pr-3">{r.points ?? '—'}</td>
-                            <td className="py-2 pr-0">{r.wrinkle ? '✓' : '—'}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
+                <div className="grid gap-2 max-h-[600px] overflow-y-auto">
+                  {myLog.map((r, idx) => {
+                    const team = getTeam(r.team_id, teamMap)
+                    const resultColor = r.result === 'W' ? 'text-green-600' : r.result === 'L' ? 'text-red-600' : 'text-neutral-600'
+                    
+                    return (
+                      <div key={idx} className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-neutral-500">Week {r.week}</span>
+                          <div className="flex items-center gap-2">
+                            <span className={`font-semibold ${resultColor}`}>{r.result}</span>
+                            <span className="text-neutral-600">{r.points ?? 0} pts</span>
+                            {r.wrinkle && <span className="bg-purple-600 text-white px-1 py-0.5 rounded text-[10px]">W</span>}
+                          </div>
+                        </div>
+                        {team && (
+                          <TeamCard
+                            team={team}
+                            variant="solid"
+                            displayText="abbreviation"
+                            disabled
+                            className="w-full"
+                          />
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </Card>
-          </div>
 
-          {/* League Pick Log with Week Selector */}
-          <Card 
-            title={`League Pick Log — Week ${selectedWeek}`}
-            right={
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-neutral-500">{includeLive ? 'Finals + Live' : 'Finals only'}</span>
-                <select 
-                  className="border rounded px-2 py-1 text-sm bg-transparent" 
-                  value={selectedWeek} 
-                  onChange={e => setSelectedWeek(Number(e.target.value))}
-                >
-                  {availableWeeks.map(wk => (
-                    <option key={wk} value={wk}>Week {wk}</option>
-                  ))}
-                </select>
-              </div>
-            }
-          >
-            {filteredLeagueLog.length === 0 ? (
-              <div className="text-sm text-neutral-500">No picks for this week.</div>
-            ) : (
-              <div className="grid gap-3">
-                {filteredLeagueLog.map((r, idx) => {
-                  const team = getTeam(r.team_id, teamMap)
-                  const borderColor = r.preferred_color || '#000000'
-                  const resultColor = r.result === 'W' ? 'text-green-600' : r.result === 'L' ? 'text-red-600' : 'text-neutral-600'
-                  
-                  return (
-                    <div
-                      key={idx}
-                      className="rounded-xl p-3"
-                      style={{ border: `3px solid ${borderColor}` }}
+            {/* League Pick Log - 2/3 width */}
+            <div className="lg:col-span-2">
+              <Card 
+                title={`League Pick Log — Week ${selectedWeek}`}
+                right={
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-neutral-500">{includeLive ? 'Finals + Live' : 'Finals only'}</span>
+                    <select 
+                      className="border rounded px-2 py-1 text-sm bg-transparent" 
+                      value={selectedWeek} 
+                      onChange={e => setSelectedWeek(Number(e.target.value))}
                     >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-medium text-sm">{r.display_name}</span>
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className={`font-semibold ${resultColor}`}>{r.result}</span>
-                          <span className="text-neutral-600">{r.points ?? 0} pts</span>
-                          {r.wrinkle && <span className="text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded">W</span>}
+                      {availableWeeks.map(wk => (
+                        <option key={wk} value={wk}>Week {wk}</option>
+                      ))}
+                    </select>
+                  </div>
+                }
+              >
+                {filteredLeagueLog.length === 0 ? (
+                  <div className="text-sm text-neutral-500">No picks for this week.</div>
+                ) : (
+                  <div className="grid gap-3 max-h-[600px] overflow-y-auto">
+                    {filteredLeagueLog.map((r, idx) => {
+                      const team = getTeam(r.team_id, teamMap)
+                      const borderColor = r.preferred_color || '#000000'
+                      const resultColor = r.result === 'W' ? 'text-green-600' : r.result === 'L' ? 'text-red-600' : 'text-neutral-600'
+                      
+                      return (
+                        <div
+                          key={idx}
+                          className="rounded-xl p-3"
+                          style={{ border: `3px solid ${borderColor}` }}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-medium text-sm">{r.display_name}</span>
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className={`font-semibold ${resultColor}`}>{r.result}</span>
+                              <span className="text-neutral-600">{r.points ?? 0} pts</span>
+                              {r.wrinkle && <span className="text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded">W</span>}
+                            </div>
+                          </div>
+                          {team && (
+                            <TeamCard
+                              team={team}
+                              variant="solid"
+                              displayText="abbreviation"
+                              disabled
+                              className="w-full"
+                            />
+                          )}
                         </div>
-                      </div>
-                      {team && (
-                        <TeamCard
-                          team={team}
-                          variant="solid"
-                          displayText="abbreviation"
-                          disabled
-                          className="w-full"
-                        />
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </Card>
+                      )
+                    })}
+                  </div>
+                )}
+              </Card>
+            </div>
+          </div>
         </div>
       )}
     </main>
