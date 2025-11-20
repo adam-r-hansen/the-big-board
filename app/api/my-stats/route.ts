@@ -1,25 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies as nextCookies } from 'next/headers'
-import { createServerClient } from '@supabase/ssr'
+import { createClient } from '@supabase/supabase-js'
 
-export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-async function getCookieStore() {
-  const c = (nextCookies as any)()
-  if (typeof c?.get === 'function') return c
-  return await c
-}
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
-type WrinkleRow = {
-  id: string
-  league_id: string
-  season: number
-  week: number
-}
 type GameRow = {
   id: string
-  game_utc: string | null
   home_team: string
   away_team: string
   home_score: number | null
@@ -27,134 +16,105 @@ type GameRow = {
   status: string | null
 }
 
-function toBool(v: string | null): boolean {
-  if (!v) return false
-  const s = v.toLowerCase()
-  return s === '1' || s === 'true' || s === 'yes' || s === 'y' || s === 'on'
-}
-
-function resultFor(teamId: string, g?: GameRow | null): 'W' | 'L' | 'T' | '—' {
-  if (!g) return '—'
-  const s = (g.status || '').toUpperCase()
-  if (s !== 'FINAL') return '—'
-  const hs = typeof g.home_score === 'number' ? g.home_score : null
-  const as = typeof g.away_score === 'number' ? g.away_score : null
-  if (hs == null || as == null) return '—'
+function resultFor(teamId: string, g?: GameRow): 'W' | 'L' | 'T' | '—' {
+  if (!g || g.status !== 'FINAL') return '—'
+  const hs = Number(g.home_score ?? 0)
+  const as = Number(g.away_score ?? 0)
   if (hs === as) return 'T'
-  const winner = hs > as ? g.home_team : g.away_team
-  return winner === teamId ? 'W' : 'L'
+  const isHome = g.home_team === teamId
+  return (isHome && hs > as) || (!isHome && as > hs) ? 'W' : 'L'
 }
 
-function pointsFor(teamId: string, g?: GameRow | null): number | null {
-  if (!g) return null
-  const s = (g.status || '').toUpperCase()
-  if (s !== 'FINAL') return null
-  const hs = typeof g.home_score === 'number' ? g.home_score : null
-  const as = typeof g.away_score === 'number' ? g.away_score : null
-  if (hs == null || as == null) return 0
+function pointsFor(teamId: string, g?: GameRow): number | null {
+  if (!g || g.status !== 'FINAL') return null
+  const hs = Number(g.home_score ?? 0)
+  const as = Number(g.away_score ?? 0)
   if (hs === as) {
-    if (g.home_team === teamId) return hs / 2
-    if (g.away_team === teamId) return as / 2
-    return 0
+    return g.home_team === teamId || g.away_team === teamId ? hs / 2 : 0
   }
-  if (hs > as) return g.home_team === teamId ? hs : 0
-  return g.away_team === teamId ? as : 0
+  const isHome = g.home_team === teamId
+  if (isHome && hs > as) return hs
+  if (!isHome && as > hs) return as
+  return 0
 }
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url)
-  const season = Number(url.searchParams.get('season')) || new Date().getFullYear()
-  const leagueId = url.searchParams.get('leagueId') || ''
-  const includeLive = toBool(url.searchParams.get('includeLive'))
+  const sp = new URL(req.url).searchParams
+  const leagueId = sp.get('leagueId') || ''
+  const season = Number(sp.get('season') || '0')
+  const includeLive = sp.get('includeLive') === 'true'
 
-  const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
-  const SUPABASE_ANON_KEY =
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.SUPABASE_ANON_KEY
-
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    return NextResponse.json(
-      { ok: false, error: 'Supabase URL/Anon key not configured in this environment.' },
-      { status: 200 },
-    )
+  if (!leagueId || !season) {
+    return NextResponse.json({ error: 'leagueId and season required' }, { status: 400 })
   }
 
-  const cookieStore = await getCookieStore()
-  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    cookies: {
-      get: (n: string) => cookieStore.get(n)?.value,
-      set: (n: string, v: string, o: any) => cookieStore.set(n, v, o),
-      remove: (n: string, o: any) => cookieStore.set(n, '', { ...o, maxAge: 0 }),
-    },
+  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    auth: { persistSession: false }
   })
 
-  // 🔐 identify the current user explicitly (don’t depend on RLS)
-  const { data: u, error: uErr } = await supabase.auth.getUser()
-  if (uErr || !u?.user) {
-    return NextResponse.json({ ok: false, error: 'Unauthenticated' }, { status: 200 })
+  const { data: user } = await supabase.auth.getUser()
+  if (!user?.user) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
   }
-  const uid = u.user.id
+  const userId = user.user.id
 
-  // Weekly picks — strictly this user, this season (+league if provided)
-  let pq = supabase
+  type Row = { id: string; week: number; team_id: string; game_id: string; wrinkle: boolean; wrinkle_kind?: string }
+
+  // Regular picks
+  const { data: picks } = await supabase
     .from('picks')
-    .select('id, team_id, game_id, season, week, league_id, profile_id')
-    .eq('profile_id', uid)
+    .select('id, week, team_id, game_id')
+    .eq('league_id', leagueId)
     .eq('season', season)
-  if (leagueId) pq = pq.eq('league_id', leagueId)
-  const { data: picks, error: pErr } = await pq
-  if (pErr) return NextResponse.json({ ok: false, error: pErr.message }, { status: 200 })
+    .eq('profile_id', userId)
 
-  // Wrinkle picks — strictly this user; join via wrinkles to filter league + season & get week
-  const { data: wp, error: wErr } = await supabase
-    .from('wrinkle_picks')
-    .select('id, profile_id, team_id, game_id, wrinkle_id')
-    .eq('profile_id', uid)
-  if (wErr) return NextResponse.json({ ok: false, error: wErr.message }, { status: 200 })
-
-  const wrIds = Array.from(new Set((wp || []).map(r => r.wrinkle_id))).filter(Boolean) as string[]
-  let wrinkles: WrinkleRow[] = []
-  if (wrIds.length) {
-    let wq = supabase
-      .from('wrinkles')
-      .select('id, league_id, season, week')
-      .in('id', wrIds)
-      .eq('season', season)
-    if (leagueId) wq = wq.eq('league_id', leagueId)
-    const { data: wr, error: wrErr } = await wq
-    if (wrErr) return NextResponse.json({ ok: false, error: wrErr.message }, { status: 200 })
-    wrinkles = (wr || []) as any
-  }
-  const wrIndex = new Map(wrinkles.map(w => [w.id, w]))
-
-  type Row = { id: string; week: number; team_id: string; game_id: string | null; wrinkle: boolean }
-  const weeklyRows: Row[] = (picks || []).map((p: any) => ({
+  const weeklyRows: Row[] = (picks ?? []).map(p => ({
     id: p.id,
     week: p.week,
     team_id: p.team_id,
     game_id: p.game_id,
-    wrinkle: false,
+    wrinkle: false
   }))
-  const wrinkleRows: Row[] = (wp || [])
+
+  // Wrinkle picks with kind
+  const { data: wrinkles } = await supabase
+    .from('wrinkles')
+    .select('id, week, kind')
+    .eq('league_id', leagueId)
+    .eq('season', season)
+
+  const wrIndex = new Map((wrinkles ?? []).map((w: any) => [w.id, { week: w.week, kind: w.kind }]))
+
+  const { data: wrinklePicks } = await supabase
+    .from('wrinkle_picks')
+    .select('id, wrinkle_id, team_id, game_id')
+    .eq('profile_id', userId)
+
+  const wrinkleRows: Row[] = (wrinklePicks ?? [])
     .map((r: any) => {
       const wr = wrIndex.get(r.wrinkle_id)
-      if (!wr) return null // filtered out by league/season
-      return { id: r.id, week: wr.week, team_id: r.team_id, game_id: r.game_id, wrinkle: true } as Row
+      if (!wr) return null
+      return { 
+        id: r.id, 
+        week: wr.week, 
+        team_id: r.team_id, 
+        game_id: r.game_id, 
+        wrinkle: true,
+        wrinkle_kind: wr.kind
+      } as Row
     })
     .filter(Boolean) as Row[]
 
   const all = [...weeklyRows, ...wrinkleRows]
 
-  // Games lookup (only those referenced)
+  // Games lookup
   const gameIds = Array.from(new Set(all.map(r => r.game_id).filter(Boolean))) as string[]
   let gamesById = new Map<string, GameRow>()
   if (gameIds.length) {
-    const { data: g, error: gErr } = await supabase
+    const { data: g } = await supabase
       .from('games')
       .select('id, game_utc, home_team, away_team, home_score, away_score, status')
       .in('id', gameIds)
-    if (gErr) return NextResponse.json({ ok: false, error: gErr.message }, { status: 200 })
     gamesById = new Map((g || []).map((x: any) => [x.id, x as GameRow]))
   }
 
@@ -185,6 +145,7 @@ export async function GET(req: NextRequest) {
         score,
         points: includeLive ? (pts ?? 0) : (s === 'FINAL' ? pts : null),
         wrinkle: r.wrinkle,
+        wrinkle_kind: r.wrinkle_kind
       }
     })
     .sort((a, b) => a.week - b.week)
@@ -194,11 +155,35 @@ export async function GET(req: NextRequest) {
   const decidedCount = finals.length
   const pointsTotal = finals.reduce((acc, r) => acc + (typeof r.points === 'number' ? r.points : 0), 0)
   const correct = finals.filter(r => r.result === 'W').length
+  
   let longest = 0, cur = 0
-  for (const r of finals) { if (r.result === 'W') { cur++; if (cur > longest) longest = cur } else { cur = 0 } }
-  const wrinklePoints = finals.filter(r => r.wrinkle).reduce((acc, r) => acc + (r.points || 0), 0)
+  for (const r of finals) { 
+    if (r.result === 'W') { 
+      cur++
+      if (cur > longest) longest = cur 
+    } else { 
+      cur = 0 
+    } 
+  }
+  
+  // FIXED: Wrinkle points calculation
+  const wrinklePoints = finals
+    .filter(r => r.wrinkle)
+    .reduce((acc, r) => {
+      const pts = r.points || 0
+      // For winless_double, only count half (the base points, not the doubled amount)
+      if ((r as any).wrinkle_kind === 'winless_double') {
+        return acc + (pts / 2)
+      }
+      // For other wrinkles (bonus games), count full points
+      return acc + pts
+    }, 0)
+
   const avg = decidedCount ? pointsTotal / decidedCount : 0
   const accuracy = decidedCount ? correct / decidedCount : 0
+
+  // Remove wrinkle_kind from log before returning
+  const cleanLog = log.map(({ wrinkle_kind, ...rest }: any) => rest)
 
   return NextResponse.json({
     ok: true,
@@ -211,8 +196,8 @@ export async function GET(req: NextRequest) {
       longest_streak: longest,
       points_total: pointsTotal,
       avg_points_per_pick: Number(avg.toFixed(2)),
-      wrinkle_points: wrinklePoints,
+      wrinkle_points: Number(wrinklePoints.toFixed(1)),
     },
-    log,
+    log: cleanLog,
   })
 }
