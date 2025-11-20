@@ -1,7 +1,6 @@
 // app/api/league-member-stats/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
-import { cookies } from 'next/headers'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -84,28 +83,33 @@ export async function GET(req: NextRequest) {
     .eq('league_id', leagueId)
     .eq('season', season)
 
-  // Get wrinkle picks
+  // Get wrinkle picks with kind
+  const { data: wrinkles } = await service
+    .from('wrinkles')
+    .select('id, week, kind')
+    .eq('league_id', leagueId)
+    .eq('season', season)
+
+  const wrinkleMap = new Map((wrinkles ?? []).map((w: any) => [w.id, { week: w.week, kind: w.kind }]))
+
   const { data: wp } = await service
     .from('wrinkle_picks')
     .select('id, profile_id, team_id, game_id, wrinkle_id')
 
-  const { data: wrinkles } = await service
-    .from('wrinkles')
-    .select('id, week')
-    .eq('league_id', leagueId)
-    .eq('season', season)
-
-  const wrinkleMap = new Map((wrinkles ?? []).map((w: any) => [w.id, w.week]))
   const wrinklePicks = (wp ?? [])
     .filter((p: any) => wrinkleMap.has(p.wrinkle_id))
-    .map((p: any) => ({
-      id: p.id,
-      profile_id: p.profile_id,
-      team_id: p.team_id,
-      game_id: p.game_id,
-      week: wrinkleMap.get(p.wrinkle_id),
-      wrinkle: true
-    }))
+    .map((p: any) => {
+      const wr = wrinkleMap.get(p.wrinkle_id)!
+      return {
+        id: p.id,
+        profile_id: p.profile_id,
+        team_id: p.team_id,
+        game_id: p.game_id,
+        week: wr.week,
+        wrinkle: true,
+        wrinkle_kind: wr.kind
+      }
+    })
 
   const allPicks = [
     ...(picks ?? []).map((p: any) => ({ ...p, wrinkle: false })),
@@ -171,15 +175,23 @@ export async function GET(req: NextRequest) {
       isCorrect(p.game, p.team_id) ? 'W' : 'L'
     )
 
-    // Wrinkle points
+    // FIXED: Wrinkle points calculation
     const wrinklePoints = sortedFinals
       .filter((p: any) => p.wrinkle)
-      .reduce((sum: number, p: any) => sum + (pointsFor(p.game, p.team_id) || 0), 0)
+      .reduce((sum: number, p: any) => {
+        const pts = pointsFor(p.game, p.team_id) || 0
+        // For winless_double, only count half (the base points)
+        if (p.wrinkle_kind === 'winless_double') {
+          return sum + (pts / 2)
+        }
+        // For other wrinkles, count full points
+        return sum + pts
+      }, 0)
 
     return {
       profile_id: mid,
       display_name: displayName,
-      total_picks: decided, // CHANGED: only show decided picks
+      total_picks: decided,
       decided_picks: decided,
       correct_picks: correct,
       accuracy: Number(accuracy.toFixed(3)),

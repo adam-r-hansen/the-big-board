@@ -1,189 +1,148 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { createClient } from '@supabase/supabase-js'
 
+export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const revalidate = 0
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
+
+type GameRow = { id: string; home_team: string; away_team: string; home_score: number | null; away_score: number | null; status: string | null; game_utc: string | null }
+
+function isCorrect(g: GameRow, teamId: string) {
+  if (g.status !== 'FINAL') return false
+  const hs = Number(g.home_score ?? 0), as = Number(g.away_score ?? 0)
+  if (hs === as) return false
+  return (teamId === g.home_team && hs > as) || (teamId === g.away_team && as > hs)
+}
+
+function winnerScore(g: GameRow, teamId: string) {
+  if (g.status !== 'FINAL') return 0
+  const hs = Number(g.home_score ?? 0), as = Number(g.away_score ?? 0)
+  if (hs === as) return (teamId === g.home_team || teamId === g.away_team) ? hs / 2 : 0
+  if (teamId === g.home_team && hs > as) return hs
+  if (teamId === g.away_team && as > hs) return as
+  return 0
+}
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url)
-  const leagueId = searchParams.get('leagueId')
-  let season = Number(searchParams.get('season') || new Date().getFullYear())
-  const week = searchParams.get('week') ? Number(searchParams.get('week')) : null
+  const sp = new URL(req.url).searchParams
+  const leagueId = sp.get('leagueId') || ''
+  const season = Number(sp.get('season') || new Date().getFullYear())
+  const week = sp.get('week') ? Number(sp.get('week')) : null
 
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'unauthenticated' }, { status: 401, headers: { 'cache-control': 'no-store' } })
+  if (!leagueId) return NextResponse.json({ error: 'leagueId required' }, { status: 400 })
+
+  const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } })
+
+  const { data: lInfo } = await sb.from('leagues').select('name').eq('id', leagueId).single()
+  const leagueName = lInfo?.name || 'League'
+
+  const { data: memberData } = await sb.rpc('get_league_member_ids', { p_league_id: leagueId })
+  const memberIds = (memberData ?? []).map((r: any) => r.profile_id)
+  if (!memberIds.length) return NextResponse.json({ rows: [], season, week, leagueId, leagueName })
+
+  const { data: profs } = await sb.from('profiles').select('id, display_name, email, preferred_color').in('id', memberIds)
+  const profMap = new Map((profs ?? []).map((p: any) => [p.id, p]))
+
+  let picks: any[] = []
+  if (week) {
+    const { data: p } = await sb.from('picks').select('id, profile_id, team_id, game_id, week').eq('league_id', leagueId).eq('season', season).eq('week', week)
+    picks = p ?? []
+  } else {
+    const { data: p } = await sb.from('picks').select('id, profile_id, team_id, game_id, week').eq('league_id', leagueId).eq('season', season)
+    picks = p ?? []
   }
 
-  let targetLeagueId = leagueId
+  // Wrinkles with kind
+  const { data: wrs } = await sb.from('wrinkles').select('id, week, kind').eq('league_id', leagueId).eq('season', season)
+  const wrinkleIndex = new Map((wrs ?? []).map((w: any) => [w.id, { week: w.week, kind: w.kind }]))
 
-  if (!targetLeagueId) {
-    const { data: memberships, error: memErr } = await supabase
-      .from('league_members')
-      .select('league_id')
-      .eq('profile_id', user.id)
-    if (memErr) return NextResponse.json({ error: memErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
-
-    const leagueIds = (memberships ?? []).map(r => r.league_id)
-    if (!leagueIds.length) {
-      return NextResponse.json({ rows: [], season, week: week ?? null, leagueId: '', leagueName: '' }, { headers: { 'cache-control': 'no-store' } })
-    }
-
-    const { data: leagues, error: lErr } = await supabase
-      .from('leagues')
-      .select('id, season')
-      .in('id', leagueIds)
-    if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
-
-    const bySeason = (leagues ?? []).find((l: any) => Number(l.season) === season)
-    const any = (leagues ?? [])[0]
-    targetLeagueId = (bySeason as any)?.id || (any as any)?.id || ''
-    if (!targetLeagueId) {
-      return NextResponse.json({ rows: [], season, week: week ?? null, leagueId: '', leagueName: '' }, { headers: { 'cache-control': 'no-store' } })
-    }
-  }
-
-  let leagueName = ''
-  {
-    const { data: leagueRow } = await supabase
-      .from('leagues')
-      .select('name')
-      .eq('id', targetLeagueId)
-      .maybeSingle()
-    leagueName = (leagueRow as any)?.name ?? ''
-  }
-
-  const { data: memberRows, error: rpcErr } = await supabase.rpc('get_league_member_ids', { p_league_id: targetLeagueId })
-  if (rpcErr) return NextResponse.json({ error: rpcErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
-  const memberIds: string[] = (memberRows ?? []).map((r: any) => r.profile_id)
-
-  type Member = { id: string; display_name: string | null; email: string | null; preferred_color: string | null }
-  let profiles: Record<string, Member> = {}
-  if (memberIds.length) {
-    const { data: profs, error: pErr } = await supabase
-      .from('profiles')
-      .select('id, display_name, email, preferred_color')
-      .in('id', memberIds)
-    if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
-    for (const p of profs ?? []) profiles[(p as any).id] = p as any
-  }
-
-  let picksQ = supabase
-    .from('picks')
-    .select('id, profile_id, team_id, game_id, season, week, winless_double')
-    .eq('league_id', targetLeagueId)
-    .eq('season', season)
-  if (week != null) picksQ = picksQ.eq('week', week)
-  const { data: picksRows, error: pkErr } = await picksQ
-  if (pkErr) return NextResponse.json({ error: pkErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
-  const picks: any[] = (picksRows ?? []) as any
-
-  const wrnQ = supabase.from('wrinkles').select('id').eq('league_id', targetLeagueId).eq('season', season)
-  const { data: wrinkleDefs, error: wDefErr } = week != null ? await wrnQ.eq('week', week) : await wrnQ
-  if (wDefErr) return NextResponse.json({ error: wDefErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
-  const wrinkleIds = (wrinkleDefs ?? []).map((w: any) => w.id)
-
-  let wrinklePicks: any[] = []
-  if (wrinkleIds.length) {
-    const { data: wpRows, error: wpErr } = await supabase
-      .from('wrinkle_picks')
-      .select('id, wrinkle_id, profile_id, team_id, game_id')
-      .in('wrinkle_id', wrinkleIds)
-    if (wpErr) return NextResponse.json({ error: wpErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
-    wrinklePicks = (wpRows ?? []) as any
-  }
-
-  const allPicks = [...picks, ...wrinklePicks]
-  const gameIds = Array.from(new Set(allPicks.map(p => p.game_id).filter(Boolean))) as string[]
-  let gamesById = new Map<string, any>()
-  if (gameIds.length) {
-    const { data: g, error: gErr } = await supabase
-      .from('games')
-      .select('id, home_team, away_team, home_score, away_score, status')
-      .in('id', gameIds)
-    if (gErr) return NextResponse.json({ error: gErr.message }, { status: 500, headers: { 'cache-control': 'no-store' } })
-    gamesById = new Map((g || []).map((x: any) => [x.id, x]))
-  }
-
-  function pickPoints(teamId: string, g: any, isWinlessDouble: boolean = false): number | null {
-    if (!g) return null
-    const s = (g.status || '').toUpperCase()
-    if (s !== 'FINAL') return null
-    const hs = g.home_score ?? null
-    const as = g.away_score ?? null
-    if (hs == null || as == null) return 0
-    
-    let basePoints = 0
-    if (hs === as) {
-      if (g.home_team === teamId) basePoints = hs / 2
-      else if (g.away_team === teamId) basePoints = as / 2
-    } else if (hs > as) {
-      basePoints = g.home_team === teamId ? hs : 0
-    } else {
-      basePoints = g.away_team === teamId ? as : 0
-    }
-    
-    // Apply winless double multiplier
-    return isWinlessDouble ? basePoints * 2 : basePoints
-  }
-
-  const byMember = new Map<string, { points: number; correct: number; decided: number; longest: number; current: number; wrinklePoints: number }>()
-  for (const pid of memberIds) {
-    byMember.set(pid, { points: 0, correct: 0, decided: 0, longest: 0, current: 0, wrinklePoints: 0 })
-  }
-
-  for (const p of allPicks) {
-    const g = p.game_id ? gamesById.get(p.game_id) : undefined
-    const isWrinkle = 'wrinkle_id' in p
-    const isWinlessDouble = p.winless_double ?? false
-    const pts = pickPoints(p.team_id, g, isWinlessDouble)
-    const entry = byMember.get(p.profile_id)
-    if (!entry) continue
-    if (typeof pts === 'number') {
-      entry.points += pts
-      if (isWrinkle) entry.wrinklePoints += pts
-      entry.decided++
-      if (pts > 0) {
-        entry.correct++
-        entry.current++
-        if (entry.current > entry.longest) entry.longest = entry.current
-      } else {
-        entry.current = 0
+  const { data: wrPicks } = await sb.from('wrinkle_picks').select('id, profile_id, team_id, game_id, wrinkle_id')
+  const wrinklePicks = (wrPicks ?? [])
+    .filter((r: any) => wrinkleIndex.has(r.wrinkle_id))
+    .map((r: any) => {
+      const wr = wrinkleIndex.get(r.wrinkle_id)!
+      return {
+        id: r.id,
+        profile_id: r.profile_id,
+        team_id: r.team_id,
+        game_id: r.game_id,
+        week: wr.week,
+        wrinkle_kind: wr.kind
       }
-    }
-  }
+    })
+    .filter((p: any) => !week || p.week === week)
 
-  const rows = memberIds.map((pid, idx) => {
-    const pr = profiles[pid]
-    const st = byMember.get(pid)!
+  const gameIds = Array.from(new Set([...picks, ...wrinklePicks].map((p: any) => p.game_id).filter(Boolean))) as string[]
+  const { data: games } = await sb.from('games').select('id, home_team, away_team, home_score, away_score, status, game_utc').in('id', gameIds)
+  const gamesMap = new Map((games ?? []).map((g: any) => [g.id, g as GameRow]))
+
+  const rows = memberIds.map(mid => {
+    const prof = profMap.get(mid)
+    const display = ((prof?.display_name as string | null) || String(prof?.email).split('@')[0] || 'Member') as string
+
+    const myPicks = picks.filter(p => p.profile_id === mid)
+    const myWrn = wrinklePicks.filter(p => p.profile_id === mid)
+
+    const events = [...myPicks, ...myWrn].map(p => {
+      const g = gamesMap.get(p.game_id)
+      const when = g?.game_utc ? Date.parse(g.game_utc) : 0
+      const correct = g ? isCorrect(g, p.team_id) : false
+      const pts = g ? winnerScore(g, p.team_id) : 0
+      const isWrinkle = myWrn.includes(p as any)
+      const wrinkleKind = (p as any).wrinkle_kind
+      return { when, correct, pts, isWrinkle, wrinkleKind }
+    }).sort((a, b) => a.when - b.when)
+
+    let cur = 0, best = 0, correctCount = 0, totalPts = 0
+    
+    // FIXED: Wrinkle points calculation
+    let wrinklePts = 0
+    for (const e of events) {
+      totalPts += e.pts
+      if (e.isWrinkle) {
+        // For winless_double, only count half
+        if (e.wrinkleKind === 'winless_double') {
+          wrinklePts += e.pts / 2
+        } else {
+          wrinklePts += e.pts
+        }
+      }
+      if (e.correct) { correctCount += 1; cur += 1; best = Math.max(best, cur) } else { cur = 0 }
+    }
+
     return {
-      profile_id: pid,
-      display_name: pr?.display_name || pr?.email?.split('@')[0] || 'Member',
-      preferred_color: pr?.preferred_color || null,
-      points: st.points,
-      correct: st.correct,
-      longest_streak: st.longest,
-      wrinkle_points: st.wrinklePoints,
-      rank: 0, // will be set below
-      back_from_first: 0, // will be set below
-      back_to_playoffs: 0, // placeholder
+      profile_id: mid,
+      display_name: display,
+      preferred_color: prof?.preferred_color || null,
+      points: Number(totalPts),
+      correct: correctCount,
+      longest_streak: best,
+      wrinkle_points: Number(wrinklePts.toFixed(1)),
     }
   })
 
   rows.sort((a, b) =>
-    (b.points || 0) - (a.points || 0) ||
-    (b.correct || 0) - (a.correct || 0) ||
-    (b.longest_streak || 0) - (a.longest_streak || 0) ||
+    (b.points - a.points) ||
+    (b.correct - a.correct) ||
+    (b.longest_streak - a.longest_streak) ||
+    (b.wrinkle_points - a.wrinkle_points) ||
     a.display_name.localeCompare(b.display_name)
   )
 
-  // Set ranks and back_from_first
-  const leaderPoints = rows[0]?.points || 0
-  rows.forEach((r, i) => {
-    r.rank = i + 1
-    r.back_from_first = leaderPoints - (r.points || 0)
-  })
+  const leaderPts = rows[0]?.points ?? 0
+  const playoffCutPts = rows[3]?.points ?? 0
 
-  return NextResponse.json({ rows, season, week, leagueId: targetLeagueId, leagueName }, { headers: { 'cache-control': 'no-store' } })
+  const final = rows.map((r, idx) => ({
+    ...r,
+    rank: idx + 1,
+    back_from_first: Math.max(0, leaderPts - r.points),
+    back_to_playoffs: Math.max(0, playoffCutPts - r.points),
+  }))
+
+  return NextResponse.json(
+    { rows: final, season, week: week ?? null, leagueId, leagueName },
+    { headers: { 'cache-control': 'no-store' } }
+  )
 }
