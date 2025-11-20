@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
   const leagueName = lInfo?.name || 'League'
 
   const { data: memberData } = await sb.rpc('get_league_member_ids', { p_league_id: leagueId })
-  const memberIds = (memberData ?? []).map((r: any) => r.profile_id)
+  const memberIds: string[] = (memberData ?? []).map((r: any) => r.profile_id)
   if (!memberIds.length) return NextResponse.json({ rows: [], season, week, leagueId, leagueName })
 
   const { data: profs } = await sb.from('profiles').select('id, display_name, email, preferred_color').in('id', memberIds)
@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
   const { data: games } = await sb.from('games').select('id, home_team, away_team, home_score, away_score, status, game_utc').in('id', gameIds)
   const gamesMap = new Map((games ?? []).map((g: any) => [g.id, g as GameRow]))
 
-  const rows = memberIds.map(mid => {
+  const rows = memberIds.map((mid: string) => {
     const prof = profMap.get(mid)
     const display = ((prof?.display_name as string | null) || String(prof?.email).split('@')[0] || 'Member') as string
 
