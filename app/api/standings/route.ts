@@ -35,12 +35,13 @@ export async function GET(req: NextRequest) {
 
   const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } })
 
-  const { data: lInfo } = await sb.from('leagues').select('name').eq('id', leagueId).single()
+  const { data: lInfo } = await sb.from('leagues').select('name, start_week').eq('id', leagueId).single()
   const leagueName = lInfo?.name || 'League'
+  const startWeek = lInfo?.start_week || 1
 
   const { data: memberData } = await sb.rpc('get_league_member_ids', { p_league_id: leagueId })
   const memberIds: string[] = (memberData ?? []).map((r: any) => r.profile_id)
-  if (!memberIds.length) return NextResponse.json({ rows: [], season, week, leagueId, leagueName })
+  if (!memberIds.length) return NextResponse.json({ rows: [], season, week, leagueId, leagueName, startWeek })
 
   const { data: profs } = await sb.from('profiles').select('id, display_name, email, preferred_color').in('id', memberIds)
   const profMap = new Map((profs ?? []).map((p: any) => [p.id, p]))
@@ -110,7 +111,6 @@ export async function GET(req: NextRequest) {
 
     let cur = 0, best = 0, correctCount = 0, totalPts = 0
     
-    // FIXED: Wrinkle points calculation
     let wrinklePts = 0
     for (const e of events) {
       totalPts += e.pts
@@ -155,7 +155,7 @@ export async function GET(req: NextRequest) {
   }))
 
   return NextResponse.json(
-    { rows: final, season, week: week ?? null, leagueId, leagueName },
+    { rows: final, season, week: week ?? null, leagueId, leagueName, startWeek },
     { headers: { 'cache-control': 'no-store' } }
   )
 }
