@@ -14,26 +14,28 @@ type GameRow = {
   home_score: number | null
   away_score: number | null
   status: string | null
+  game_utc: string | null
 }
 
-function isCorrect(g: GameRow, teamId: string): boolean {
-  if (g.status !== 'FINAL') return false
+function resultFor(teamId: string, g?: GameRow): 'W' | 'L' | 'T' | '—' {
+  if (!g || g.status !== 'FINAL') return '—'
   const hs = Number(g.home_score ?? 0)
   const as = Number(g.away_score ?? 0)
-  if (hs === as) return false
-  return (teamId === g.home_team && hs > as) || (teamId === g.away_team && as > hs)
+  if (hs === as) return 'T'
+  const isHome = g.home_team === teamId
+  return (isHome && hs > as) || (!isHome && as > hs) ? 'W' : 'L'
 }
 
-function pointsFor(g: GameRow, teamId: string): number | null {
-  if (g.status !== 'FINAL') return null
+function pointsFor(teamId: string, g?: GameRow): number | null {
+  if (!g || g.status !== 'FINAL') return null
   const hs = Number(g.home_score ?? 0)
   const as = Number(g.away_score ?? 0)
   if (hs === as) {
-    if (teamId === g.home_team || teamId === g.away_team) return hs / 2
-    return 0
+    return g.home_team === teamId || g.away_team === teamId ? hs / 2 : 0
   }
-  if (teamId === g.home_team && hs > as) return hs
-  if (teamId === g.away_team && as > hs) return as
+  const isHome = g.home_team === teamId
+  if (isHome && hs > as) return hs
+  if (!isHome && as > hs) return as
   return 0
 }
 
@@ -47,46 +49,71 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'leagueId and season required' }, { status: 400 })
   }
 
-  const service = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false }
   })
 
-  // Get picks
-  const { data: picks, error: picksError } = await service
+  const { data: memberData } = await sb.rpc('get_league_member_ids', {
+    p_league_id: leagueId
+  })
+  const memberIds: string[] = (memberData ?? []).map((r: any) => r.profile_id)
+
+  if (memberIds.length === 0) {
+    return NextResponse.json({ ok: true, leagueId, season, leaders: null, log: [] })
+  }
+
+  const { data: profs } = await sb
+    .from('profiles')
+    .select('id, display_name, email')
+    .in('id', memberIds)
+  const profMap = new Map((profs ?? []).map((p: any) => [p.id, p]))
+
+  function prettyName(pid: string) {
+    const p = profMap.get(pid)
+    return p?.display_name || p?.email?.split('@')[0] || 'Member'
+  }
+
+  // Get picks with winless_double flag
+  const { data: picks } = await sb
     .from('picks')
-    .select('id, profile_id, team_id, game_id, week, season')
+    .select('id, profile_id, team_id, game_id, week, winless_double')
     .eq('league_id', leagueId)
     .eq('season', season)
 
-  if (picksError) {
-    return NextResponse.json({ error: picksError.message }, { status: 500 })
-  }
+  // Get wrinkles
+  const { data: wrinkles } = await sb
+    .from('wrinkles')
+    .select('id, week, kind')
+    .eq('league_id', leagueId)
+    .eq('season', season)
 
-  // Get wrinkle picks
-  const { data: wp } = await service
+  const wrIndex = new Map((wrinkles ?? []).map((w: any) => [w.id, { week: w.week, kind: w.kind }]))
+
+  const { data: wrPicks } = await sb
     .from('wrinkle_picks')
     .select('id, profile_id, team_id, game_id, wrinkle_id')
 
-  const { data: wrinkles } = await service
-    .from('wrinkles')
-    .select('id, week')
-    .eq('league_id', leagueId)
-    .eq('season', season)
-
-  const wrinkleMap = new Map((wrinkles ?? []).map((w: any) => [w.id, w.week]))
-  const wrinklePicks = (wp ?? [])
-    .filter((p: any) => wrinkleMap.has(p.wrinkle_id))
-    .map((p: any) => ({
-      id: p.id,
-      profile_id: p.profile_id,
-      team_id: p.team_id,
-      game_id: p.game_id,
-      week: wrinkleMap.get(p.wrinkle_id),
-      wrinkle: true
-    }))
+  const wrinklePicks = (wrPicks ?? [])
+    .filter((r: any) => wrIndex.has(r.wrinkle_id))
+    .map((r: any) => {
+      const wr = wrIndex.get(r.wrinkle_id)!
+      return {
+        id: r.id,
+        profile_id: r.profile_id,
+        team_id: r.team_id,
+        game_id: r.game_id,
+        week: wr.week,
+        wrinkle: true,
+        wrinkle_kind: wr.kind
+      }
+    })
 
   const allPicks = [
-    ...(picks ?? []).map((p: any) => ({ ...p, wrinkle: false })),
+    ...(picks ?? []).map((p: any) => ({
+      ...p,
+      wrinkle: p.winless_double || false,
+      wrinkle_kind: p.winless_double ? 'winless_double' : undefined
+    })),
     ...wrinklePicks
   ]
 
@@ -95,76 +122,146 @@ export async function GET(req: NextRequest) {
     new Set(allPicks.map((p: any) => p.game_id).filter(Boolean))
   ) as string[]
 
-  const { data: games } = await service
+  const { data: games } = await sb
     .from('games')
-    .select('id, home_team, away_team, home_score, away_score, status')
+    .select('id, home_team, away_team, home_score, away_score, status, game_utc')
     .in('id', gameIds)
 
   const gamesMap = new Map((games ?? []).map((g: any) => [g.id, g as GameRow]))
 
-  // Get profiles with preferred_color
-  const profileIds = Array.from(new Set(allPicks.map((p: any) => p.profile_id)))
-  const { data: profiles } = await service
-    .from('profiles')
-    .select('id, display_name, email, preferred_color')
-    .in('id', profileIds)
+  type LogRow = {
+    week: number
+    profile_id: string
+    display_name: string
+    team_id: string
+    game_id: string | null
+    status: string
+    result: 'W' | 'L' | 'T' | '—'
+    score: { home: number | null; away: number | null } | null
+    points: number | null
+    wrinkle: boolean
+  }
 
-  const profileMap = new Map(
-    (profiles ?? []).map((p: any) => [
-      p.id,
-      { 
-        display_name: p.display_name, 
-        email: p.email,
-        preferred_color: p.preferred_color 
+  const log: LogRow[] = allPicks.map((p: any) => {
+    const g = p.game_id ? gamesMap.get(p.game_id) : undefined
+    const s = (g?.status || 'UPCOMING').toUpperCase()
+    const res = resultFor(p.team_id, g)
+    let pts = pointsFor(p.team_id, g)
+    
+    // Double points for winless_double
+    if (p.wrinkle_kind === 'winless_double' && pts !== null) {
+      pts = pts * 2
+    }
+    
+    const score = g ? { home: g.home_score, away: g.away_score } : null
+    return {
+      week: p.week,
+      profile_id: p.profile_id,
+      display_name: prettyName(p.profile_id),
+      team_id: p.team_id,
+      game_id: p.game_id,
+      status: s,
+      result: res,
+      score,
+      points: includeLive ? (pts ?? 0) : (s === 'FINAL' ? pts : null),
+      wrinkle: p.wrinkle || false,
+    }
+  })
+
+  if (!includeLive) {
+    log.forEach(r => {
+      if (r.status !== 'FINAL') r.points = null
+    })
+  }
+  
+  log.sort((a, b) => a.week - b.week || a.display_name.localeCompare(b.display_name))
+
+  // Leaderboards from FINAL rows
+  const finalsByProfile = new Map<string, LogRow[]>()
+  for (const r of log) {
+    if (r.status !== 'FINAL') continue
+    const arr = finalsByProfile.get(r.profile_id) || []
+    arr.push(r)
+    finalsByProfile.set(r.profile_id, arr)
+  }
+
+  type Leader = { profile_id: string; display_name: string }
+  const leadersAvg: Array<Leader & { decided: number; points_total: number; avg_points_per_pick: number }> = []
+  const leadersAcc: Array<Leader & { correct: number; decided: number; accuracy: number }> = []
+  const leadersStreak: Array<Leader & { longest_streak: number }> = []
+
+  for (const [pid, rows] of finalsByProfile.entries()) {
+    const name = prettyName(pid)
+    const decided = rows.length
+    const points_total = rows.reduce((acc, r) => acc + (r.points || 0), 0)
+    const correct = rows.filter(r => r.result === 'W').length
+    let longest = 0,
+      cur = 0
+    const sorted = [...rows].sort((a, b) => a.week - b.week)
+    for (const r of sorted) {
+      if (r.result === 'W') {
+        cur++
+        if (cur > longest) longest = cur
+      } else {
+        cur = 0
       }
-    ])
+    }
+
+    leadersAvg.push({
+      profile_id: pid,
+      display_name: name,
+      decided,
+      points_total,
+      avg_points_per_pick: decided ? points_total / decided : 0
+    })
+    leadersAcc.push({
+      profile_id: pid,
+      display_name: name,
+      correct,
+      decided,
+      accuracy: decided ? correct / decided : 0
+    })
+    leadersStreak.push({ profile_id: pid, display_name: name, longest_streak: longest })
+  }
+
+  leadersAvg.sort(
+    (a, b) =>
+      (b.avg_points_per_pick || 0) - (a.avg_points_per_pick || 0) ||
+      (b.points_total || 0) - (a.points_total || 0) ||
+      a.display_name.localeCompare(b.display_name)
+  )
+  leadersAcc.sort(
+    (a, b) =>
+      (b.accuracy || 0) - (a.accuracy || 0) ||
+      (b.correct || 0) - (a.correct || 0) ||
+      a.display_name.localeCompare(b.display_name)
+  )
+  leadersStreak.sort(
+    (a, b) =>
+      (b.longest_streak || 0) - (a.longest_streak || 0) || a.display_name.localeCompare(b.display_name)
   )
 
-  // Build log
-  const log = allPicks
-    .map((p: any) => {
-      const g = gamesMap.get(p.game_id)
-      if (!g) return null
-
-      const status = (g.status || '').toUpperCase()
-      if (!includeLive && status !== 'FINAL') return null
-
-      const prof = profileMap.get(p.profile_id)
-      const displayName = prof?.display_name || prof?.email?.split('@')[0] || 'Member'
-      const preferredColor = prof?.preferred_color || null
-
-      let result: 'W' | 'L' | 'T' | '—' = '—'
-      if (status === 'FINAL') {
-        const correct = isCorrect(g, p.team_id)
-        const hs = Number(g.home_score ?? 0)
-        const as = Number(g.away_score ?? 0)
-        if (hs === as) result = 'T'
-        else result = correct ? 'W' : 'L'
-      }
-
-      const points = pointsFor(g, p.team_id)
-      const score = status === 'FINAL' ? { home: g.home_score, away: g.away_score } : null
-
-      return {
-        week: p.week,
-        profile_id: p.profile_id,
-        display_name: displayName,
-        preferred_color: preferredColor,
-        team_id: p.team_id,
-        game_id: p.game_id,
-        status,
-        result,
-        score,
-        points,
-        wrinkle: p.wrinkle || false
-      }
-    })
-    .filter(Boolean)
-    .sort((a: any, b: any) => {
-      // Sort by week desc, then by display_name
-      if (a.week !== b.week) return b.week - a.week
-      return (a.display_name || '').localeCompare(b.display_name || '')
-    })
-
-  return NextResponse.json({ ok: true, log })
+  return NextResponse.json({
+    ok: true,
+    leagueId,
+    season,
+    leaders: {
+      avg_points_per_pick: leadersAvg.map(x => ({
+        profile_id: x.profile_id,
+        display_name: x.display_name,
+        decided: x.decided,
+        points_total: x.points_total,
+        avg_points_per_pick: Number(x.avg_points_per_pick.toFixed(2))
+      })),
+      accuracy: leadersAcc.map(x => ({
+        profile_id: x.profile_id,
+        display_name: x.display_name,
+        correct: x.correct,
+        decided: x.decided,
+        accuracy: Number(x.accuracy.toFixed(3))
+      })),
+      longest_streak: leadersStreak
+    },
+    log
+  })
 }
