@@ -15,9 +15,11 @@ export default function UserHeader() {
         <Link href="/" className="font-extrabold tracking-tight">Big Board</Link>
         <nav className="flex items-center gap-4 text-sm">
           <Link href="/picks" className={`${link} ${is('/picks') ? active : ''}`}>Picks</Link>
-          <Link href="/scoreboard" className={`${link} ${is('/scoreboard') ? active : ''}`}>NFL Scoreboard</Link>
-          <Link href="/standings" className={`${link} ${is('/standings') ? active : ''}`}>League Standings</Link>
+          <Link href="/scoreboard" className={`${link} ${is('/scoreboard') ? active : ''}`}>Scoreboard</Link>
+          <Link href="/standings" className={`${link} ${is('/standings') ? active : ''}`}>Standings</Link>
+          <Link href="/stats" className={`${link} ${is('/stats') ? active : ''}`}>Stats</Link>
           <Link href="/admin" className={`${link} ${is('/admin') ? active : ''}`}>Admin</Link>
+          <Link href="/profile" className={`${link} ${is('/profile') ? active : ''}`}>Profile</Link>
         </nav>
       </div>
     </header>
