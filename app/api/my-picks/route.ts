@@ -1,41 +1,39 @@
+// app/api/my-picks/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerSupabaseClient } from '@/lib/supabase-clients'
+import { createClient } from '@/utils/supabase/server'
 
+export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
+function j(data: any, init?: number | ResponseInit) {
+  const base: ResponseInit = typeof init === 'number' ? { status: init } : init || {}
+  const headers = new Headers(base.headers)
+  headers.set('Cache-Control', 'no-store')
+  return NextResponse.json(data, { ...base, headers })
+}
 
 export async function GET(req: NextRequest) {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const supabase = await createClient()
+  const { data: auth, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !auth?.user) return j({ error: 'unauthenticated' }, 401)
 
-  if (!user) {
-    return NextResponse.json(
-      { error: 'unauthenticated' },
-      { status: 401, headers: { 'cache-control': 'no-store' } }
-    )
-  }
+  const { searchParams } = new URL(req.url)
+  const leagueId = searchParams.get('leagueId') || ''
+  const season = Number(searchParams.get('season') || '0')
+  const week = Number(searchParams.get('week') || '0')
 
-  const url = new URL(req.url)
-  const leagueId = url.searchParams.get('leagueId')
-  const season = url.searchParams.get('season')
-  const week = url.searchParams.get('week')
+  if (!leagueId || !season || !week) return j({ error: 'leagueId, season, week required' }, 400)
 
-  let query = supabase.from('picks').select('*').eq('profile_id', user.id)
+  const { data, error } = await supabase
+    .from('picks')
+    .select('id, team_id, game_id, season, week, winless_double')
+    .eq('profile_id', auth.user.id)
+    .eq('league_id', leagueId)
+    .eq('season', season)
+    .eq('week', week)
+    .order('id', { ascending: true })
 
-  if (leagueId) query = query.eq('league_id', leagueId)
-  if (season) query = query.eq('season', parseInt(season))
-  if (week) query = query.eq('week', parseInt(week))
-
-  const { data, error } = await query
-
-  if (error) {
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500, headers: { 'cache-control': 'no-store' } }
-    )
-  }
-
-  return NextResponse.json(
-    { picks: data ?? [] },
-    { headers: { 'cache-control': 'no-store' } }
-  )
+  if (error) return j({ error: error.message }, 400)
+  return j({ picks: data ?? [] }, 200)
 }

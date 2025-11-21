@@ -277,7 +277,21 @@ function HomeInner() {
   const picksUsed = myPicks.length;
   const picksAllowed = 2;
   const picksLocked = myPicks.filter((p) => p.status === "FINAL" || p.status === "LIVE").length;
-  const weekPoints = myPicks.reduce((acc, p) => acc + (typeof p.points === "number" ? p.points : 0), 0);
+  
+  // FIXED: Calculate weekPoints with winless_double doubling
+  const weekPoints = myPicks.reduce((acc, p) => {
+    let pts = typeof p.points === "number" ? p.points : 0;
+    // If points aren't pre-calculated, calculate them
+    if (pts === 0 && p.game_id) {
+      const g = games.find((gg) => gg.home.id === p.team_id || gg.away.id === p.team_id);
+      let calculated = pickPointsForGame(p.team_id, g);
+      if (p.winless_double && calculated !== null) {
+        calculated = calculated * 2;
+      }
+      pts = calculated ?? 0;
+    }
+    return acc + pts;
+  }, 0);
 
   // Auth cleanup
   useEffect(() => {
@@ -407,13 +421,17 @@ function HomeInner() {
     return m;
   }, [games]);
 
-  // Helper to compute derived points for a member's picks if API didn't supply them
+  // FIXED: Helper to compute derived points for a member's picks with winless_double doubling
   const withDerivedPickPoints = (m: MemberLockedPicks): { picks: Required<MemberLockedPicks>["picks"]; total: number } => {
     let total = 0;
     const picks = (m.picks || []).map((pk) => {
       const teamId = pk.team_id;
       const g = games.find((gg) => gg.home.id === teamId || gg.away.id === teamId);
-      const computed = pickPointsForGame(teamId, g);
+      let computed = pickPointsForGame(teamId, g);
+      // Double points for winless_double
+      if (pk.winless_double && computed !== null) {
+        computed = computed * 2;
+      }
       const points = typeof pk.points === "number" ? pk.points : computed;
       if (typeof points === "number") total += points;
       return { ...pk, points };
@@ -595,7 +613,11 @@ function HomeInner() {
                   const team = getTeam(p.team_id, teamMap);
                   const g = games.find((gg) => gg.home.id === p.team_id || gg.away.id === p.team_id);
                   const s = (g?.status || (gameLocked(g) ? "LIVE" : "UPCOMING")).toUpperCase();
-                  const pts = pickPointsForGame(p.team_id, g);
+                  let pts = pickPointsForGame(p.team_id, g);
+                  // FIXED: Double points for winless_double
+                  if (p.winless_double && pts !== null) {
+                    pts = pts * 2;
+                  }
                   return (
                     <li key={p.id} className="relative">
                       {team && (
