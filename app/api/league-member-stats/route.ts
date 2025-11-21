@@ -27,8 +27,8 @@ function isCorrect(g: GameRow, teamId: string): boolean {
   return (teamId === g.home_team && hs > as) || (teamId === g.away_team && as > hs)
 }
 
-function pointsFor(g: GameRow, teamId: string): number | null {
-  if (g.status !== 'FINAL') return null
+function pointsFor(g: GameRow | undefined, teamId: string): number | null {
+  if (!g || g.status !== 'FINAL') return null
   const hs = Number(g.home_score ?? 0)
   const as = Number(g.away_score ?? 0)
   if (hs === as) {
