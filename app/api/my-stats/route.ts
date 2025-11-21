@@ -63,47 +63,32 @@ export async function GET(req: NextRequest) {
     auth: { persistSession: false }
   })
 
-  // Get all wrinkles for this league/season to check for winless_double
+  type Row = { id: string; week: number; team_id: string; game_id: string; wrinkle: boolean; wrinkle_kind?: string }
+
+  // Regular picks - now including winless_double flag
+  const { data: picks } = await service
+    .from('picks')
+    .select('id, week, team_id, game_id, winless_double')
+    .eq('league_id', leagueId)
+    .eq('season', season)
+    .eq('profile_id', userId)
+
+  const weeklyRows: Row[] = (picks ?? []).map(p => ({
+    id: p.id,
+    week: p.week,
+    team_id: p.team_id,
+    game_id: p.game_id,
+    wrinkle: p.winless_double || false,
+    wrinkle_kind: p.winless_double ? 'winless_double' : undefined
+  }))
+
+  // Wrinkle picks (bonus games) with kind
   const { data: wrinkles } = await service
     .from('wrinkles')
     .select('id, week, kind')
     .eq('league_id', leagueId)
     .eq('season', season)
 
-  const wrinklesByWeek = new Map<number, { id: string; kind: string }[]>()
-  for (const w of wrinkles ?? []) {
-    if (!wrinklesByWeek.has(w.week)) {
-      wrinklesByWeek.set(w.week, [])
-    }
-    wrinklesByWeek.get(w.week)!.push({ id: w.id, kind: w.kind })
-  }
-
-  type Row = { id: string; week: number; team_id: string; game_id: string; wrinkle: boolean; wrinkle_kind?: string }
-
-  // Regular picks - check if any are winless_double
-  const { data: picks } = await service
-    .from('picks')
-    .select('id, week, team_id, game_id')
-    .eq('league_id', leagueId)
-    .eq('season', season)
-    .eq('profile_id', userId)
-
-  const weeklyRows: Row[] = (picks ?? []).map(p => {
-    // Check if this week has a winless_double wrinkle
-    const weekWrinkles = wrinklesByWeek.get(p.week) || []
-    const winlessDouble = weekWrinkles.find(w => w.kind === 'winless_double')
-    
-    return {
-      id: p.id,
-      week: p.week,
-      team_id: p.team_id,
-      game_id: p.game_id,
-      wrinkle: !!winlessDouble,
-      wrinkle_kind: winlessDouble?.kind
-    }
-  })
-
-  // Wrinkle picks (bonus games) with kind
   const wrIndex = new Map((wrinkles ?? []).map((w: any) => [w.id, { week: w.week, kind: w.kind }]))
 
   const { data: wrinklePicks } = await service

@@ -76,29 +76,20 @@ export async function GET(req: NextRequest) {
     ])
   )
 
-  // Get all wrinkles for this league/season to check for winless_double
+  // Get picks with winless_double flag
+  const { data: picks } = await service
+    .from('picks')
+    .select('id, profile_id, team_id, game_id, week, winless_double')
+    .eq('league_id', leagueId)
+    .eq('season', season)
+
+  // Get wrinkle picks with kind
   const { data: wrinkles } = await service
     .from('wrinkles')
     .select('id, week, kind')
     .eq('league_id', leagueId)
     .eq('season', season)
 
-  const wrinklesByWeek = new Map<number, { id: string; kind: string }[]>()
-  for (const w of wrinkles ?? []) {
-    if (!wrinklesByWeek.has(w.week)) {
-      wrinklesByWeek.set(w.week, [])
-    }
-    wrinklesByWeek.get(w.week)!.push({ id: w.id, kind: w.kind })
-  }
-
-  // Get picks
-  const { data: picks } = await service
-    .from('picks')
-    .select('id, profile_id, team_id, game_id, week')
-    .eq('league_id', leagueId)
-    .eq('season', season)
-
-  // Get wrinkle picks with kind
   const wrinkleMap = new Map((wrinkles ?? []).map((w: any) => [w.id, { week: w.week, kind: w.kind }]))
 
   const { data: wp } = await service
@@ -121,17 +112,11 @@ export async function GET(req: NextRequest) {
     })
 
   const allPicks = [
-    ...(picks ?? []).map((p: any) => {
-      // Check if this week has a winless_double wrinkle
-      const weekWrinkles = wrinklesByWeek.get(p.week) || []
-      const winlessDouble = weekWrinkles.find(w => w.kind === 'winless_double')
-      
-      return {
-        ...p,
-        wrinkle: !!winlessDouble,
-        wrinkle_kind: winlessDouble?.kind
-      }
-    }),
+    ...(picks ?? []).map((p: any) => ({
+      ...p,
+      wrinkle: p.winless_double || false,
+      wrinkle_kind: p.winless_double ? 'winless_double' : undefined
+    })),
     ...wrinklePicks
   ]
 

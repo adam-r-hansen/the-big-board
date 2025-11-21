@@ -45,39 +45,24 @@ export async function GET(req: NextRequest) {
   const { data: profs } = await sb.from('profiles').select('id, display_name, email, preferred_color').in('id', memberIds)
   const profMap = new Map((profs ?? []).map((p: any) => [p.id, p]))
 
-  // Get all wrinkles for this league/season
-  const { data: wrs } = await sb.from('wrinkles').select('id, week, kind').eq('league_id', leagueId).eq('season', season)
-  const wrinklesByWeek = new Map<number, { id: string; kind: string }[]>()
-  for (const w of wrs ?? []) {
-    if (!wrinklesByWeek.has(w.week)) {
-      wrinklesByWeek.set(w.week, [])
-    }
-    wrinklesByWeek.get(w.week)!.push({ id: w.id, kind: w.kind })
-  }
-
+  // Get picks with winless_double flag
   let picks: any[] = []
   if (week) {
-    const { data: p } = await sb.from('picks').select('id, profile_id, team_id, game_id, week').eq('league_id', leagueId).eq('season', season).eq('week', week)
-    picks = (p ?? []).map((pick: any) => {
-      const weekWrinkles = wrinklesByWeek.get(pick.week) || []
-      const winlessDouble = weekWrinkles.find(w => w.kind === 'winless_double')
-      return {
-        ...pick,
-        wrinkle_kind: winlessDouble?.kind
-      }
-    })
+    const { data: p } = await sb.from('picks').select('id, profile_id, team_id, game_id, week, winless_double').eq('league_id', leagueId).eq('season', season).eq('week', week)
+    picks = (p ?? []).map((pick: any) => ({
+      ...pick,
+      wrinkle_kind: pick.winless_double ? 'winless_double' : undefined
+    }))
   } else {
-    const { data: p } = await sb.from('picks').select('id, profile_id, team_id, game_id, week').eq('league_id', leagueId).eq('season', season)
-    picks = (p ?? []).map((pick: any) => {
-      const weekWrinkles = wrinklesByWeek.get(pick.week) || []
-      const winlessDouble = weekWrinkles.find(w => w.kind === 'winless_double')
-      return {
-        ...pick,
-        wrinkle_kind: winlessDouble?.kind
-      }
-    })
+    const { data: p } = await sb.from('picks').select('id, profile_id, team_id, game_id, week, winless_double').eq('league_id', leagueId).eq('season', season)
+    picks = (p ?? []).map((pick: any) => ({
+      ...pick,
+      wrinkle_kind: pick.winless_double ? 'winless_double' : undefined
+    }))
   }
 
+  // Wrinkles with kind
+  const { data: wrs } = await sb.from('wrinkles').select('id, week, kind').eq('league_id', leagueId).eq('season', season)
   const wrinkleIndex = new Map((wrs ?? []).map((w: any) => [w.id, { week: w.week, kind: w.kind }]))
 
   const { data: wrPicks } = await sb.from('wrinkle_picks').select('id, profile_id, team_id, game_id, wrinkle_id')
