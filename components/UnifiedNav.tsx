@@ -39,6 +39,9 @@ export default function UnifiedNav({ userEmail, isAdmin }: NavProps) {
             <Link href="/standings" className={linkClass('/standings')}>
               Standings
             </Link>
+            <Link href="/stats" className={linkClass('/stats')}>
+              Stats
+            </Link>
             {isAdmin && (
               <Link href="/admin" className={linkClass('/admin')}>
                 Admin
