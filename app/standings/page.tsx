@@ -2,7 +2,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
 
 function fmtPts(n: number) {
   const s = n.toFixed(1)
@@ -98,34 +97,35 @@ export default function StandingsPage() {
         </div>
       </div>
 
-      {/* League/Season selectors */}
-      <section className="mb-5 grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs text-neutral-500 mb-1">League</label>
-          <select
-            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2"
-            value={leagueId}
-            onChange={(e) => setLeagueId(e.target.value)}
-          >
-            {!leagueId && <option value="">—</option>}
-            {leagues.map((L) => (
-              <option key={L.id} value={L.id}>
-                {L.name}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* League/Season selectors - only show if multiple leagues */}
+      {leagues.length > 1 && (
+        <section className="mb-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-neutral-500 mb-1">League</label>
+            <select
+              className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2"
+              value={leagueId}
+              onChange={(e) => setLeagueId(e.target.value)}
+            >
+              {leagues.map((L) => (
+                <option key={L.id} value={L.id}>
+                  {L.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div>
-          <label className="block text-xs text-neutral-500 mb-1">Season</label>
-          <input
-            type="number"
-            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2"
-            value={season}
-            onChange={(e) => setSeason(Number(e.target.value))}
-          />
-        </div>
-      </section>
+          <div>
+            <label className="block text-xs text-neutral-500 mb-1">Season</label>
+            <input
+              type="number"
+              className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2"
+              value={season}
+              onChange={(e) => setSeason(Number(e.target.value))}
+            />
+          </div>
+        </section>
+      )}
 
       {/* Standings table */}
       <section className="rounded-3xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6">
@@ -142,7 +142,7 @@ export default function StandingsPage() {
           </div>
         ) : rows.length === 0 ? (
           <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 p-6 text-neutral-600 dark:text-neutral-400 text-center">
-            {leagueId ? 'No standings data yet.' : 'Please select a league.'}
+            {leagueId ? 'No standings data yet.' : 'Please join a league to view standings.'}
           </div>
         ) : (
           <div className="overflow-x-auto">
