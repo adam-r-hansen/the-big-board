@@ -1,101 +1,96 @@
 // app/standings/page.tsx
-export const dynamic = 'force-dynamic'
+'use client'
 
-import { cookies, headers } from 'next/headers'
-
-type SP = Record<string, string | string[] | undefined>
-
-function readParam(sp: SP, key: string): string | undefined {
-  const v = sp[key]
-  return Array.isArray(v) ? v[0] : v
-}
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
 
 function fmtPts(n: number) {
   const s = n.toFixed(1)
   return s.endsWith('.0') ? s.slice(0, -2) : s
 }
 
-async function fetchJSONWithAuth<T>(path: string): Promise<T> {
-  const h = await headers()
-  const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000'
-  const proto = h.get('x-forwarded-proto') ?? 'https'
-  const origin = `${proto}://${host}`
-
-  const cookieHeader = (await cookies()).toString()
-
-  const res = await fetch(`${origin}${path}`, {
-    cache: 'no-store',
-    headers: {
-      cookie: cookieHeader,
-      'x-forwarded-host': host,
-      'x-forwarded-proto': proto,
-    },
-  })
-  if (!res.ok) {
-    throw new Error(`${res.status} ${res.statusText}`)
-  }
-  return res.json() as Promise<T>
-}
-
 function RankBadge({ rank }: { rank: number }) {
-  if (rank === 1) {
-    return <span className="text-lg">🥇</span>
-  }
-  if (rank === 2) {
-    return <span className="text-lg">🥈</span>
-  }
-  if (rank === 3) {
-    return <span className="text-lg">🥉</span>
-  }
-  return <span className="font-medium text-neutral-600">{rank}</span>
+  if (rank === 1) return <span className="text-lg">🥇</span>
+  if (rank === 2) return <span className="text-lg">🥈</span>
+  if (rank === 3) return <span className="text-lg">🥉</span>
+  return <span className="font-medium text-neutral-600 dark:text-neutral-400">{rank}</span>
 }
 
-export default async function StandingsPage({ searchParams }: { searchParams: Promise<SP> }) {
-  const sp = await searchParams
-  const providedLeagueId = readParam(sp, 'leagueId')
-  const season = Number(readParam(sp, 'season') ?? new Date().getUTCFullYear())
-  const weekStr = readParam(sp, 'week')
-  const week = weekStr ? Number(weekStr) : undefined
+type Row = {
+  profile_id: string
+  display_name: string
+  preferred_color: string | null
+  points: number
+  correct: number
+  longest_streak: number
+  wrinkle_points: number
+  rank: number
+  back_from_first: number
+  back_to_playoffs: number
+}
 
-  const qs = new URLSearchParams({ season: String(season) })
-  if (week !== undefined && Number.isFinite(week)) qs.set('week', String(week))
-  if (providedLeagueId) qs.set('leagueId', providedLeagueId)
+type League = { id: string; name: string; season: number }
 
-  type Row = {
-    profile_id: string
-    display_name: string
-    preferred_color: string | null
-    points: number
-    correct: number
-    longest_streak: number
-    wrinkle_points: number
-    rank: number
-    back_from_first: number
-    back_to_playoffs: number
-  }
+export default function StandingsPage() {
+  const [leagues, setLeagues] = useState<League[]>([])
+  const [leagueId, setLeagueId] = useState('')
+  const [season, setSeason] = useState(new Date().getFullYear())
+  const [rows, setRows] = useState<Row[]>([])
+  const [leagueName, setLeagueName] = useState('—')
+  const [startWeek, setStartWeek] = useState(1)
+  const [loading, setLoading] = useState(false)
 
-  let rows: Row[] = []
-  let leagueName = '—'
-  let startWeek = 1
-  let isPlayoffLeague = true
+  const isPlayoffLeague = startWeek === 1
 
-  try {
-    const data = await fetchJSONWithAuth<{
-      rows: Row[]
-      leagueId: string
-      leagueName: string
-      startWeek: number
-    }>(`/api/standings?${qs.toString()}`)
-    rows = data.rows ?? []
-    leagueName = data.leagueName || '—'
-    startWeek = data.startWeek ?? 1
-    isPlayoffLeague = startWeek === 1
-  } catch {
-    // Leave empty state if fetch/auth fails
-  }
+  // Load leagues
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/my-leagues', { cache: 'no-store' })
+        if (res.ok) {
+          const data = await res.json()
+          const L: League[] = Array.isArray(data?.leagues) ? data.leagues : data?.rows || data || []
+          setLeagues(L)
+          if (L.length > 0 && !leagueId) {
+            setLeagueId(L[0].id)
+            setSeason(L[0].season || new Date().getFullYear())
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load leagues:', e)
+      }
+    })()
+  }, [])
+
+  // Load standings when league/season changes
+  useEffect(() => {
+    if (!leagueId) return
+    
+    setLoading(true)
+    ;(async () => {
+      try {
+        const res = await fetch(
+          `/api/standings?leagueId=${encodeURIComponent(leagueId)}&season=${season}`,
+          { cache: 'no-store' }
+        )
+        if (res.ok) {
+          const data = await res.json()
+          setRows(data.rows || [])
+          setLeagueName(data.leagueName || '—')
+          setStartWeek(data.startWeek ?? 1)
+        }
+      } catch (e) {
+        console.error('Failed to load standings:', e)
+        setRows([])
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [leagueId, season])
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
+      {/* Header */}
       <div className="mb-6 flex items-center justify-between gap-4">
         <h1 className="text-3xl font-semibold">Standings</h1>
         <div className="text-lg text-neutral-500">
@@ -103,19 +98,51 @@ export default async function StandingsPage({ searchParams }: { searchParams: Pr
         </div>
       </div>
 
+      {/* League/Season selectors */}
+      <section className="mb-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs text-neutral-500 mb-1">League</label>
+          <select
+            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2"
+            value={leagueId}
+            onChange={(e) => setLeagueId(e.target.value)}
+          >
+            {!leagueId && <option value="">—</option>}
+            {leagues.map((L) => (
+              <option key={L.id} value={L.id}>
+                {L.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs text-neutral-500 mb-1">Season</label>
+          <input
+            type="number"
+            className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2"
+            value={season}
+            onChange={(e) => setSeason(Number(e.target.value))}
+          />
+        </div>
+      </section>
+
+      {/* Standings table */}
       <section className="rounded-3xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">
-            {week === undefined ? 'Overall standings' : `Week ${week} standings`}
-          </h2>
+          <h2 className="text-xl font-semibold">Overall standings</h2>
           {isPlayoffLeague && (
             <div className="text-sm text-neutral-500">Top 4 advance to playoffs</div>
           )}
         </div>
 
-        {rows.length === 0 ? (
-          <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 p-6 text-neutral-600 dark:text-neutral-400">
-            No standings data yet.
+        {loading ? (
+          <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 p-6 text-neutral-600 dark:text-neutral-400 text-center">
+            Loading standings...
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 p-6 text-neutral-600 dark:text-neutral-400 text-center">
+            {leagueId ? 'No standings data yet.' : 'Please select a league.'}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -133,7 +160,7 @@ export default async function StandingsPage({ searchParams }: { searchParams: Pr
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, idx) => {
+                {rows.map((r) => {
                   const borderColor = r.preferred_color || '#6b7280'
                   const isPlayoffSpot = isPlayoffLeague && r.rank <= 4
                   return (
