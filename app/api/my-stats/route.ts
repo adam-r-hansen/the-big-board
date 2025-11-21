@@ -140,7 +140,13 @@ export async function GET(req: NextRequest) {
       const g = r.game_id ? gamesById.get(r.game_id) : undefined
       const s = (g?.status || 'UPCOMING').toUpperCase()
       const res = resultFor(r.team_id, g)
-      const pts = pointsFor(r.team_id, g)
+      let pts = pointsFor(r.team_id, g)
+      
+      // Double points for winless_double picks
+      if (r.wrinkle_kind === 'winless_double' && pts !== null) {
+        pts = pts * 2
+      }
+      
       const score = g ? { home: g.home_score, away: g.away_score } : null
       return {
         week: r.week,
@@ -173,15 +179,16 @@ export async function GET(req: NextRequest) {
   }
   
   // FIXED: Wrinkle points calculation
+  // For winless_double: count half of the doubled points (the base score)
+  // For other wrinkles: count full points
   const wrinklePoints = finals
     .filter(r => r.wrinkle)
     .reduce((acc, r) => {
       const pts = r.points || 0
-      // For winless_double, only count half (the base points, not the doubled amount)
       if ((r as any).wrinkle_kind === 'winless_double') {
+        // Divide by 2 to get base score since we doubled it above
         return acc + (pts / 2)
       }
-      // For other wrinkles (bonus games), count full points
       return acc + pts
     }, 0)
 

@@ -141,7 +141,12 @@ export async function GET(req: NextRequest) {
     const finalPicks = memberPicks
       .map((p: any) => {
         const g = gamesMap.get(p.game_id)
-        return { ...p, game: g }
+        let pts = pointsFor(g, p.team_id)
+        // Double points for winless_double
+        if (p.wrinkle_kind === 'winless_double' && pts !== null) {
+          pts = pts * 2
+        }
+        return { ...p, game: g, calculatedPoints: pts }
       })
       .filter((p: any) => p.game && p.game.status === 'FINAL')
 
@@ -157,7 +162,7 @@ export async function GET(req: NextRequest) {
     const accuracy = decided > 0 ? correct / decided : 0
 
     const pointsTotal = sortedFinals.reduce(
-      (sum: number, p: any) => sum + (pointsFor(p.game, p.team_id) || 0),
+      (sum: number, p: any) => sum + (p.calculatedPoints || 0),
       0
     )
     const avgPerPick = decided > 0 ? pointsTotal / decided : 0
@@ -183,7 +188,7 @@ export async function GET(req: NextRequest) {
     const wrinklePoints = sortedFinals
       .filter((p: any) => p.wrinkle)
       .reduce((sum: number, p: any) => {
-        const pts = pointsFor(p.game, p.team_id) || 0
+        const pts = p.calculatedPoints || 0
         // For winless_double, only count half (the base points)
         if (p.wrinkle_kind === 'winless_double') {
           return sum + (pts / 2)

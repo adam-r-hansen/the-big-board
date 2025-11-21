@@ -96,7 +96,13 @@ export async function GET(req: NextRequest) {
       const g = gamesMap.get(p.game_id)
       const when = g?.game_utc ? Date.parse(g.game_utc) : 0
       const correct = g ? isCorrect(g, p.team_id) : false
-      const pts = g ? winnerScore(g, p.team_id) : 0
+      let pts = g ? winnerScore(g, p.team_id) : 0
+      
+      // Double points for winless_double
+      if (p.wrinkle_kind === 'winless_double' && pts > 0) {
+        pts = pts * 2
+      }
+      
       const isWrinkle = !!p.wrinkle_kind
       const wrinkleKind = p.wrinkle_kind
       return { when, correct, pts, isWrinkle, wrinkleKind }
@@ -109,7 +115,7 @@ export async function GET(req: NextRequest) {
     for (const e of events) {
       totalPts += e.pts
       if (e.isWrinkle) {
-        // For winless_double, only count half
+        // For winless_double, only count half (the base points)
         if (e.wrinkleKind === 'winless_double') {
           wrinklePts += e.pts / 2
         } else {
