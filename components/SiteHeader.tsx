@@ -1,9 +1,9 @@
 // components/SiteHeader.tsx
 import Link from 'next/link'
-import { createServerSupabaseClient } from '@/lib/supabase-clients'
+import { createClient } from '@/utils/supabase/server'
 
 export default async function SiteHeader() {
-  const supabase = await createServerSupabaseClient()
+  const supabase = await createClient()
   const { data } = await supabase.auth.getUser()
   const user = data?.user ?? null
 
@@ -18,6 +18,7 @@ export default async function SiteHeader() {
           <Link href="/standings" className="opacity-80 hover:opacity-100">Standings</Link>
           <Link href="/stats" className="opacity-80 hover:opacity-100">Stats</Link>
           <Link href="/admin" className="opacity-80 hover:opacity-100">Admin</Link>
+          <Link href="/profile" className="opacity-80 hover:opacity-100">Profile</Link>
         </nav>
 
         {/* RIGHT: auth */}
