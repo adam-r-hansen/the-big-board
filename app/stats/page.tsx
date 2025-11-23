@@ -309,8 +309,8 @@ export default function StatsPage() {
                     const team = getTeam(r.team_id, teamMap)
                     if (!team) return null
                     
-                    const resultColor = r.result === 'W' ? 'text-green-600 dark:text-green-500' : r.result === 'L' ? 'text-red-600 dark:text-red-500' : 'text-neutral-600 dark:text-neutral-400'
-                    const pointsBg = hexToRgba(team.color_primary, 0.4)
+                    const pointsBg = hexToRgba(team.color_primary, 0.5)
+                    const statusColor = r.status === 'FINAL' ? 'bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
                     
                     return (
                       <div key={idx} className="flex items-center gap-3">
@@ -319,14 +319,22 @@ export default function StatsPage() {
                           Week {r.week}
                         </div>
                         
-                        {/* TeamCard with overlays */}
+                        {/* TeamCard with status and points */}
                         <div className="flex-1 relative min-w-0">
                           {r.wrinkle && (
                             <span className="absolute -top-2 -right-2 z-10 bg-purple-600 text-white px-2 py-1 rounded-md text-[11px] font-bold shadow-lg">
                               W
                             </span>
                           )}
-                          <div className="relative">
+                          <div className="relative flex flex-col gap-1">
+                            {/* Status badge above */}
+                            <div className="flex justify-center">
+                              <span className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${statusColor}`}>
+                                {r.status}
+                              </span>
+                            </div>
+                            
+                            {/* TeamCard */}
                             <TeamCard
                               team={team}
                               variant="solid"
@@ -334,16 +342,14 @@ export default function StatsPage() {
                               disabled
                               className="w-full"
                             />
-                            {/* Overlay stats on TeamCard */}
-                            <div className="absolute inset-0 flex items-center justify-end gap-2 pr-3 pointer-events-none">
-                              <span className={`text-sm font-bold px-2 py-1 rounded-md bg-black/30 backdrop-blur-sm ${resultColor}`}>
-                                {r.result}
-                              </span>
+                            
+                            {/* Points pill below */}
+                            <div className="flex justify-center">
                               <span 
-                                className="text-base font-bold text-white px-3 py-1.5 rounded-xl shadow-sm"
+                                className="text-xl font-bold text-white px-4 py-2 rounded-full shadow-md"
                                 style={{ background: pointsBg }}
                               >
-                                {r.points ?? 0} pts
+                                {r.points ?? 0}
                               </span>
                             </div>
                           </div>
@@ -390,51 +396,55 @@ export default function StatsPage() {
                       </div>
                       
                       {/* Member's picks */}
-                      <div className="flex flex-col gap-2.5">
+                      <div className="flex flex-col gap-3">
                         {member.picks.map((pick, pickIdx) => {
                           const team = getTeam(pick.team_id, teamMap)
                           if (!team) return null
                           
-                          const resultColor = pick.result === 'W' ? 'text-green-600 dark:text-green-500' : pick.result === 'L' ? 'text-red-600 dark:text-red-500' : 'text-neutral-600 dark:text-neutral-400'
-                          const pointsBg = hexToRgba(team.color_primary, 0.4)
+                          const pointsBg = hexToRgba(team.color_primary, 0.5)
                           const gameScore = pick.score ? `${pick.score.away ?? '—'} - ${pick.score.home ?? '—'}` : ''
+                          const statusColor = pick.status === 'FINAL' ? 'bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
                           
                           return (
-                            <div key={pickIdx} className="flex flex-col gap-1">
-                              {/* Game score above */}
-                              {gameScore && (
-                                <div className="text-[11px] text-neutral-500 dark:text-neutral-400 pl-1">
-                                  {gameScore}
-                                </div>
+                            <div key={pickIdx} className="relative">
+                              {pick.wrinkle && (
+                                <span className="absolute -top-2 -right-2 z-10 bg-purple-600 text-white px-2 py-0.5 rounded text-[10px] font-bold shadow-md">
+                                  W
+                                </span>
                               )}
                               
-                              {/* TeamCard with overlays */}
-                              <div className="relative">
-                                {pick.wrinkle && (
-                                  <span className="absolute -top-2 -right-2 z-10 bg-purple-600 text-white px-2 py-0.5 rounded text-[10px] font-bold shadow-md">
-                                    W
-                                  </span>
-                                )}
-                                <div className="relative">
-                                  <TeamCard
-                                    team={team}
-                                    variant="solid"
-                                    displayText="short"
-                                    disabled
-                                    className="w-full"
-                                  />
-                                  {/* Overlay stats on TeamCard */}
-                                  <div className="absolute inset-0 flex items-center justify-end gap-2 pr-3 pointer-events-none">
-                                    <span className={`text-[11px] font-bold px-2 py-1 rounded-md bg-black/30 backdrop-blur-sm ${resultColor}`}>
-                                      {pick.result}
-                                    </span>
-                                    <span 
-                                      className="text-sm font-bold text-white px-2.5 py-1 rounded-lg shadow-sm"
-                                      style={{ background: pointsBg }}
-                                    >
-                                      {pick.points ?? 0} pts
-                                    </span>
+                              <div className="flex flex-col gap-1">
+                                {/* Game score */}
+                                {gameScore && (
+                                  <div className="text-[11px] text-neutral-500 dark:text-neutral-400 text-center">
+                                    {gameScore}
                                   </div>
+                                )}
+                                
+                                {/* Status badge above */}
+                                <div className="flex justify-center">
+                                  <span className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${statusColor}`}>
+                                    {pick.status}
+                                  </span>
+                                </div>
+                                
+                                {/* TeamCard */}
+                                <TeamCard
+                                  team={team}
+                                  variant="solid"
+                                  displayText="short"
+                                  disabled
+                                  className="w-full"
+                                />
+                                
+                                {/* Points pill below */}
+                                <div className="flex justify-center">
+                                  <span 
+                                    className="text-lg font-bold text-white px-4 py-1.5 rounded-full shadow-md"
+                                    style={{ background: pointsBg }}
+                                  >
+                                    {pick.points ?? 0}
+                                  </span>
                                 </div>
                               </div>
                             </div>
