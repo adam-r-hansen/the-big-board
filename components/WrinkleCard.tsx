@@ -42,9 +42,9 @@ function toTeamCardTeam(t: DomainTeam | undefined) {
     abbreviation: t.abbreviation || 'UNK',
     logo: t.logo || '',
     color_primary: t.color_primary || '#6b7280',
-    color_secondary: t.color_secondary,
-    color_pref_light: t.color_pref_light,
-    color_pref_dark: t.color_pref_dark,
+    color_secondary: t.color_secondary ?? undefined,
+    color_pref_light: t.color_pref_light ?? undefined,
+    color_pref_dark: t.color_pref_dark ?? undefined,
   }
 }
 
