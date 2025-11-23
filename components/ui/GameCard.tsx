@@ -138,7 +138,7 @@ export default function GameCard({ game, teamIndex, right }: GameCardProps) {
           <TeamCard
             team={homeTeam}
             variant="solid"
-            displayText="responsive"
+            displayText="short"
             disabled
           />
           {homeScore !== null && (
@@ -155,7 +155,7 @@ export default function GameCard({ game, teamIndex, right }: GameCardProps) {
           <TeamCard
             team={awayTeam}
             variant="solid"
-            displayText="responsive"
+            displayText="short"
             disabled
           />
           {awayScore !== null && (
