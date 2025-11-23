@@ -625,7 +625,7 @@ function HomeInner() {
                           <TeamCard
                             team={team}
                             variant="solid"
-                            displayText="abbreviation"
+                            displayText="short"
                             disabled
                             className="w-full"
                           />
@@ -690,7 +690,7 @@ function HomeInner() {
                                   <TeamCard
                                     team={team}
                                     variant="solid"
-                                    displayText="abbreviation"
+                                    displayText="short"
                                     disabled
                                     className="w-full"
                                   />
