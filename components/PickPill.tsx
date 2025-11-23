@@ -19,13 +19,39 @@ type Props = {
   ariaLabel?: string
 }
 
+function StatusPill({ status }: { status?: string }) {
+  const s = (status || 'UPCOMING').toUpperCase()
+  
+  let pillClass = 'status-pill-upcoming'
+  let displayText = 'Upcoming'
+  let showDot = false
+
+  if (s === 'LIVE') {
+    pillClass = 'status-pill-live'
+    displayText = 'Live'
+    showDot = true
+  } else if (s === 'FINAL') {
+    pillClass = 'status-pill-final'
+    displayText = 'Final'
+  } else if (s === 'LOCKED') {
+    pillClass = 'status-pill-locked'
+    displayText = 'Locked'
+  }
+
+  return (
+    <span className={`status-pill ${pillClass}`}>
+      {showDot && <span className="status-pill-dot">●</span>}
+      {displayText}
+    </span>
+  )
+}
+
 export default function PickPill({ teamId, teams, statusText, ariaLabel }: Props) {
   const t = teams[teamId] || ({} as TeamLike)
 
   const abbr = (t.abbreviation ?? '').toUpperCase()
-  // fix: avoid mixing ?? with || by isolating the coalescing chain
-  const nameBase = t.name ?? t.short_name ?? abbr
-  const name = (nameBase || '—').toString()
+  const shortName = (t.short_name ?? abbr).toString()
+  const fullName = (t.name ?? shortName).toString()
 
   const primary = t.color_primary ?? '#111827'   // neutral-900 fallback
   const border = t.color_secondary ?? '#e5e7eb'  // neutral-200 fallback
@@ -35,21 +61,19 @@ export default function PickPill({ teamId, teams, statusText, ariaLabel }: Props
       <div
         className="inline-flex select-none items-center justify-center rounded-2xl border px-3 py-2 w-24 md:w-64"
         style={{ borderColor: border }}
-        aria-label={ariaLabel || name}
+        aria-label={ariaLabel || fullName}
       >
         {/* desktop: full name (truncate) */}
         <span className="hidden md:inline truncate" style={{ color: primary, maxWidth: '14rem' }}>
-          {name}
+          {fullName}
         </span>
-        {/* mobile: abbreviation */}
-        <span className="md:hidden font-medium" style={{ color: primary }}>
-          {abbr || name}
+        {/* mobile: short name */}
+        <span className="md:hidden font-medium truncate" style={{ color: primary }}>
+          {shortName}
         </span>
       </div>
 
-      {statusText ? (
-        <span className="text-sm text-neutral-500 shrink-0">{statusText}</span>
-      ) : null}
+      {statusText ? <StatusPill status={statusText} /> : null}
     </div>
   )
 }
