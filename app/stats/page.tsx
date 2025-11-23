@@ -198,7 +198,7 @@ export default function StatsPage() {
         groups.set(key, {
           profile_id: row.profile_id,
           display_name: row.display_name,
-          preferred_color: row.preferred_color || '#000000',
+          preferred_color: row.preferred_color || '#6b7280',
           picks: [],
           total_points: 0,
         })
@@ -228,7 +228,7 @@ export default function StatsPage() {
             {seasonOptions.map(yr => <option key={yr} value={yr}>{yr}</option>)}
           </select>
           {leagues.length <= 1 ? (
-            <span className="text-sm text-neutral-600">League: <strong>{leagueName}</strong></span>
+            <span className="text-sm text-neutral-600 dark:text-neutral-400">League: <strong>{leagueName}</strong></span>
           ) : (
             <select className="border rounded px-2 py-1 bg-transparent" value={leagueId} onChange={e => setLeagueId(e.target.value)}>
               {leagues.map(l => <option key={l.id} value={l.id}>{l.name} · {l.season}</option>)}
@@ -309,18 +309,18 @@ export default function StatsPage() {
                     const team = getTeam(r.team_id, teamMap)
                     if (!team) return null
                     
-                    const resultColor = r.result === 'W' ? 'text-green-600' : r.result === 'L' ? 'text-red-600' : 'text-neutral-600'
+                    const resultColor = r.result === 'W' ? 'text-green-600 dark:text-green-500' : r.result === 'L' ? 'text-red-600 dark:text-red-500' : 'text-neutral-600 dark:text-neutral-400'
                     const pointsBg = hexToRgba(team.color_primary, 0.4)
                     
                     return (
                       <div key={idx} className="flex items-center gap-3">
                         {/* Week badge */}
-                        <div className="min-w-[60px] text-center text-xs font-semibold text-neutral-500">
+                        <div className="min-w-[60px] text-center text-xs font-semibold text-neutral-500 dark:text-neutral-400">
                           Week {r.week}
                         </div>
                         
                         {/* TeamCard with overlays */}
-                        <div className="flex-1 relative">
+                        <div className="flex-1 relative min-w-0">
                           {r.wrinkle && (
                             <span className="absolute -top-2 -right-2 z-10 bg-purple-600 text-white px-2 py-1 rounded-md text-[11px] font-bold shadow-lg">
                               W
@@ -335,12 +335,12 @@ export default function StatsPage() {
                               className="w-full"
                             />
                             {/* Overlay stats on TeamCard */}
-                            <div className="absolute inset-0 flex items-center justify-end gap-3 pr-4 pointer-events-none">
-                              <span className={`text-sm font-bold px-2 py-1 rounded-md bg-black/30 ${resultColor}`}>
+                            <div className="absolute inset-0 flex items-center justify-end gap-2 pr-3 pointer-events-none">
+                              <span className={`text-sm font-bold px-2 py-1 rounded-md bg-black/30 backdrop-blur-sm ${resultColor}`}>
                                 {r.result}
                               </span>
                               <span 
-                                className="text-base font-bold text-white px-3 py-1.5 rounded-xl"
+                                className="text-base font-bold text-white px-3 py-1.5 rounded-xl shadow-sm"
                                 style={{ background: pointsBg }}
                               >
                                 {r.points ?? 0} pts
@@ -384,9 +384,9 @@ export default function StatsPage() {
                       style={{ border: `3px solid ${member.preferred_color}` }}
                     >
                       {/* Member header */}
-                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-neutral-200 dark:border-neutral-800">
+                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-neutral-200 dark:border-neutral-700">
                         <span className="font-semibold text-base">{member.display_name}</span>
-                        <span className="font-semibold text-base text-neutral-400">{member.total_points} pts</span>
+                        <span className="font-semibold text-base text-neutral-600 dark:text-neutral-400">{member.total_points} pts</span>
                       </div>
                       
                       {/* Member's picks */}
@@ -395,7 +395,7 @@ export default function StatsPage() {
                           const team = getTeam(pick.team_id, teamMap)
                           if (!team) return null
                           
-                          const resultColor = pick.result === 'W' ? 'text-green-600' : pick.result === 'L' ? 'text-red-600' : 'text-neutral-600'
+                          const resultColor = pick.result === 'W' ? 'text-green-600 dark:text-green-500' : pick.result === 'L' ? 'text-red-600 dark:text-red-500' : 'text-neutral-600 dark:text-neutral-400'
                           const pointsBg = hexToRgba(team.color_primary, 0.4)
                           const gameScore = pick.score ? `${pick.score.away ?? '—'} - ${pick.score.home ?? '—'}` : ''
                           
@@ -403,7 +403,7 @@ export default function StatsPage() {
                             <div key={pickIdx} className="flex flex-col gap-1">
                               {/* Game score above */}
                               {gameScore && (
-                                <div className="text-[11px] text-neutral-500 pl-1">
+                                <div className="text-[11px] text-neutral-500 dark:text-neutral-400 pl-1">
                                   {gameScore}
                                 </div>
                               )}
@@ -425,11 +425,11 @@ export default function StatsPage() {
                                   />
                                   {/* Overlay stats on TeamCard */}
                                   <div className="absolute inset-0 flex items-center justify-end gap-2 pr-3 pointer-events-none">
-                                    <span className={`text-[11px] font-bold ${resultColor}`}>
+                                    <span className={`text-[11px] font-bold px-2 py-1 rounded-md bg-black/30 backdrop-blur-sm ${resultColor}`}>
                                       {pick.result}
                                     </span>
                                     <span 
-                                      className="text-sm font-bold text-white px-2.5 py-1 rounded-lg"
+                                      className="text-sm font-bold text-white px-2.5 py-1 rounded-lg shadow-sm"
                                       style={{ background: pointsBg }}
                                     >
                                       {pick.points ?? 0} pts
