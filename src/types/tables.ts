@@ -31,3 +31,47 @@ export type TeamRow = {
   primary_color?: string | null
   secondary_color?: string | null
 }
+
+// Playoff types
+export type PlayoffSettingsRow = {
+  id: UUID
+  league_id: UUID
+  enabled: boolean
+  regular_season_weeks: number
+  created_at: string
+  updated_at: string
+}
+
+export type PlayoffRoundRow = {
+  id: UUID
+  league_id: UUID
+  week_number: number
+  round_type: 'semifinal' | 'championship' | 'consolation'
+  status: 'pending' | 'active' | 'complete'
+  created_at: string
+  updated_at: string
+}
+
+export type PlayoffPickRow = {
+  id: UUID
+  league_membership_id: UUID
+  playoff_round_id: UUID
+  game_id: UUID
+  pick_position: number
+  unlock_time: string
+  picked_at: string | null
+  last_changed_at: string | null
+  is_tiebreaker: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type PlayoffStandingsRow = {
+  id: UUID
+  playoff_round_id: UUID
+  league_membership_id: UUID
+  rank: number
+  total_score: number
+  seed: number
+  created_at: string
+}
