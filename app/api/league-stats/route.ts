@@ -64,13 +64,18 @@ export async function GET(req: NextRequest) {
 
   const { data: profs } = await sb
     .from('profiles')
-    .select('id, display_name, email')
+    .select('id, display_name, email, preferred_color')
     .in('id', memberIds)
   const profMap = new Map((profs ?? []).map((p: any) => [p.id, p]))
 
   function prettyName(pid: string) {
     const p = profMap.get(pid)
     return p?.display_name || p?.email?.split('@')[0] || 'Member'
+  }
+
+  function preferredColor(pid: string) {
+    const p = profMap.get(pid)
+    return p?.preferred_color || null
   }
 
   // Get picks with winless_double flag
@@ -133,6 +138,7 @@ export async function GET(req: NextRequest) {
     week: number
     profile_id: string
     display_name: string
+    preferred_color: string | null
     team_id: string
     game_id: string | null
     status: string
@@ -142,7 +148,7 @@ export async function GET(req: NextRequest) {
     wrinkle: boolean
   }
 
-  const log: LogRow[] = allPicks.map((p: any) => {
+  let log: LogRow[] = allPicks.map((p: any) => {
     const g = p.game_id ? gamesMap.get(p.game_id) : undefined
     const s = (g?.status || 'UPCOMING').toUpperCase()
     const res = resultFor(p.team_id, g)
@@ -158,6 +164,7 @@ export async function GET(req: NextRequest) {
       week: p.week,
       profile_id: p.profile_id,
       display_name: prettyName(p.profile_id),
+      preferred_color: preferredColor(p.profile_id),
       team_id: p.team_id,
       game_id: p.game_id,
       status: s,
@@ -168,10 +175,9 @@ export async function GET(req: NextRequest) {
     }
   })
 
+  // Filter out non-FINAL games when includeLive is false
   if (!includeLive) {
-    log.forEach(r => {
-      if (r.status !== 'FINAL') r.points = null
-    })
+    log = log.filter(r => r.status === 'FINAL')
   }
   
   log.sort((a, b) => a.week - b.week || a.display_name.localeCompare(b.display_name))
