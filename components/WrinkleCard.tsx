@@ -1,6 +1,6 @@
 'use client'
 import TeamCard from '@/components/TeamCard'
-import type { Team } from '@/types/domain'
+import type { Team as DomainTeam } from '@/types/domain'
 import WrinkleBadge from '@/components/WrinkleBadge'
 
 type WrinkleGame = {
@@ -27,9 +27,25 @@ type Pick = { id: string; team_id: string; game_id: string|null }
 
 type Props = {
   wrinkle: Wrinkle
-  teams: Record<string, Team>
+  teams: Record<string, DomainTeam>
   myPick: Pick | null
   onChanged: () => void
+}
+
+// Convert domain Team to TeamCard Team
+function toTeamCardTeam(t: DomainTeam | undefined) {
+  if (!t) return undefined
+  return {
+    id: t.id,
+    name: t.name || t.short_name || t.abbreviation || 'Unknown',
+    short_name: t.short_name || t.name || t.abbreviation || 'Unknown',
+    abbreviation: t.abbreviation || 'UNK',
+    logo: t.logo || '',
+    color_primary: t.color_primary || '#6b7280',
+    color_secondary: t.color_secondary,
+    color_pref_light: t.color_pref_light,
+    color_pref_dark: t.color_pref_dark,
+  }
 }
 
 export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props) {
@@ -67,8 +83,8 @@ export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props
   }
 
   const g = (wrinkle.games ?? [])[0] // MVP: assume 1 game per wrinkle
-  const home = g ? teams[g.home_team] : undefined
-  const away = g ? teams[g.away_team] : undefined
+  const homeTeam = toTeamCardTeam(g ? teams[g.home_team] : undefined)
+  const awayTeam = toTeamCardTeam(g ? teams[g.away_team] : undefined)
   const isLocked = g ? locked(g.game_utc) : true
 
   return (
@@ -83,27 +99,27 @@ export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props
         </div>
       </header>
 
-      {g && home && away ? (
+      {g && homeTeam && awayTeam ? (
         <div className="flex items-center gap-3">
           <div className="flex-1">
             <TeamCard
-              team={home}
+              team={homeTeam}
               variant="solid"
               displayText="short"
-              picked={myPick?.team_id === home.id}
+              picked={myPick?.team_id === homeTeam.id}
               disabled={isLocked}
-              onClick={() => pick(home.id, g.game_id)}
+              onClick={() => pick(homeTeam.id, g.game_id)}
             />
           </div>
           <div className="text-neutral-400">—</div>
           <div className="flex-1">
             <TeamCard
-              team={away}
+              team={awayTeam}
               variant="solid"
               displayText="short"
-              picked={myPick?.team_id === away.id}
+              picked={myPick?.team_id === awayTeam.id}
               disabled={isLocked}
-              onClick={() => pick(away.id, g.game_id)}
+              onClick={() => pick(awayTeam.id, g.game_id)}
             />
           </div>
         </div>
