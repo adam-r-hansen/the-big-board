@@ -98,6 +98,16 @@ function getTeam(teamId: string, teamMap: Record<string, Team>): TeamCardTeam | 
   }
 }
 
+// Helper to convert hex to rgba
+function hexToRgba(hex: string, alpha: number): string {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  if (!result) return `rgba(107, 114, 128, ${alpha})`
+  const r = parseInt(result[1], 16)
+  const g = parseInt(result[2], 16)
+  const b = parseInt(result[3], 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
 export default function StatsPage() {
   const [leagues, setLeagues] = useState<League[]>([])
   const [leagueId, setLeagueId] = useState<string>('')
@@ -171,6 +181,35 @@ export default function StatsPage() {
     if (!selectedWeek) return leagueLog
     return leagueLog.filter(r => r.week === selectedWeek)
   }, [leagueLog, selectedWeek])
+
+  // Group league log by member
+  const groupedLeagueLog = useMemo(() => {
+    const groups = new Map<string, { 
+      profile_id: string
+      display_name: string
+      preferred_color: string
+      picks: LeagueLogRow[]
+      total_points: number
+    }>()
+
+    for (const row of filteredLeagueLog) {
+      const key = row.profile_id
+      if (!groups.has(key)) {
+        groups.set(key, {
+          profile_id: row.profile_id,
+          display_name: row.display_name,
+          preferred_color: row.preferred_color || '#000000',
+          picks: [],
+          total_points: 0,
+        })
+      }
+      const group = groups.get(key)!
+      group.picks.push(row)
+      group.total_points += row.points ?? 0
+    }
+
+    return Array.from(groups.values()).sort((a, b) => a.display_name.localeCompare(b.display_name))
+  }, [filteredLeagueLog])
 
   // Set initial week when data loads
   useEffect(() => {
@@ -258,37 +297,57 @@ export default function StatsPage() {
             )}
           </Card>
 
-          {/* NEW LAYOUT: 1/3 My Pick Log + 2/3 League Pick Log */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* My Pick Log - 1/3 width */}
-            <Card title="My Pick Log" right={<span className="text-xs text-neutral-500">{includeLive ? 'Finals + Live' : 'Finals only'}</span>}>
+          {/* NEW LAYOUT: 50/50 My Pick Log + League Pick Log */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* My Pick Log - 50% width */}
+            <Card title="My Pick Log" right={<span className="text-xs text-neutral-500 uppercase tracking-wide">{includeLive ? 'Finals + Live' : 'Finals only'}</span>}>
               {myLog.length === 0 ? (
                 <div className="text-sm text-neutral-500">No picks yet.</div>
               ) : (
-                <div className="grid gap-2 max-h-[600px] overflow-y-auto">
+                <div className="flex flex-col gap-3 max-h-[600px] overflow-y-auto">
                   {myLog.map((r, idx) => {
                     const team = getTeam(r.team_id, teamMap)
+                    if (!team) return null
+                    
                     const resultColor = r.result === 'W' ? 'text-green-600' : r.result === 'L' ? 'text-red-600' : 'text-neutral-600'
+                    const pointsBg = hexToRgba(team.color_primary, 0.4)
                     
                     return (
-                      <div key={idx} className="space-y-1">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-neutral-500">Week {r.week}</span>
-                          <div className="flex items-center gap-2">
-                            <span className={`font-semibold ${resultColor}`}>{r.result}</span>
-                            <span className="text-neutral-600">{r.points ?? 0} pts</span>
-                            {r.wrinkle && <span className="bg-purple-600 text-white px-1 py-0.5 rounded text-[10px]">W</span>}
+                      <div key={idx} className="flex items-center gap-3">
+                        {/* Week badge */}
+                        <div className="min-w-[60px] text-center text-xs font-semibold text-neutral-500">
+                          Week {r.week}
+                        </div>
+                        
+                        {/* TeamCard with overlays */}
+                        <div className="flex-1 relative">
+                          {r.wrinkle && (
+                            <span className="absolute -top-2 -right-2 z-10 bg-purple-600 text-white px-2 py-1 rounded-md text-[11px] font-bold shadow-lg">
+                              W
+                            </span>
+                          )}
+                          <div className="relative">
+                            <TeamCard
+                              team={team}
+                              variant="solid"
+                              displayText="short"
+                              disabled
+                              className="w-full"
+                            />
+                            {/* Overlay stats on TeamCard */}
+                            <div className="absolute inset-0 flex items-center justify-end gap-3 pr-4 pointer-events-none">
+                              <span className={`text-sm font-bold px-2 py-1 rounded-md bg-black/30 ${resultColor}`}>
+                                {r.result}
+                              </span>
+                              <span 
+                                className="text-base font-bold text-white px-3 py-1.5 rounded-xl"
+                                style={{ background: pointsBg }}
+                              >
+                                {r.points ?? 0} pts
+                              </span>
+                            </div>
                           </div>
                         </div>
-                        {team && (
-                          <TeamCard
-                            team={team}
-                            variant="solid"
-                            displayText="abbreviation"
-                            disabled
-                            className="w-full"
-                          />
-                        )}
                       </div>
                     )
                   })}
@@ -296,64 +355,97 @@ export default function StatsPage() {
               )}
             </Card>
 
-            {/* League Pick Log - 2/3 width */}
-            <div className="lg:col-span-2">
-              <Card 
-                title={`League Pick Log — Week ${selectedWeek}`}
-                right={
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-neutral-500">{includeLive ? 'Finals + Live' : 'Finals only'}</span>
-                    <select 
-                      className="border rounded px-2 py-1 text-sm bg-transparent" 
-                      value={selectedWeek} 
-                      onChange={e => setSelectedWeek(Number(e.target.value))}
+            {/* League Pick Log - 50% width */}
+            <Card 
+              title={`League Pick Log — Week ${selectedWeek}`}
+              right={
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-neutral-500 uppercase tracking-wide">{includeLive ? 'Finals + Live' : 'Finals only'}</span>
+                  <select 
+                    className="border rounded px-2 py-1 text-sm bg-transparent" 
+                    value={selectedWeek} 
+                    onChange={e => setSelectedWeek(Number(e.target.value))}
+                  >
+                    {availableWeeks.map(wk => (
+                      <option key={wk} value={wk}>Week {wk}</option>
+                    ))}
+                  </select>
+                </div>
+              }
+            >
+              {groupedLeagueLog.length === 0 ? (
+                <div className="text-sm text-neutral-500">No picks for this week.</div>
+              ) : (
+                <div className="flex flex-col gap-5 max-h-[600px] overflow-y-auto">
+                  {groupedLeagueLog.map((member) => (
+                    <div
+                      key={member.profile_id}
+                      className="rounded-xl p-4"
+                      style={{ border: `3px solid ${member.preferred_color}` }}
                     >
-                      {availableWeeks.map(wk => (
-                        <option key={wk} value={wk}>Week {wk}</option>
-                      ))}
-                    </select>
-                  </div>
-                }
-              >
-                {filteredLeagueLog.length === 0 ? (
-                  <div className="text-sm text-neutral-500">No picks for this week.</div>
-                ) : (
-                  <div className="grid gap-3 max-h-[600px] overflow-y-auto">
-                    {filteredLeagueLog.map((r, idx) => {
-                      const team = getTeam(r.team_id, teamMap)
-                      const borderColor = r.preferred_color || '#000000'
-                      const resultColor = r.result === 'W' ? 'text-green-600' : r.result === 'L' ? 'text-red-600' : 'text-neutral-600'
+                      {/* Member header */}
+                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-neutral-200 dark:border-neutral-800">
+                        <span className="font-semibold text-base">{member.display_name}</span>
+                        <span className="font-semibold text-base text-neutral-400">{member.total_points} pts</span>
+                      </div>
                       
-                      return (
-                        <div
-                          key={idx}
-                          className="rounded-xl p-3"
-                          style={{ border: `3px solid ${borderColor}` }}
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="font-medium text-sm">{r.display_name}</span>
-                            <div className="flex items-center gap-2 text-xs">
-                              <span className={`font-semibold ${resultColor}`}>{r.result}</span>
-                              <span className="text-neutral-600">{r.points ?? 0} pts</span>
-                              {r.wrinkle && <span className="text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded">W</span>}
+                      {/* Member's picks */}
+                      <div className="flex flex-col gap-2.5">
+                        {member.picks.map((pick, pickIdx) => {
+                          const team = getTeam(pick.team_id, teamMap)
+                          if (!team) return null
+                          
+                          const resultColor = pick.result === 'W' ? 'text-green-600' : pick.result === 'L' ? 'text-red-600' : 'text-neutral-600'
+                          const pointsBg = hexToRgba(team.color_primary, 0.4)
+                          const gameScore = pick.score ? `${pick.score.away ?? '—'} - ${pick.score.home ?? '—'}` : ''
+                          
+                          return (
+                            <div key={pickIdx} className="flex flex-col gap-1">
+                              {/* Game score above */}
+                              {gameScore && (
+                                <div className="text-[11px] text-neutral-500 pl-1">
+                                  {gameScore}
+                                </div>
+                              )}
+                              
+                              {/* TeamCard with overlays */}
+                              <div className="relative">
+                                {pick.wrinkle && (
+                                  <span className="absolute -top-2 -right-2 z-10 bg-purple-600 text-white px-2 py-0.5 rounded text-[10px] font-bold shadow-md">
+                                    W
+                                  </span>
+                                )}
+                                <div className="relative">
+                                  <TeamCard
+                                    team={team}
+                                    variant="solid"
+                                    displayText="short"
+                                    disabled
+                                    className="w-full"
+                                  />
+                                  {/* Overlay stats on TeamCard */}
+                                  <div className="absolute inset-0 flex items-center justify-end gap-2 pr-3 pointer-events-none">
+                                    <span className={`text-[11px] font-bold ${resultColor}`}>
+                                      {pick.result}
+                                    </span>
+                                    <span 
+                                      className="text-sm font-bold text-white px-2.5 py-1 rounded-lg"
+                                      style={{ background: pointsBg }}
+                                    >
+                                      {pick.points ?? 0} pts
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                          {team && (
-                            <TeamCard
-                              team={team}
-                              variant="solid"
-                              displayText="abbreviation"
-                              disabled
-                              className="w-full"
-                            />
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </Card>
-            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
           </div>
         </div>
       )}
