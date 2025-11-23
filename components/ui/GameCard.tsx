@@ -31,32 +31,52 @@ export type GameCardProps = {
 
 /* ---------------- helpers ---------------- */
 
-function fmtWhen(s?: string | null) {
+function formatGameTime(gameUtc?: string | null): string {
   try {
-    if (!s) return "";
-    const d = new Date(s);
-    return d.toLocaleString();
+    if (!gameUtc) return "";
+    const d = new Date(gameUtc);
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    const day = days[d.getDay()];
+    const month = months[d.getMonth()];
+    const date = d.getDate();
+    
+    let hours = d.getHours();
+    const minutes = d.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12 || 12;
+    const mins = minutes.toString().padStart(2, '0');
+    
+    return `${day}, ${month} ${date} • ${hours}:${mins} ${ampm} ET`;
   } catch {
-    return "";
+    return gameUtc || "";
   }
 }
 
-function statusColor(s: string | undefined) {
-  const up = (s || "UPCOMING").toUpperCase();
-  if (up === "FINAL") return "#0f172a";
-  if (up === "LIVE") return "#b91c1c";
-  return "#334155";
-}
-
 function StatusPill({ status }: { status?: string }) {
-  const hex = statusColor(status);
-  const label = (status || "UPCOMING").toUpperCase();
+  const s = (status || 'UPCOMING').toUpperCase();
+  
+  let pillClass = 'status-pill-upcoming';
+  let displayText = 'Upcoming';
+  let showDot = false;
+
+  if (s === 'LIVE') {
+    pillClass = 'status-pill-live';
+    displayText = 'Live';
+    showDot = true;
+  } else if (s === 'FINAL') {
+    pillClass = 'status-pill-final';
+    displayText = 'Final';
+  } else if (s === 'LOCKED') {
+    pillClass = 'status-pill-locked';
+    displayText = 'Locked';
+  }
+
   return (
-    <span
-      className="rounded-full px-3 py-1 text-xs font-semibold"
-      style={{ color: hex, border: `2px solid ${hex}`, background: "transparent" }}
-    >
-      {label}
+    <span className={`status-pill ${pillClass}`}>
+      {showDot && <span className="status-pill-dot">●</span>}
+      {displayText}
     </span>
   );
 }
@@ -93,12 +113,18 @@ export default function GameCard({ game, teamIndex, right }: GameCardProps) {
   const homeScore = typeof game.home.score === "number" ? game.home.score : null;
   const awayScore = typeof game.away.score === "number" ? game.away.score : null;
 
+  const kickoff = formatGameTime(game.game_utc);
+
   return (
     <article className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
-      <header className="mb-3 flex items-center justify-between text-xs text-neutral-500">
-        <span>
-          {fmtWhen(game.game_utc)}
-          {game.week ? ` • Week ${game.week}` : ""}
+      <header className="mb-3 flex items-center justify-between">
+        <span className="game-time">
+          {kickoff && (
+            <>
+              <span className="game-time-day">{kickoff.split(',')[0]}</span>
+              {kickoff.substring(kickoff.indexOf(','))}
+            </>
+          )}
         </span>
         <div className="flex items-center gap-2">
           {right}
@@ -112,7 +138,7 @@ export default function GameCard({ game, teamIndex, right }: GameCardProps) {
           <TeamCard
             team={homeTeam}
             variant="solid"
-            displayText="full"
+            displayText="responsive"
             disabled
           />
           {homeScore !== null && (
@@ -129,7 +155,7 @@ export default function GameCard({ game, teamIndex, right }: GameCardProps) {
           <TeamCard
             team={awayTeam}
             variant="solid"
-            displayText="full"
+            displayText="responsive"
             disabled
           />
           {awayScore !== null && (
