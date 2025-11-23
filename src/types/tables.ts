@@ -57,6 +57,7 @@ export type PlayoffPickRow = {
   league_membership_id: UUID
   playoff_round_id: UUID
   game_id: UUID
+  team_id: UUID
   pick_position: number
   unlock_time: string
   picked_at: string | null

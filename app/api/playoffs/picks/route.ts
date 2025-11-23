@@ -95,13 +95,13 @@ export async function GET(req: NextRequest) {
 
   return j({ 
     userPicks, 
-    otherPicks: otherPicks.map((p: any) => ({ game_id: p.game_id })) // Only expose game_id for availability
+    otherPicks: otherPicks.map((p: any) => ({ game_id: p.game_id, team_id: p.team_id })) // Expose game_id and team_id for availability
   }, 200)
 }
 
 /**
  * POST /api/playoffs/picks
- * Body: { roundId, gameId, pickPosition }
+ * Body: { roundId, gameId, teamId, pickPosition }
  * Creates or updates a playoff pick
  */
 export async function POST(req: NextRequest) {
@@ -113,10 +113,11 @@ export async function POST(req: NextRequest) {
 
   const roundId = body.roundId
   const gameId = body.gameId
+  const teamId = body.teamId
   const pickPosition = body.pickPosition
 
-  if (!roundId || !gameId || !pickPosition) {
-    return j({ error: 'roundId, gameId, and pickPosition required' }, 400)
+  if (!roundId || !gameId || !teamId || !pickPosition) {
+    return j({ error: 'roundId, gameId, teamId, and pickPosition required' }, 400)
   }
 
   // Get round info
@@ -137,15 +138,15 @@ export async function POST(req: NextRequest) {
   const locked = await isGameLocked(supabase, gameId)
   if (locked) return j({ error: 'game has already started or is final' }, 400)
 
-  // Validation 2: Check if game already picked by another playoff participant
+  // Validation 2: Check if team already picked by another playoff participant in this round
   const { data: otherPicks } = await supabase
     .from('playoff_picks')
     .select('id, league_membership_id')
     .eq('playoff_round_id', roundId)
-    .eq('game_id', gameId)
+    .eq('team_id', teamId)
 
   const pickedByOther = (otherPicks ?? []).some((p: any) => p.league_membership_id !== membershipId)
-  if (pickedByOther) return j({ error: 'game already picked by another player' }, 400)
+  if (pickedByOther) return j({ error: 'team already picked by another player' }, 400)
 
   // Check if user already has a pick for this position
   const { data: existingPick } = await supabase
@@ -172,6 +173,7 @@ export async function POST(req: NextRequest) {
       .from('playoff_picks')
       .update({ 
         game_id: gameId,
+        team_id: teamId,
         last_changed_at: new Date().toISOString()
       })
       .eq('id', existingPick.id)
@@ -192,6 +194,7 @@ export async function POST(req: NextRequest) {
       league_membership_id: membershipId,
       playoff_round_id: roundId,
       game_id: gameId,
+      team_id: teamId,
       pick_position: pickPosition,
       unlock_time: unlockTime,
       picked_at: new Date().toISOString()
