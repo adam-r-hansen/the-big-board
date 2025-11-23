@@ -86,6 +86,8 @@ export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props
   const homeTeam = toTeamCardTeam(g ? teams[g.home_team] : undefined)
   const awayTeam = toTeamCardTeam(g ? teams[g.away_team] : undefined)
   const isLocked = g ? locked(g.game_utc) : true
+  
+  const isPicked = (teamId: string) => myPick?.team_id === teamId
 
   return (
     <article className="rounded-2xl border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-900/10 p-4">
@@ -101,26 +103,30 @@ export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props
 
       {g && homeTeam && awayTeam ? (
         <div className="flex items-center gap-3">
-          <div className="flex-1">
+          <div className="flex-1 relative">
             <TeamCard
               team={homeTeam}
               variant="solid"
               displayText="short"
-              picked={myPick?.team_id === homeTeam.id}
-              disabled={isLocked}
+              disabled={isLocked || isPicked(awayTeam.id)}
               onClick={() => pick(homeTeam.id, g.game_id)}
             />
+            {isPicked(homeTeam.id) && (
+              <div className="absolute inset-0 border-4 border-white dark:border-neutral-900 rounded-2xl pointer-events-none"></div>
+            )}
           </div>
           <div className="text-neutral-400">—</div>
-          <div className="flex-1">
+          <div className="flex-1 relative">
             <TeamCard
               team={awayTeam}
               variant="solid"
               displayText="short"
-              picked={myPick?.team_id === awayTeam.id}
-              disabled={isLocked}
+              disabled={isLocked || isPicked(homeTeam.id)}
               onClick={() => pick(awayTeam.id, g.game_id)}
             />
+            {isPicked(awayTeam.id) && (
+              <div className="absolute inset-0 border-4 border-white dark:border-neutral-900 rounded-2xl pointer-events-none"></div>
+            )}
           </div>
         </div>
       ) : (
