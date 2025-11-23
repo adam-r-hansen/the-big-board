@@ -83,16 +83,16 @@ export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props
         </div>
       </header>
 
-      {g ? (
+      {g && home && away ? (
         <div className="flex items-center gap-3">
           <div className="flex-1">
             <TeamCard
               team={home}
               variant="solid"
               displayText="short"
-              picked={myPick?.team_id === home?.id}
+              picked={myPick?.team_id === home.id}
               disabled={isLocked}
-              onClick={() => pick(home!.id, g.game_id)}
+              onClick={() => pick(home.id, g.game_id)}
             />
           </div>
           <div className="text-neutral-400">—</div>
@@ -101,9 +101,9 @@ export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props
               team={away}
               variant="solid"
               displayText="short"
-              picked={myPick?.team_id === away?.id}
+              picked={myPick?.team_id === away.id}
               disabled={isLocked}
-              onClick={() => pick(away!.id, g.game_id)}
+              onClick={() => pick(away.id, g.game_id)}
             />
           </div>
         </div>
