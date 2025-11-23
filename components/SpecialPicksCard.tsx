@@ -1,282 +1,301 @@
 // components/SpecialPicksCard.tsx
 'use client'
 import { useEffect, useMemo, useState } from 'react'
-import type { TeamShape } from '@/components/ui/TeamPill'
+import TeamCard from '@/components/TeamCard'
+import { getTeamCardVariant } from '@/lib/teamCardHelpers'
 
-// Extend TeamShape with fields your team map includes
-type TeamLike = TeamShape & {
+type TeamLike = {
+  id?: string
   abbreviation?: string | null
+  name?: string | null
+  short_name?: string | null
+  color_primary?: string | null
   color_secondary?: string | null
+  color_pref_light?: string | null
+  color_pref_dark?: string | null
   logo?: string | null
-  logo_dark?: string | null
 }
 
-type Wrinkle = {
+type Wrinkle = { 
   id: string
+  name: string
   kind: string
-  name?: string
-  extra_picks?: number
-  params?: { multiplier?: number; eligibleTeamIds?: string[] }
-  game?: {
-    game_id?: string | null
-    game_utc?: string | null
-    status?: string | null
-    home_team?: string | null
-    away_team?: string | null
-  }
-}
-type WrinklePick = { id: string; wrinkle_id: string; team_id: string; game_id: string | null }
-
-/* ---------- color helpers copied from Picks page for a perfect match ---------- */
-const isHex = (x?: string | null) => !!x && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(x)
-const safe = (x: string | null | undefined, fallback: string) => (isHex(x) ? (x as string) : fallback)
-function textOn(bg: string) {
-  try {
-    const hex = bg.replace('#', '')
-    const v = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex
-    const r = parseInt(v.slice(0, 2), 16) / 255
-    const g = parseInt(v.slice(2, 4), 16) / 255
-    const b = parseInt(v.slice(4, 6), 16) / 255
-    const toLin = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4))
-    const L = 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b)
-    return L > 0.5 ? '#111827' : '#ffffff'
-  } catch {
-    return '#111827'
-  }
+  extra_picks?: number | null
 }
 
-/* ---------- The *exact* pill look used on weekly picks ---------- */
-function PickPill({
-  team,
-  picked,
-  disabled,
-  onClick,
-}: {
-  team: TeamLike
-  picked?: boolean
-  disabled?: boolean
-  onClick?: () => void
-}) {
-  const abbr = team?.abbreviation ?? '—'
-  const primary = safe(team?.color_primary ?? null, '#6b7280')
-  const pillStyle: React.CSSProperties = picked
-    ? { background: primary, color: textOn(primary), borderColor: primary }
-    : { background: 'transparent', color: primary, borderColor: primary }
-
-  return (
-    <button
-      type="button"
-      disabled={!!disabled}
-      onClick={disabled ? undefined : onClick}
-      className={[
-        // match picks page sizing/shape/weight
-        'h-12 min-w-[6.5rem] px-4 rounded-full border font-semibold tracking-wide',
-        'transition-[transform,opacity] active:scale-[0.98]',
-        'flex items-center justify-center gap-2',
-        disabled ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-90',
-      ].join(' ')}
-      style={pillStyle}
-      title={abbr}
-    >
-      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white/95 border border-black/10 overflow-hidden">
-        {team?.logo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={team.logo} alt={abbr} className="w-6 h-6 object-contain" />
-        ) : (
-          <span className="w-4 h-4 rounded-full bg-black/10" />
-        )}
-      </span>
-      <span className="truncate">{abbr}</span>
-    </button>
-  )
+type WrinkleGame = {
+  id: string
+  game_id: string | null
+  home_team?: string | null
+  away_team?: string | null
+  game_utc?: string | null
+  status?: string | null
 }
 
-/* ===================== Card ===================== */
-export default function SpecialPicksCard({
-  leagueId,
-  season,
-  week,
-  teams,
-}: {
+type Props = {
   leagueId: string
   season: number
   week: number
-  teams: Record<string, TeamLike> // we rely on abbreviation/logo/colors
-}) {
-  const data = useWrinkles(leagueId, season, week)
-  const wrinkles: Wrinkle[] = data?.wrinkles || []
+  teams: Record<string, TeamLike>
+}
 
-  const { picks, refresh: refreshPicks } = useWrinklePicks(leagueId, season, week)
-  const pickByWrinkle = useMemo(() => {
-    const m = new Map<string, WrinklePick>()
-    for (const p of picks) m.set(p.wrinkle_id, p)
-    return m
-  }, [picks])
+export default function SpecialPicksCard({ leagueId, season, week, teams }: Props) {
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+  const [wrinkle, setWrinkle] = useState<Wrinkle | null>(null)
+  const [wGame, setWGame] = useState<WrinkleGame | null>(null)
+  const [myPick, setMyPick] = useState<{ id: string; team_id: string; game_id: string | null } | null>(null)
 
-  const extraCount = wrinkles.reduce((acc, w) => acc + (w.extra_picks || 0), 0)
-  const winless = wrinkles.find((w) => String(w.kind).toLowerCase() === 'winless_double')
-  const multiplier = winless?.params?.multiplier || 2
-  const winlessEligible = new Set(winless?.params?.eligibleTeamIds || [])
-
-  const bonusGame = wrinkles.find((w) => String(w.kind).toLowerCase() === 'bonus_game')
-  const bonusEligible = new Set<string>()
-  if (bonusGame?.game) {
-    if (bonusGame.game.home_team) bonusEligible.add(bonusGame.game.home_team)
-    if (bonusGame.game.away_team) bonusEligible.add(bonusGame.game.away_team)
+  // Resolve by UUID or ABBR (uppercased)
+  const resolveTeam = (key?: string | null): TeamLike | undefined => {
+    if (!key) return undefined
+    return teams[key] || teams[key.toUpperCase()]
   }
 
-  const hasAny =
-    wrinkles.length > 0 || extraCount > 0 || winlessEligible.size > 0 || bonusEligible.size > 0
-
-  const isLocked = (w: Wrinkle) => {
-    const utc = w.game?.game_utc
-    return utc ? new Date(utc) <= new Date() : false
+  const resolveTeamId = (key?: string | null): string | undefined => {
+    const t = resolveTeam(key)
+    return t?.id ?? undefined
   }
 
-  async function chooseWrinkleTeam(w: Wrinkle, teamId: string) {
-    try {
-      const res = await fetch('/api/wrinkle-picks', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          leagueId,
-          season,
-          week,
-          wrinkleId: w.id,
-          teamId,
-          gameId: w.game?.game_id ?? null,
-        }),
-      })
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}))
-        throw new Error(j?.error || `HTTP ${res.status}`)
-      }
-      await refreshPicks()
-    } catch (e) {
-      console.error('wrinkle pick failed', e)
+  // Get wrinkle kind description
+  const getWrinkleKindLabel = (kind: string): string => {
+    switch (kind) {
+      case 'bonus_game':
+        return 'Bonus Pick'
+      case 'bonus_game_ats':
+        return 'Bonus Pick (Against the Spread)'
+      case 'bonus_game_oof':
+        return 'Bonus Pick (OOF)'
+      case 'winless_double':
+        return 'Winless Double'
+      default:
+        return 'Special Pick'
     }
   }
 
-  if (!hasAny) {
-    return (
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
-        <h2 className="text-lg font-semibold mb-1">Wrinkle pick</h2>
-        <div className="text-sm text-neutral-500">No active wrinkle</div>
-      </section>
-    )
+  // Resilient loader
+  useEffect(() => {
+    if (!leagueId || !season || !week) return
+    ;(async () => {
+      setLoading(true)
+      setErr(null)
+      try {
+        // active wrinkle
+        let w: Wrinkle | null = null
+        try {
+          const res = await fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' })
+          const j = await res.json().catch(() => ({}))
+          w = (Array.isArray(j?.wrinkles) ? j.wrinkles[0] : j?.wrinkle) ?? null
+          setWrinkle(w)
+        } catch { /* ignore */ }
+
+        // If no wrinkle, stop here
+        if (!w?.id) {
+          setLoading(false)
+          return
+        }
+
+        // wrinkle game row
+        let row: WrinkleGame | null = null
+        try {
+          const gRes = await fetch(`/api/wrinkles/${w.id}/games`, { cache: 'no-store' })
+          const gj = await gRes.json().catch(() => ({}))
+          const first =
+            (Array.isArray(gj?.rows) && gj.rows[0]) ||
+            gj?.row ||
+            (Array.isArray(gj?.games) && gj.games[0]) ||
+            gj?.game ||
+            null
+          if (first) {
+            row = {
+              id: first.id ?? first.game_id ?? '',
+              game_id: first.game_id ?? first.gameId ?? null,
+              home_team: first.home_team ?? first.home_team_id ?? first.home ?? null,
+              away_team: first.away_team ?? first.away_team_id ?? first.away ?? null,
+              game_utc: first.game_utc ?? first.start_utc ?? first.start_time ?? null,
+              status: first.status ?? null,
+            }
+          }
+        } catch { /* ignore */ }
+
+        // hydrate via weekly schedule if only game_id present
+        if (row?.game_id && (!row.home_team || !row.away_team)) {
+          try {
+            const wk = await fetch(`/api/games-for-week?season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json())
+            const match = (wk.games ?? []).find((g: any) => g.id === row!.game_id)
+            if (match) {
+              row = {
+                ...row,
+                home_team: match.home?.id ?? match.home_team ?? match.home?.abbreviation ?? row.home_team ?? null,
+                away_team: match.away?.id ?? match.away_team ?? match.away?.abbreviation ?? row.away_team ?? null,
+                game_utc: row.game_utc ?? match.game_utc ?? match.start_time ?? null,
+                status: row.status ?? match.status ?? null,
+              }
+            }
+          } catch { /* ignore */ }
+        }
+
+        setWGame(row ?? null)
+
+        // my wrinkle pick
+        if (w?.id) {
+          try {
+            const pr = await fetch(`/api/wrinkles/${w.id}/picks`, { cache: 'no-store' })
+            const pj = await pr.json().catch(() => ({}))
+            setMyPick((Array.isArray(pj?.picks) ? pj.picks[0] : pj?.pick ?? null) as any)
+          } catch { /* ignore */ }
+        }
+      } catch (e: any) {
+        setErr(e?.message || 'Failed to load wrinkle')
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [leagueId, season, week])
+
+  const locked = useMemo(() => (wGame?.game_utc ? new Date(wGame.game_utc) <= new Date() : false), [wGame?.game_utc])
+  const home = resolveTeam(wGame?.home_team ?? null)
+  const away = resolveTeam(wGame?.away_team ?? null)
+  const myTeamId = myPick?.team_id ?? null
+
+  const homePicked = home?.id ? myTeamId === home.id : false
+  const awayPicked = away?.id ? myTeamId === away.id : false
+
+  async function pick(teamKey: string | null | undefined) {
+    try {
+      if (!wrinkle?.id) throw new Error('No active wrinkle')
+      const teamId = resolveTeamId(teamKey)
+      if (!teamId) throw new Error('Unknown team')
+      const res = await fetch(`/api/wrinkles/${wrinkle.id}/picks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ teamId, gameId: wGame?.game_id ?? null }),
+        cache: 'no-store',
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Pick failed')
+      const pj = await fetch(`/api/wrinkles/${wrinkle.id}/picks`, { cache: 'no-store' }).then((r) => r.json())
+      setMyPick((Array.isArray(pj?.picks) ? pj.picks[0] : pj?.pick ?? null) as any)
+      setErr(null)
+    } catch (e: any) {
+      setErr(e?.message || 'Pick failed')
+    }
   }
+
+  async function unpick() {
+    try {
+      if (!wrinkle?.id || !myPick?.id) return
+      const res = await fetch(`/api/wrinkles/${wrinkle.id}/picks?id=${myPick.id}`, { method: 'DELETE', cache: 'no-store' })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Unpick failed')
+      const pj = await fetch(`/api/wrinkles/${wrinkle.id}/picks`, { cache: 'no-store' }).then((r) => r.json())
+      setMyPick((Array.isArray(pj?.picks) ? pj.picks[0] : pj?.pick ?? null) as any)
+      setErr(null)
+    } catch (e: any) {
+      setErr(e?.message || 'Unpick failed')
+    }
+  }
+
+  // Return null if no wrinkle (fast loading experience)
+  if (!loading && !wrinkle) {
+    return null
+  }
+
+  // Return null while loading (no flicker)
+  if (loading) {
+    return null
+  }
+
+  // At this point wrinkle is guaranteed to be non-null
+  if (!wrinkle) return null
 
   return (
     <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
-      <header className="mb-2">
-        <h2 className="text-lg font-semibold">Wrinkle pick</h2>
+      <header className="mb-3">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="inline-flex items-center rounded-md bg-amber-50 dark:bg-amber-900/20 px-2 py-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+            {getWrinkleKindLabel(wrinkle.kind)}
+          </span>
+          <h2 className="text-lg font-semibold">{wrinkle.name}</h2>
+        </div>
+        {wrinkle.extra_picks ? (
+          <div className="text-sm text-neutral-500">
+            +{wrinkle.extra_picks} extra pick{wrinkle.extra_picks !== 1 ? 's' : ''} • Doesn't count toward weekly limit
+          </div>
+        ) : (
+          <div className="text-sm text-neutral-500">
+            Doesn't count toward weekly limit
+          </div>
+        )}
       </header>
 
-      {extraCount > 0 && (
-        <div className="mb-3 text-sm">
-          <strong>Bonus picks</strong>: +{extraCount} extra pick{extraCount === 1 ? '' : 's'}
-        </div>
-      )}
+      {!wGame && <div className="text-sm text-neutral-500">No linked game</div>}
 
-      {winless && (
-        <div className="grid gap-2 mb-3">
-          <div className="text-sm">
-            <strong>{winless.name || 'Winless Double'}</strong>: Pick a team with no wins yet — if they <em>win</em>, you get{' '}
-            <strong>{multiplier}×</strong> their points.
+      {wGame && (
+        <div className="grid gap-3">
+          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+            {wGame.game_utc ? new Date(wGame.game_utc).toLocaleString() : ''} {wGame.status ? `• ${wGame.status}` : ''}
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            {[...winlessEligible].map((id) => {
-              const t = teams[id]
-              if (!t) return null
-              const selected = pickByWrinkle.get(winless.id || '')?.team_id === id
-              const locked = isLocked(winless)
-              return (
-                <PickPill
-                  key={id}
-                  team={t}
-                  picked={selected}
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              {home ? (
+                <TeamCard
+                  team={{
+                    id: home.id || '',
+                    name: home.name || '',
+                    short_name: home.short_name || home.name || '',
+                    abbreviation: home.abbreviation || '',
+                    logo: home.logo || '',
+                    color_primary: home.color_primary || '#6b7280',
+                    color_secondary: home.color_secondary,
+                    color_pref_light: home.color_pref_light,
+                    color_pref_dark: home.color_pref_dark,
+                  }}
+                  variant={getTeamCardVariant('picks', homePicked, false)}
+                  displayText="short"
+                  onClick={() => !locked && pick(wGame?.home_team)}
                   disabled={locked}
-                  onClick={() => chooseWrinkleTeam(winless, id)}
                 />
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {bonusGame && (
-        <div className="grid gap-2">
-          <div className="text-sm">
-            <strong>{bonusGame.name || 'Bonus Game'}</strong>: One extra pick on this featured matchup.
-            {bonusGame.game?.game_utc ? (
-              <span className="opacity-70"> Kickoff: {new Date(bonusGame.game.game_utc).toLocaleString()}</span>
-            ) : null}
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            {[...bonusEligible].map((id) => {
-              const t = teams[id]
-              if (!t) return null
-              const selected = pickByWrinkle.get(bonusGame.id || '')?.team_id === id
-              const locked = isLocked(bonusGame)
-              return (
-                <PickPill
-                  key={id}
-                  team={t}
-                  picked={selected}
+              ) : (
+                <div className="text-sm text-neutral-500">Team unavailable</div>
+              )}
+            </div>
+            <div className="text-neutral-400 font-semibold">@</div>
+            <div className="flex-1">
+              {away ? (
+                <TeamCard
+                  team={{
+                    id: away.id || '',
+                    name: away.name || '',
+                    short_name: away.short_name || away.name || '',
+                    abbreviation: away.abbreviation || '',
+                    logo: away.logo || '',
+                    color_primary: away.color_primary || '#6b7280',
+                    color_secondary: away.color_secondary,
+                    color_pref_light: away.color_pref_light,
+                    color_pref_dark: away.color_pref_dark,
+                  }}
+                  variant={getTeamCardVariant('picks', awayPicked, false)}
+                  displayText="short"
+                  onClick={() => !locked && pick(wGame?.away_team)}
                   disabled={locked}
-                  onClick={() => chooseWrinkleTeam(bonusGame, id)}
                 />
-              )
-            })}
+              ) : (
+                <div className="text-sm text-neutral-500">Team unavailable</div>
+              )}
+            </div>
           </div>
+
+          {myPick && !locked && (
+            <div className="flex justify-end">
+              <button type="button" className="text-xs underline text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100" onClick={unpick}>
+                Unpick
+              </button>
+            </div>
+          )}
+
+          {err && <div className="text-xs text-red-600 dark:text-red-400">{String(err)}</div>}
         </div>
       )}
     </section>
   )
-}
-
-/* ------------------------ data hooks ------------------------ */
-function useWrinkles(leagueId: string, season: number, week: number) {
-  const [data, setData] = useState<any>(null)
-  useEffect(() => {
-    if (!leagueId || !season || !week) return
-    let dead = false
-    ;(async () => {
-      try {
-        const j = await fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, {
-          cache: 'no-store',
-        }).then((r) => r.json())
-        if (!dead) setData(j)
-      } catch {
-        if (!dead) setData(null)
-      }
-    })()
-    return () => { dead = true }
-  }, [leagueId, season, week])
-  return data
-}
-
-function useWrinklePicks(leagueId: string, season: number, week: number) {
-  const [picks, setPicks] = useState<WrinklePick[]>([])
-  const [error, setError] = useState<string | null>(null)
-
-  async function load() {
-    try {
-      const j = await fetch(`/api/wrinkle-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then(r => r.json())
-      setPicks(Array.isArray(j?.picks) ? j.picks : [])
-      setError(null)
-    } catch (e: any) {
-      setError(e?.message || 'failed')
-      setPicks([])
-    }
-  }
-
-  useEffect(() => {
-    if (!leagueId || !season || !week) return
-    load()
-  }, [leagueId, season, week])
-
-  return { picks, refresh: load, error }
 }
