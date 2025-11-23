@@ -1,7 +1,7 @@
 // app/api/playoffs/picks/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import type { PlayoffPickRow } from '@/types/tables'
+import type { PlayoffPickRow } from '@/src/types/tables'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
