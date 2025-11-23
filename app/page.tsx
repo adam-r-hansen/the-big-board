@@ -690,7 +690,7 @@ function HomeInner() {
                                   <TeamCard
                                     team={team}
                                     variant="solid"
-                                    displayText="short"
+                                    displayText="abbreviation"
                                     disabled
                                     className="w-full"
                                   />
