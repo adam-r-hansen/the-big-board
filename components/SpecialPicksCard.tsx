@@ -246,9 +246,9 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
                     abbreviation: home.abbreviation || '',
                     logo: home.logo || '',
                     color_primary: home.color_primary || '#6b7280',
-                    color_secondary: home.color_secondary,
-                    color_pref_light: home.color_pref_light,
-                    color_pref_dark: home.color_pref_dark,
+                    color_secondary: home.color_secondary || undefined,
+                    color_pref_light: home.color_pref_light || undefined,
+                    color_pref_dark: home.color_pref_dark || undefined,
                   }}
                   variant={getTeamCardVariant('picks', homePicked, false)}
                   displayText="short"
@@ -270,9 +270,9 @@ export default function SpecialPicksCard({ leagueId, season, week, teams }: Prop
                     abbreviation: away.abbreviation || '',
                     logo: away.logo || '',
                     color_primary: away.color_primary || '#6b7280',
-                    color_secondary: away.color_secondary,
-                    color_pref_light: away.color_pref_light,
-                    color_pref_dark: away.color_pref_dark,
+                    color_secondary: away.color_secondary || undefined,
+                    color_pref_light: away.color_pref_light || undefined,
+                    color_pref_dark: away.color_pref_dark || undefined,
                   }}
                   variant={getTeamCardVariant('picks', awayPicked, false)}
                   displayText="short"
