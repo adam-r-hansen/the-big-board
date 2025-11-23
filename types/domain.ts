@@ -8,6 +8,7 @@ export enum GameStatus { SCHEDULED = 'SCHEDULED', LIVE = 'LIVE', FINAL = 'FINAL'
 export interface Team {
   id: UUID;
   name: string | null;
+  short_name?: string | null;
   abbreviation: string | null;
   color_primary: string | null;
   color_secondary: string | null;
