@@ -1,5 +1,5 @@
 'use client'
-import TeamPill from '@/components/TeamPill'
+import TeamCard from '@/components/TeamCard'
 import type { Team } from '@/types/domain'
 import WrinkleBadge from '@/components/WrinkleBadge'
 
@@ -86,8 +86,10 @@ export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props
       {g ? (
         <div className="flex items-center gap-3">
           <div className="flex-1">
-            <TeamPill
+            <TeamCard
               team={home}
+              variant="solid"
+              displayText="short"
               picked={myPick?.team_id === home?.id}
               disabled={isLocked}
               onClick={() => pick(home!.id, g.game_id)}
@@ -95,8 +97,10 @@ export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props
           </div>
           <div className="text-neutral-400">—</div>
           <div className="flex-1">
-            <TeamPill
+            <TeamCard
               team={away}
+              variant="solid"
+              displayText="short"
               picked={myPick?.team_id === away?.id}
               disabled={isLocked}
               onClick={() => pick(away!.id, g.game_id)}
@@ -111,7 +115,7 @@ export default function WrinkleCard({ wrinkle, teams, myPick, onChanged }: Props
         <div className="text-amber-900/80 dark:text-amber-200/80">
           {wrinkle.kind === 'spread' && g?.spread != null
             ? `Spread: ${g.spread > 0 ? `+${g.spread}` : g.spread}`
-            : `Special pick — doesn’t count toward weekly limit`}
+            : `Special pick — doesn't count toward weekly limit`}
         </div>
         <div>
           {myPick ? (
