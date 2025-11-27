@@ -9,6 +9,17 @@ type Profile = {
   email: string | null
   full_name: string | null
   display_name: string | null
+  preferred_color?: string | null
+}
+
+type Team = {
+  id: string
+  name: string
+  abbreviation: string
+  color_primary: string | null
+  color_secondary: string | null
+  color_tertiary: string | null
+  color_quaternary: string | null
 }
 
 export default function ProfilePage() {
@@ -18,6 +29,11 @@ export default function ProfilePage() {
   const [ok, setOk] = useState(false)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [displayName, setDisplayName] = useState('')
+
+  // Team color picker state
+  const [teams, setTeams] = useState<Team[]>([])
+  const [selectedTeamId, setSelectedTeamId] = useState('')
+  const [selectedColor, setSelectedColor] = useState('#000000')
 
   // Password management state
   const [showPasswordForm, setShowPasswordForm] = useState(false)
@@ -45,6 +61,7 @@ export default function ProfilePage() {
         if (mounted) {
           setProfile(data.profile ?? null)
           setDisplayName(data.profile?.display_name ?? '')
+          setSelectedColor(data.profile?.preferred_color ?? '#000000')
         }
       } catch (e: any) {
         setError(e?.message || 'Failed to load profile')
@@ -55,6 +72,27 @@ export default function ProfilePage() {
     return () => { mounted = false }
   }, [])
 
+  // Load teams for color picker
+  useEffect(() => {
+    fetch('/api/team-map', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(data => {
+        const teamList = Object.values(data.teams || {}) as Team[]
+        teamList.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        setTeams(teamList)
+      })
+      .catch(() => {})
+  }, [])
+
+  const colorOptions = selectedTeamId
+    ? [
+        { key: 'primary', label: 'Primary', hex: teams.find(t => t.id === selectedTeamId)?.color_primary },
+        { key: 'secondary', label: 'Secondary', hex: teams.find(t => t.id === selectedTeamId)?.color_secondary },
+        { key: 'tertiary', label: 'Tertiary', hex: teams.find(t => t.id === selectedTeamId)?.color_tertiary },
+        { key: 'quaternary', label: 'Quaternary', hex: teams.find(t => t.id === selectedTeamId)?.color_quaternary },
+      ].filter(opt => opt.hex)
+    : []
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
@@ -64,13 +102,14 @@ export default function ProfilePage() {
       const res = await fetch('/api/profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ display_name: displayName }),
+        body: JSON.stringify({ display_name: displayName, preferred_color: selectedColor }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         throw new Error(data?.error || 'Save failed')
       }
       setOk(true)
+      setTimeout(() => setOk(false), 3000)
     } catch (e: any) {
       setError(e?.message || 'Save failed')
     } finally {
@@ -148,6 +187,9 @@ export default function ProfilePage() {
       if (passwordMode === 'set') {
         setPasswordMode('change')
       }
+
+      // Clear success message after 5 seconds
+      setTimeout(() => setPasswordSuccess(null), 5000)
     } catch (e: any) {
       setPasswordError(e?.message || 'Failed to set password')
     } finally {
@@ -221,7 +263,7 @@ export default function ProfilePage() {
                   )}
 
                   {passwordSuccess && (
-                    <p className="text-green-600 dark:text-green-400 text-sm">{passwordSuccess}</p>
+                    <p className="text-green-600 dark:text-green-400 text-sm font-medium">{passwordSuccess}</p>
                   )}
                 </div>
               )}
@@ -301,6 +343,77 @@ export default function ProfilePage() {
                   </div>
                 </form>
               )}
+            </div>
+
+            {/* Color Preference Section */}
+            <div className="border-t border-neutral-200 dark:border-neutral-700 pt-6">
+              <h2 className="text-lg font-semibold mb-4">Color Preference</h2>
+              
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="teamSelect" className="block text-sm font-medium mb-1">
+                    Select Team
+                  </label>
+                  <select
+                    id="teamSelect"
+                    value={selectedTeamId}
+                    onChange={(e) => {
+                      setSelectedTeamId(e.target.value)
+                      // Auto-select first color when team is selected
+                      const team = teams.find(t => t.id === e.target.value)
+                      if (team?.color_primary) {
+                        setSelectedColor(team.color_primary)
+                      }
+                    }}
+                    className="w-full rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/10"
+                  >
+                    <option value="">Choose a team...</option>
+                    {teams.map(team => (
+                      <option key={team.id} value={team.id}>
+                        {team.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedTeamId && colorOptions.length > 0 && (
+                  <div>
+                    <label htmlFor="colorSelect" className="block text-sm font-medium mb-1">
+                      Select Color
+                    </label>
+                    <select
+                      id="colorSelect"
+                      value={selectedColor}
+                      onChange={(e) => setSelectedColor(e.target.value)}
+                      className="w-full rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/10"
+                    >
+                      {colorOptions.map(option => (
+                        <option key={option.key} value={option.hex || '#000000'}>
+                          {option.label} - {option.hex}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Color Preview */}
+                <div>
+                  <label className="block text-sm font-medium mb-2">Preview</label>
+                  <div
+                    className="rounded-2xl border-2 px-4 py-3 text-center font-semibold"
+                    style={{
+                      borderColor: selectedColor,
+                      color: selectedColor,
+                      backgroundColor: 'transparent',
+                    }}
+                  >
+                    {displayName || profile?.display_name || 'Your Name'}
+                  </div>
+                  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                    This is how your name will appear in standings and league views.
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* Display Name */}
