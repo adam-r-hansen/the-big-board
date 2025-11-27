@@ -37,7 +37,7 @@ export default function ProfilePage() {
 
   // Password management state
   const [showPasswordForm, setShowPasswordForm] = useState(false)
-  const [hasPassword, setHasPassword] = useState(false) // Track if password exists
+  const [hasPassword, setHasPassword] = useState(false)
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -62,8 +62,6 @@ export default function ProfilePage() {
           setProfile(data.profile ?? null)
           setDisplayName(data.profile?.display_name ?? '')
           setSelectedColor(data.profile?.preferred_color ?? '#000000')
-          
-          // Check if user has a password by checking profile metadata
           setHasPassword(data.profile?.has_password ?? false)
         }
       } catch (e: any) {
@@ -115,6 +113,7 @@ export default function ProfilePage() {
       setTimeout(() => setOk(false), 3000)
     } catch (e: any) {
       setError(e?.message || 'Save failed')
+      console.error('Profile save error:', e)
     } finally {
       setSaving(false)
     }
@@ -147,8 +146,9 @@ export default function ProfilePage() {
     setPasswordSuccess(null)
   }
 
-  async function handlePasswordSubmit(e: React.FormEvent) {
+  async function handlePasswordSubmit(e: React.MouseEvent) {
     e.preventDefault()
+    console.log('Password submit clicked!')
     setPasswordSaving(true)
     setPasswordError(null)
     setPasswordSuccess(null)
@@ -166,13 +166,16 @@ export default function ProfilePage() {
         body.oldPassword = oldPassword
       }
 
+      console.log('Sending password request...')
       const res = await fetch('/api/profile/password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
 
+      console.log('Response status:', res.status)
       const data = await res.json().catch(() => ({}))
+      console.log('Response data:', data)
       
       if (!res.ok) {
         throw new Error(data?.error || 'Failed to set password')
@@ -183,14 +186,12 @@ export default function ProfilePage() {
       setOldPassword('')
       setNewPassword('')
       setConfirmPassword('')
-      
-      // Mark that user now has a password
       setHasPassword(true)
 
-      // Clear success message after 5 seconds
       setTimeout(() => setPasswordSuccess(null), 5000)
     } catch (e: any) {
       setPasswordError(e?.message || 'Failed to set password')
+      console.error('Password error:', e)
     } finally {
       setPasswordSaving(false)
     }
@@ -268,7 +269,7 @@ export default function ProfilePage() {
               )}
 
               {showPasswordForm && (
-                <form onSubmit={handlePasswordSubmit} className="space-y-4 bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
+                <div className="space-y-4 bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
                   <p className="text-sm font-medium">
                     {hasPassword ? 'Change your password' : 'Set a password for your account'}
                   </p>
@@ -326,7 +327,8 @@ export default function ProfilePage() {
 
                   <div className="flex items-center gap-3">
                     <button
-                      type="submit"
+                      type="button"
+                      onClick={handlePasswordSubmit}
                       disabled={passwordSaving}
                       className="rounded-xl bg-black dark:bg-white text-white dark:text-black px-4 py-2 disabled:opacity-50"
                     >
@@ -340,7 +342,7 @@ export default function ProfilePage() {
                       Cancel
                     </button>
                   </div>
-                </form>
+                </div>
               )}
             </div>
 
@@ -358,7 +360,6 @@ export default function ProfilePage() {
                     value={selectedTeamId}
                     onChange={(e) => {
                       setSelectedTeamId(e.target.value)
-                      // Auto-select first color when team is selected
                       const team = teams.find(t => t.id === e.target.value)
                       if (team?.color_primary) {
                         setSelectedColor(team.color_primary)
@@ -395,7 +396,6 @@ export default function ProfilePage() {
                   </div>
                 )}
 
-                {/* Color Preview */}
                 <div>
                   <label className="block text-sm font-medium mb-2">Preview</label>
                   <div
