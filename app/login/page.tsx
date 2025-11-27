@@ -1,87 +1,184 @@
+// app/login/page.tsx
 'use client'
-
-import { createBrowserSupabaseClient } from '@/lib/supabase-clients'
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/utils/supabase/client'
+
+type Tab = 'magic' | 'password'
 
 export default function LoginPage() {
+  const router = useRouter()
+  const [tab, setTab] = useState<Tab>('magic')
   const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [sent, setSent] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState(false)
 
-  const handleLogin = async (e: React.FormEvent) => {
+  async function sendMagicLink(e: React.FormEvent) {
     e.preventDefault()
+    setErr(null)
     setLoading(true)
-    setError('')
-    setSuccess(false)
-
-    const supabase = createBrowserSupabaseClient()
-
+    
+    const supabase = createClient()
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo: `${location.origin}/auth/callback?next=/`,
       },
     })
+    
+    setLoading(false)
+    if (error) setErr(error.message)
+    else setSent(true)
+  }
 
+  async function signInWithPassword(e: React.FormEvent) {
+    e.preventDefault()
+    setErr(null)
+    setLoading(true)
+
+    const supabase = createClient()
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+
+    setLoading(false)
     if (error) {
-      setError(error.message)
-      setLoading(false)
+      setErr('Oops! Email or password is incorrect')
     } else {
-      setSuccess(true)
-      setLoading(false)
+      router.push('/')
     }
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-50 dark:bg-neutral-950">
-      <div className="w-full max-w-md space-y-4 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8">
-        <div>
-          <h1 className="text-2xl font-bold">Sign in to NFL Pick'em</h1>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
-            We'll send you a magic link to sign in
-          </p>
+    <main className="mx-auto max-w-md px-4 py-12">
+      <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6">
+        <h1 className="text-2xl font-semibold mb-6">Login to Big Board</h1>
+
+        {/* Tabs */}
+        <div className="flex gap-2 mb-6 border-b border-neutral-200 dark:border-neutral-700">
+          <button
+            type="button"
+            onClick={() => {
+              setTab('magic')
+              setErr(null)
+              setSent(false)
+            }}
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
+              tab === 'magic'
+                ? 'border-b-2 border-black dark:border-white text-black dark:text-white'
+                : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300'
+            }`}
+          >
+            Magic Link
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setTab('password')
+              setErr(null)
+              setSent(false)
+            }}
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
+              tab === 'password'
+                ? 'border-b-2 border-black dark:border-white text-black dark:text-white'
+                : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300'
+            }`}
+          >
+            Password
+          </button>
         </div>
 
-        {success ? (
-          <div className="rounded-lg bg-green-50 dark:bg-green-900/20 p-4 text-green-800 dark:text-green-200">
-            <p className="font-semibold">Check your email!</p>
-            <p className="text-sm mt-1">
-              We sent a magic link to <strong>{email}</strong>. Click the link to sign in.
-            </p>
-          </div>
-        ) : (
-          <form onSubmit={handleLogin} className="space-y-4">
+        {/* Magic Link Form */}
+        {tab === 'magic' && (
+          <form onSubmit={sendMagicLink} className="space-y-4">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium mb-1">
-                Email address
+              <label htmlFor="magic-email" className="block text-sm font-medium mb-1">
+                📧 Email Address
               </label>
               <input
-                id="email"
+                id="magic-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                required
                 placeholder="you@example.com"
-                className="w-full rounded-lg border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 px-3 py-2"
+                required
+                className="w-full rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/10"
               />
             </div>
+
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-lg bg-blue-600 px-4 py-2 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              className="w-full rounded-xl bg-black dark:bg-white text-white dark:text-black px-4 py-2 disabled:opacity-50"
             >
-              {loading ? 'Sending link...' : 'Send magic link'}
+              {loading ? 'Sending…' : 'Send Magic Link'}
             </button>
+
+            {sent && (
+              <p className="text-green-600 dark:text-green-400 text-sm">
+                Check your email for the login link!
+              </p>
+            )}
+            {err && (
+              <p className="text-red-600 dark:text-red-400 text-sm">{err}</p>
+            )}
           </form>
         )}
 
-        {error && (
-          <div className="rounded-lg bg-red-50 dark:bg-red-900/20 p-4 text-red-800 dark:text-red-200">
-            <p className="text-sm">{error}</p>
-          </div>
+        {/* Password Form */}
+        {tab === 'password' && (
+          <form onSubmit={signInWithPassword} className="space-y-4">
+            <div>
+              <label htmlFor="password-email" className="block text-sm font-medium mb-1">
+                📧 Email Address
+              </label>
+              <input
+                id="password-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                required
+                className="w-full rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/10"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="password" className="block text-sm font-medium mb-1">
+                🔒 Password
+              </label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                className="w-full rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/10"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-xl bg-black dark:bg-white text-white dark:text-black px-4 py-2 disabled:opacity-50"
+            >
+              {loading ? 'Signing in…' : 'Sign In'}
+            </button>
+
+            {err && (
+              <p className="text-red-600 dark:text-red-400 text-sm">{err}</p>
+            )}
+
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 text-center">
+              Forgot password? Use the Magic Link tab instead.
+            </p>
+          </form>
         )}
       </div>
-    </div>
+    </main>
   )
 }
