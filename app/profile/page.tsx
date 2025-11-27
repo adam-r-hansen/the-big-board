@@ -37,7 +37,7 @@ export default function ProfilePage() {
 
   // Password management state
   const [showPasswordForm, setShowPasswordForm] = useState(false)
-  const [passwordMode, setPasswordMode] = useState<'set' | 'change'>('set')
+  const [hasPassword, setHasPassword] = useState(false) // Track if password exists
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -62,6 +62,9 @@ export default function ProfilePage() {
           setProfile(data.profile ?? null)
           setDisplayName(data.profile?.display_name ?? '')
           setSelectedColor(data.profile?.preferred_color ?? '#000000')
+          
+          // Check if user has a password by checking profile metadata
+          setHasPassword(data.profile?.has_password ?? false)
         }
       } catch (e: any) {
         setError(e?.message || 'Failed to load profile')
@@ -118,7 +121,6 @@ export default function ProfilePage() {
   }
 
   function handleAddPassword() {
-    setPasswordMode('set')
     setShowPasswordForm(true)
     setPasswordError(null)
     setPasswordSuccess(null)
@@ -128,7 +130,6 @@ export default function ProfilePage() {
   }
 
   function handleChangePassword() {
-    setPasswordMode('change')
     setShowPasswordForm(true)
     setPasswordError(null)
     setPasswordSuccess(null)
@@ -161,7 +162,7 @@ export default function ProfilePage() {
 
     try {
       const body: any = { newPassword }
-      if (passwordMode === 'change') {
+      if (hasPassword) {
         body.oldPassword = oldPassword
       }
 
@@ -183,10 +184,8 @@ export default function ProfilePage() {
       setNewPassword('')
       setConfirmPassword('')
       
-      // After setting password for first time, switch to "change" mode for next time
-      if (passwordMode === 'set') {
-        setPasswordMode('change')
-      }
+      // Mark that user now has a password
+      setHasPassword(true)
 
       // Clear success message after 5 seconds
       setTimeout(() => setPasswordSuccess(null), 5000)
@@ -231,13 +230,13 @@ export default function ProfilePage() {
                     </p>
                     <div className="space-y-1">
                       <p className="text-neutral-900 dark:text-neutral-100">✅ Magic Link enabled</p>
-                      {passwordMode === 'change' && (
+                      {hasPassword && (
                         <p className="text-neutral-900 dark:text-neutral-100">✅ Password enabled</p>
                       )}
                     </div>
                   </div>
 
-                  {passwordMode === 'set' ? (
+                  {!hasPassword ? (
                     <div className="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
                       <p className="text-sm text-neutral-700 dark:text-neutral-300 mb-3">
                         Having trouble with magic links? Add a password for direct sign-in.
@@ -271,10 +270,10 @@ export default function ProfilePage() {
               {showPasswordForm && (
                 <form onSubmit={handlePasswordSubmit} className="space-y-4 bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
                   <p className="text-sm font-medium">
-                    {passwordMode === 'set' ? 'Set a password for your account' : 'Change your password'}
+                    {hasPassword ? 'Change your password' : 'Set a password for your account'}
                   </p>
 
-                  {passwordMode === 'change' && (
+                  {hasPassword && (
                     <div>
                       <label htmlFor="oldPassword" className="block text-sm font-medium mb-1">
                         Old Password
@@ -331,7 +330,7 @@ export default function ProfilePage() {
                       disabled={passwordSaving}
                       className="rounded-xl bg-black dark:bg-white text-white dark:text-black px-4 py-2 disabled:opacity-50"
                     >
-                      {passwordSaving ? 'Saving…' : passwordMode === 'set' ? 'Set Password' : 'Update Password'}
+                      {passwordSaving ? 'Saving…' : hasPassword ? 'Update Password' : 'Set Password'}
                     </button>
                     <button
                       type="button"
