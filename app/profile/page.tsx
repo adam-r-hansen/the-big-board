@@ -146,16 +146,32 @@ export default function ProfilePage() {
     setPasswordSuccess(null)
   }
 
-  async function handlePasswordSubmit(e: React.MouseEvent) {
-    e.preventDefault()
+  async function handlePasswordSubmit() {
     console.log('Password submit clicked!')
+    console.log('Has password:', hasPassword)
+    console.log('Old password length:', oldPassword.length)
+    console.log('New password length:', newPassword.length)
+    console.log('Confirm password length:', confirmPassword.length)
+
     setPasswordSaving(true)
     setPasswordError(null)
     setPasswordSuccess(null)
 
     // Validation
+    if (!newPassword || newPassword.length < 6) {
+      setPasswordError('Oops! Password needs at least 6 characters')
+      setPasswordSaving(false)
+      return
+    }
+
     if (newPassword !== confirmPassword) {
       setPasswordError('Oops! Passwords don\'t match')
+      setPasswordSaving(false)
+      return
+    }
+
+    if (hasPassword && !oldPassword) {
+      setPasswordError('Please enter your old password')
       setPasswordSaving(false)
       return
     }
@@ -166,7 +182,7 @@ export default function ProfilePage() {
         body.oldPassword = oldPassword
       }
 
-      console.log('Sending password request...')
+      console.log('Sending password request with body:', { ...body, newPassword: '***' })
       const res = await fetch('/api/profile/password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -284,7 +300,6 @@ export default function ProfilePage() {
                         type="password"
                         value={oldPassword}
                         onChange={(e) => setOldPassword(e.target.value)}
-                        required
                         className="w-full rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/10"
                       />
                     </div>
@@ -299,7 +314,6 @@ export default function ProfilePage() {
                       type="password"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      required
                       className="w-full rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/10"
                     />
                     <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
@@ -316,7 +330,6 @@ export default function ProfilePage() {
                       type="password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
-                      required
                       className="w-full rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/10"
                     />
                   </div>
