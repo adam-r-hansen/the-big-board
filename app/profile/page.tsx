@@ -10,6 +10,7 @@ type Profile = {
   full_name: string | null
   display_name: string | null
   preferred_color?: string | null
+  has_password?: boolean
 }
 
 type Team = {
@@ -62,7 +63,9 @@ export default function ProfilePage() {
           setProfile(data.profile ?? null)
           setDisplayName(data.profile?.display_name ?? '')
           setSelectedColor(data.profile?.preferred_color ?? '#000000')
+          // Use the has_password flag from the database
           setHasPassword(data.profile?.has_password ?? false)
+          console.log('Profile loaded, has_password:', data.profile?.has_password)
         }
       } catch (e: any) {
         setError(e?.message || 'Failed to load profile')
@@ -113,7 +116,6 @@ export default function ProfilePage() {
       setTimeout(() => setOk(false), 3000)
     } catch (e: any) {
       setError(e?.message || 'Save failed')
-      console.error('Profile save error:', e)
     } finally {
       setSaving(false)
     }
@@ -147,12 +149,6 @@ export default function ProfilePage() {
   }
 
   async function handlePasswordSubmit() {
-    console.log('Password submit clicked!')
-    console.log('Has password:', hasPassword)
-    console.log('Old password length:', oldPassword.length)
-    console.log('New password length:', newPassword.length)
-    console.log('Confirm password length:', confirmPassword.length)
-
     setPasswordSaving(true)
     setPasswordError(null)
     setPasswordSuccess(null)
@@ -182,16 +178,13 @@ export default function ProfilePage() {
         body.oldPassword = oldPassword
       }
 
-      console.log('Sending password request with body:', { ...body, newPassword: '***' })
       const res = await fetch('/api/profile/password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
 
-      console.log('Response status:', res.status)
       const data = await res.json().catch(() => ({}))
-      console.log('Response data:', data)
       
       if (!res.ok) {
         throw new Error(data?.error || 'Failed to set password')
@@ -207,7 +200,6 @@ export default function ProfilePage() {
       setTimeout(() => setPasswordSuccess(null), 5000)
     } catch (e: any) {
       setPasswordError(e?.message || 'Failed to set password')
-      console.error('Password error:', e)
     } finally {
       setPasswordSaving(false)
     }
