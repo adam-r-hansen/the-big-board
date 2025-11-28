@@ -9,9 +9,10 @@ export async function GET(_req: NextRequest) {
     return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
   }
 
+  // Query the profiles table for has_password
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, email, display_name, preferred_color')
+    .select('id, email, display_name, preferred_color, has_password')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -20,39 +21,31 @@ export async function GET(_req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
+  // Use database value directly, no detection logic
   const profile = data ?? {
     id: user.id,
     email: user.email ?? null,
     display_name: null,
     preferred_color: null,
+    has_password: false,
   }
 
-  // Try to detect if user has password by checking app_metadata
-  // When a user signs in with password, they have different metadata than magic link users
-  const userMeta = user as any
-  const hasPassword = !!(
-    userMeta.app_metadata?.provider === 'email' ||
-    userMeta.app_metadata?.providers?.includes('email') ||
-    userMeta.identities?.some((id: any) => id.provider === 'email')
-  )
+  // Log what we're returning
+  console.log('Database profile data:', data)
+  console.log('Returning profile:', profile)
 
-  console.log('User has password:', hasPassword)
-  console.log('User metadata:', JSON.stringify(userMeta.app_metadata, null, 2))
-
-  return NextResponse.json({ profile: { ...profile, has_password: hasPassword } })
+  return NextResponse.json({ profile })
 }
 
 export async function PATCH(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) {
-    console.error('Auth error:', authErr)
     return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
   }
 
   let body: any = {}
   try { body = await req.json() } catch (e) {
-    console.error('JSON parse error:', e)
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
@@ -67,7 +60,6 @@ export async function PATCH(req: NextRequest) {
   const display_name = raw
   const preferred_color = body.preferred_color || null
 
-  // Upsert row with preferred_color
   const { error } = await supabase
     .from('profiles')
     .upsert(
@@ -81,12 +73,10 @@ export async function PATCH(req: NextRequest) {
     )
 
   if (error) {
-    console.error('Profile upsert error:', error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true })
 }
 
-// POST behaves like PATCH
 export const POST = PATCH
