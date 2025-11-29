@@ -12,6 +12,7 @@ import { createClient as createSupabaseClient } from "@/utils/supabase/client";
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+import PlayoffBanner from '@/components/PlayoffBanner'
 }
 
 /** Tue→Mon NFL week helper */
@@ -528,6 +529,9 @@ function HomeInner() {
         </div>
       </section>
 
+
+      {/* Playoff Banner */}
+      {leagueId && <PlayoffBanner leagueId={leagueId} />}
       <div className="grid lg:grid-cols-12 gap-6">
         {/* LEFT */}
         <div className="lg:col-span-8 grid gap-6">
