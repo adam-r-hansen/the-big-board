@@ -32,14 +32,27 @@ PLAYOFFS EPIC - QUICK REFERENCE
    - Real-time leaderboard
    - Your status card (seed, picks made, current score)
    - Mobile responsive (stacked layout)
+   - Deployed at /playoffs
 
-⏳ Story #5: UI - Playoff Dashboard/Nav (NEXT)
-   - Add "Playoffs" link to main navigation
-   - Show playoff status on home page
-   - Playoff bracket/results view
+✅ Story #5: UI - Playoff Dashboard/Nav (COMPLETE)
+   - Conditional "🏆 Playoffs" link in main navigation (only shows for users with active playoff rounds)
+   - Client-side PlayoffNavLink component checks user's leagues for active rounds
+   - Gold playoff banner on home page showing:
+     * Round type (Semifinals/Championship/Consolation)
+     * User's seed, picks made, current score
+     * "Make Picks" CTA button
+   - Banner only appears when user has active playoff rounds
+   - Multi-league aware (shows if ANY league has active playoffs)
 
-⏳ Story #6: Transition Logic (midnight processing)
-⏳ Story #7: GitHub Action (scheduler)
+⏳ Story #6: Transition Logic (NEXT)
+   - Build /api/playoffs/process-transitions endpoint
+   - Handle Week 17→18 transition
+   - Championship finalization
+   - Can be manually triggered if needed
+
+⏳ Story #7: GitHub Action (OPTIONAL)
+   - Schedule midnight transitions
+   - Can skip if tight on time (manual trigger works)
 
 Core Rules
 Week 17 - Semifinals (Top 4 teams):
@@ -72,7 +85,7 @@ Technical Decisions
 Regular season: Weeks 1-16 for playoff leagues
 Available teams: Calculate on-the-fly (query existing picks)
 Unlock schedule: Generate dynamically (based on seed + 3hr intervals)
-Transition timing: Midnight Monday/Tuesday via GitHub Action
+Transition timing: Midnight Monday/Tuesday via GitHub Action OR manual API call
 Unlock intervals: Hardcoded at 3 hours
 Sleep mode: Hardcoded 8pm-9am
 Team tracking: playoff_picks includes both game_id AND team_id
@@ -93,6 +106,8 @@ API Endpoints Built
 
 UI Features Built
 Championship-themed design with gold gradients and trophy icons
+Conditional "🏆 Playoffs" nav link (client-side check for active rounds)
+Playoff banner on home page (shows seed, picks, score, CTA)
 4-seed playoff team grid with pick slot visualization
 Game selection grid with team availability states
 Live countdown timer for next unlock
@@ -100,10 +115,23 @@ Your status card (seed, picks made, score)
 Live leaderboard of playoff participants
 Mobile-responsive stacked layout
 
+Files Created
+Database tables (Supabase)
+API routes: /app/api/playoffs/* (6 endpoints)
+Types: playoff types in /src/types/tables.ts
+UI: /app/playoffs/page.tsx (playoff picks page)
+Components: PlayoffNavLink.tsx, PlayoffBanner.tsx
+Modified: SiteHeader.tsx, app/page.tsx
+
 Next Steps
-Story #5: Add playoffs nav link and home page integration
-Story #6: Build transition logic endpoint (/api/playoffs/process-transitions)
-Story #7: Create GitHub Action to run transitions at midnight
+Story #6: Build transition logic endpoint - ~1-2 hours
+Story #7: GitHub Action (optional) - ~30 min OR skip and use manual trigger
+
+Timeline
+Week 13 now → Week 15 deadline = ~2 weeks remaining
+Backend + Core UI: COMPLETE ✅
+Nav + Home Integration: COMPLETE ✅
+Remaining: Transition logic (can be manual if needed)
 
 Git Commands
 git checkout dev
