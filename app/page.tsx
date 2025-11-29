@@ -8,11 +8,11 @@ import GameCard, { type GameCardGame } from "@/components/ui/GameCard";
 import AdminNavLink from "@/components/AdminNavLink";
 import type { TeamShape } from "@/components/ui/TeamPill";
 import TeamCard from "@/components/TeamCard";
+import PlayoffBanner from "@/components/PlayoffBanner";
 import { createClient as createSupabaseClient } from "@/utils/supabase/client";
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
-import PlayoffBanner from '@/components/PlayoffBanner'
 }
 
 /** Tue→Mon NFL week helper */
