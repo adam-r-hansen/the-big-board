@@ -1,6 +1,7 @@
 // components/SiteHeader.tsx
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/server'
+import PlayoffNavLink from './PlayoffNavLink'
 
 export default async function SiteHeader() {
   const supabase = await createClient()
@@ -14,11 +15,11 @@ export default async function SiteHeader() {
         <nav className="flex items-center gap-4 text-sm">
           <Link href="/" className="font-semibold">Big Board</Link>
           <Link href="/picks" className="opacity-80 hover:opacity-100">Picks</Link>
+          {user && <PlayoffNavLink />}
           <Link href="/scoreboard" className="opacity-80 hover:opacity-100">Scoreboard</Link>
           <Link href="/standings" className="opacity-80 hover:opacity-100">Standings</Link>
           <Link href="/stats" className="opacity-80 hover:opacity-100">Stats</Link>
           <Link href="/admin" className="opacity-80 hover:opacity-100">Admin</Link>
-          <Link href="/profile" className="opacity-80 hover:opacity-100">Profile</Link>
         </nav>
 
         {/* RIGHT: auth */}
