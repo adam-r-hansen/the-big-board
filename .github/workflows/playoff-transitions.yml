@@ -1,0 +1,24 @@
+name: Playoff Transitions
+
+on:
+  schedule:
+    # Run daily at 2:00 AM EST (7:00 AM UTC)
+    # This gives plenty of time after Monday Night Football
+    - cron: '0 7 * * *'
+  
+  # Allow manual triggering for testing
+  workflow_dispatch:
+
+jobs:
+  process-transitions:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Call Transition Endpoint
+        run: |
+          curl -X POST https://the-big-board.fun/api/playoffs/process-transitions \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP Status: %{http_code}\n"
+      
+      - name: Log completion
+        run: echo "Playoff transition check completed at $(date)"
