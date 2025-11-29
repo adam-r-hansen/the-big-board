@@ -1,0 +1,113 @@
+PLAYOFFS EPIC - QUICK REFERENCE
+
+=== PROGRESS TRACKER ===
+✅ Story #1: Database Schema (COMPLETE)
+   - Created 4 tables: playoff_settings, playoff_rounds, playoff_picks, playoff_standings
+   - Added RLS policies for all tables
+   - Added performance indexes
+   - Added auto-update triggers
+   - Added team_id column to playoff_picks
+
+✅ Story #2: API Routes (COMPLETE)
+   - /api/playoffs/settings - GET/POST playoff settings
+   - /api/playoffs/rounds - GET/POST/PATCH playoff rounds
+   - /api/playoffs/picks - GET/POST/DELETE playoff picks (with validations)
+   - /api/playoffs/standings - GET/POST playoff standings
+   - /api/playoffs/init-round - Initialize playoff rounds with top 4 seeds
+   - /api/playoffs/calculate-scores - Calculate and update playoff scores
+   - Added TypeScript types to src/types/tables.ts
+
+✅ Story #3: Standings Calculation Logic (COMPLETE)
+   - Regular season standings calculation (weeks 1-16)
+   - Snake draft unlock schedule generator
+   - Unlock times with 3-hour intervals and sleep mode (8pm-9am)
+   - Scoring logic matching regular season
+
+✅ Story #4: UI - Pick Page (COMPLETE)
+   - Championship-themed playoff page with gold accents
+   - 4-column playoff teams grid showing seeds and pick slots
+   - 2/3 game grid + 1/3 stats sidebar layout
+   - Live countdown timers for unlocks
+   - Visual pick states (filled/locked/unlocked)
+   - Real-time leaderboard
+   - Your status card (seed, picks made, current score)
+   - Mobile responsive (stacked layout)
+
+⏳ Story #5: UI - Playoff Dashboard/Nav (NEXT)
+   - Add "Playoffs" link to main navigation
+   - Show playoff status on home page
+   - Playoff bracket/results view
+
+⏳ Story #6: Transition Logic (midnight processing)
+⏳ Story #7: GitHub Action (scheduler)
+
+Core Rules
+Week 17 - Semifinals (Top 4 teams):
+Snake draft: 1-1-2-3-4-1-2-3-4 (4 picks each)
+Timed unlocks: 3-hour intervals, Tuesday 9am start
+Sleep mode: 8pm-9am (no unlocks overnight)
+All windows complete: Thursday 9am
+After all unlocks: 1 pick change per hour until games lock
+Teams can't pick games already selected by other playoff teams
+
+Week 17 - Non-playoff teams (5th+):
+4 picks each, no restrictions
+Week 17 + Week 18 scores combined for final 5th+ placement
+
+Week 18 - Championship (Top 2 from Week 17):
+Snake draft: 1-2-1-2-1-2-1-2 (4 picks each)
+Same 3-hour unlock system
+SNF game excluded, auto-assigned to higher regular season seed (tiebreaker)
+All windows complete: Wednesday 6pm
+
+Week 18 - Consolation (3rd & 4th from Week 17):
+4 picks each, no restrictions
+Determines 3rd/4th place
+
+Week 18 - Non-playoff teams (5th+):
+4 picks each, no restrictions
+Combined with Week 17 for final placement
+
+Technical Decisions
+Regular season: Weeks 1-16 for playoff leagues
+Available teams: Calculate on-the-fly (query existing picks)
+Unlock schedule: Generate dynamically (based on seed + 3hr intervals)
+Transition timing: Midnight Monday/Tuesday via GitHub Action
+Unlock intervals: Hardcoded at 3 hours
+Sleep mode: Hardcoded 8pm-9am
+Team tracking: playoff_picks includes both game_id AND team_id
+
+Database Schema
+playoff_settings: id, league_id (FK), enabled (boolean), regular_season_weeks (default 16), created_at, updated_at
+playoff_rounds: id, league_id (FK), week_number (17 or 18), round_type, status, created_at, updated_at
+playoff_picks: id, league_membership_id (FK), playoff_round_id (FK), game_id (FK), team_id (FK), pick_position (1-4), unlock_time, picked_at, last_changed_at, is_tiebreaker, created_at, updated_at
+playoff_standings: id, playoff_round_id (FK), league_membership_id (FK), rank, total_score, seed, created_at
+
+API Endpoints Built
+/api/playoffs/settings - GET/POST league playoff configuration
+/api/playoffs/rounds - GET/POST/PATCH round management
+/api/playoffs/picks - GET/POST/DELETE with full validation
+/api/playoffs/standings - GET/POST standings data
+/api/playoffs/init-round - POST to initialize playoff round
+/api/playoffs/calculate-scores - POST to calculate scores
+
+UI Features Built
+Championship-themed design with gold gradients and trophy icons
+4-seed playoff team grid with pick slot visualization
+Game selection grid with team availability states
+Live countdown timer for next unlock
+Your status card (seed, picks made, score)
+Live leaderboard of playoff participants
+Mobile-responsive stacked layout
+
+Next Steps
+Story #5: Add playoffs nav link and home page integration
+Story #6: Build transition logic endpoint (/api/playoffs/process-transitions)
+Story #7: Create GitHub Action to run transitions at midnight
+
+Git Commands
+git checkout dev
+git pull
+git add [files]
+git commit -m "description"
+git push origin dev
