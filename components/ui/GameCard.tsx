@@ -35,20 +35,18 @@ function formatGameTime(gameUtc?: string | null): string {
   try {
     if (!gameUtc) return "";
     const d = new Date(gameUtc);
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     
-    const day = days[d.getDay()];
-    const month = months[d.getMonth()];
-    const date = d.getDate();
+    // Auto-detect user's timezone and format accordingly
+    const formatted = d.toLocaleString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    });
     
-    let hours = d.getHours();
-    const minutes = d.getMinutes();
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    hours = hours % 12 || 12;
-    const mins = minutes.toString().padStart(2, '0');
-    
-    return `${day}, ${month} ${date} • ${hours}:${mins} ${ampm} ET`;
+    return formatted;
   } catch {
     return gameUtc || "";
   }
@@ -118,13 +116,8 @@ export default function GameCard({ game, teamIndex, right }: GameCardProps) {
   return (
     <article className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
       <header className="mb-3 flex items-center justify-between">
-        <span className="game-time">
-          {kickoff && (
-            <>
-              <span className="game-time-day">{kickoff.split(',')[0]}</span>
-              {kickoff.substring(kickoff.indexOf(','))}
-            </>
-          )}
+        <span className="text-xs text-neutral-600 dark:text-neutral-400">
+          {kickoff}
         </span>
         <div className="flex items-center gap-2">
           {right}
