@@ -170,16 +170,36 @@ async function getGameForTeam(
 // Main POST handler
 export async function POST(req: NextRequest) {
   try {
-    const supabase = await createClient()
+    // Check for API key auth (for GitHub Actions)
+    const apiKey = req.headers.get('x-api-key')
+    const validApiKey = process.env.ADMIN_API_KEY
     
-    // Auth check
-    const { data: authData } = await supabase.auth.getUser()
-    if (!authData?.user) {
-      return json({ error: 'Unauthorized' }, 401)
+    let supabase
+    let isApiKeyAuth = false
+    
+    if (apiKey && validApiKey && apiKey === validApiKey) {
+      // API Key authentication - use service role
+      const { createClient: createServiceClient } = await import('@supabase/supabase-js')
+      supabase = createServiceClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false
+          }
+        }
+      )
+      isApiKeyAuth = true
+    } else {
+      // Regular session-based auth
+      supabase = await createClient()
+      const { data: authData } = await supabase.auth.getUser()
+      if (!authData?.user) {
+        return json({ error: 'Unauthorized' }, 401)
+      }
+      // TODO: Add admin role check here if needed
     }
-
-    // Check if user is admin (you'll need to implement this check)
-    // For now, assuming any authenticated user can run this
 
     const body = await req.json()
     const { season, week, leagueId } = body
@@ -246,7 +266,7 @@ export async function POST(req: NextRequest) {
           continue
         }
 
-        // Get all members with their profile info
+        // Get all members
         const { data: members } = await supabase
           .from('league_members')
           .select('profile_id')
