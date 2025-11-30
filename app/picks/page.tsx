@@ -39,7 +39,7 @@ type Game = {
   home: { id?: string; abbr?: string | null }
   away: { id?: string; abbr?: string | null }
 }
-type Pick = { id: string; team_id: string; game_id: string | null }
+type Pick = { id: string; team_id: string; game_id: string | null; auto_assigned?: boolean }
 
 /** NFL helper: Thursday after Labor Day (Labor Day = first Monday in September) */
 function nflWeek1ThursdayUTC(season: number) {
@@ -181,7 +181,12 @@ export default function PicksPage() {
             },
           })),
         )
-        setPicks((p.picks ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
+        setPicks((p.picks ?? []).map((r: any) => ({ 
+          id: r.id, 
+          team_id: r.team_id, 
+          game_id: r.game_id,
+          auto_assigned: r.auto_assigned ?? false
+        })))
       } catch (e: any) {
         setMsg(e?.message || 'Load error')
       } finally {
@@ -197,7 +202,12 @@ export default function PicksPage() {
       try {
         const result = await fetch(`/api/my-picks-season?leagueId=${leagueId}&season=${season}`, { cache: 'no-store' }).then((r) => r.json())
         const arr: any[] = Array.isArray(result?.picks) ? result.picks : []
-        setSeasonPicks(arr.map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id ?? null })))
+        setSeasonPicks(arr.map((r: any) => ({ 
+          id: r.id, 
+          team_id: r.team_id, 
+          game_id: r.game_id ?? null,
+          auto_assigned: r.auto_assigned ?? false
+        })))
       } catch {
         setSeasonPicks([])
       }
@@ -237,7 +247,12 @@ export default function PicksPage() {
 
   async function refreshMyPicks() {
     const j = await fetch(`/api/my-picks?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' }).then((r) => r.json())
-    setPicks((j.picks ?? []).map((r: any) => ({ id: r.id, team_id: r.team_id, game_id: r.game_id })))
+    setPicks((j.picks ?? []).map((r: any) => ({ 
+      id: r.id, 
+      team_id: r.team_id, 
+      game_id: r.game_id,
+      auto_assigned: r.auto_assigned ?? false
+    })))
   }
 
   async function deletePickById(pickId: string) {
@@ -483,7 +498,7 @@ export default function PicksPage() {
                     const locked = p.game_id ? isLocked(games.find((g) => g.id === p.game_id)?.game_utc) : false
                     return (
                       <li key={p.id} className="flex items-center gap-2">
-                        <div className="min-w-0 flex-1">
+                        <div className="min-w-0 flex-1 relative">
                           {t && (
                             <TeamCard
                               team={{
@@ -501,6 +516,11 @@ export default function PicksPage() {
                               displayText="short"
                               disabled
                             />
+                          )}
+                          {p.auto_assigned && (
+                            <span className="absolute top-1 right-1 inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-200 uppercase tracking-wide">
+                              Auto
+                            </span>
                           )}
                         </div>
                         <button
@@ -536,7 +556,7 @@ export default function PicksPage() {
                   {seasonPicks.map((p) => {
                     const t = (teamIndex as any)[p.team_id]
                     return (
-                      <div key={p.id} className="min-w-0">
+                      <div key={p.id} className="min-w-0 relative">
                         {t && (
                           <TeamCard
                             team={{
@@ -554,6 +574,11 @@ export default function PicksPage() {
                             displayText="short"
                             disabled
                           />
+                        )}
+                        {p.auto_assigned && (
+                          <span className="absolute top-1 right-1 inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-200 uppercase tracking-wide">
+                            Auto
+                          </span>
                         )}
                       </div>
                     )
