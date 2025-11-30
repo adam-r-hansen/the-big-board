@@ -21,4 +21,6 @@ jobs:
             -w "\nHTTP Status: %{http_code}\n"
       
       - name: Log completion
-        run: echo "Playoff transition check completed at $(date)"
+        run: |
+          echo "Playoff transition check completed at $(date)"
+          echo "Workflow triggered successfully"
