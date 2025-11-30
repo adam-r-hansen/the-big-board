@@ -68,6 +68,12 @@ export default function AdminPage() {
   const [refreshingRecords, setRefreshingRecords] = useState(false)
   const [recordsMsg, setRecordsMsg] = useState('')
 
+  // Auto-Assign Picks state
+  const [autoAssignWeek, setAutoAssignWeek] = useState(1)
+  const [autoAssignSeason, setAutoAssignSeason] = useState(new Date().getFullYear())
+  const [autoAssigning, setAutoAssigning] = useState(false)
+  const [autoAssignMsg, setAutoAssignMsg] = useState('')
+
   useEffect(() => {
     loadLeagues()
     loadTeams()
@@ -295,6 +301,49 @@ export default function AdminPage() {
     }
   }
 
+  async function runAutoAssignPicks() {
+    if (!selectedLeagueId) {
+      setAutoAssignMsg('Please select a league first')
+      return
+    }
+
+    setAutoAssigning(true)
+    setAutoAssignMsg('')
+
+    try {
+      const res = await fetch('/api/admin/auto-assign-picks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ 
+          season: autoAssignSeason, 
+          week: autoAssignWeek,
+          leagueId: selectedLeagueId
+        }),
+      })
+
+      const j = await res.json()
+      if (!res.ok) throw new Error(j?.error || 'Failed to auto-assign picks')
+
+      // Build success message
+      const processed = j.processed || {}
+      const leagueResult = processed[selectedLeagueId]
+      
+      if (!leagueResult || leagueResult.assignments.length === 0) {
+        setAutoAssignMsg('✅ No picks needed - all users have 2 picks for this week')
+      } else {
+        const totalAssigned = leagueResult.assignments.reduce((sum: number, a: any) => sum + a.picksAssigned, 0)
+        const userCount = leagueResult.assignments.length
+        setAutoAssignMsg(`✅ Assigned ${totalAssigned} pick(s) to ${userCount} user(s) for Week ${autoAssignWeek}`)
+      }
+
+      setTimeout(() => setAutoAssignMsg(''), 5000)
+    } catch (err: any) {
+      setAutoAssignMsg(`❌ ${err?.message || 'Failed to auto-assign picks'}`)
+    } finally {
+      setAutoAssigning(false)
+    }
+  }
+
   const selectedLeague = leagues.find(l => l.id === selectedLeagueId)
   const needsGame = ['bonus_game', 'bonus_game_ats', 'bonus_game_oof'].includes(wrinkleKind)
   const needsSpread = wrinkleKind === 'bonus_game_ats'
@@ -362,6 +411,30 @@ export default function AdminPage() {
                   👥 Manage League (Members, Invites, Manual Picks)
                 </Link>
                 <p className="text-xs text-neutral-500 mt-2">Manage members, roles, invites, and create picks for users</p>
+              </div>
+
+              {/* Auto-Assign Picks */}
+              <div className="border-t pt-4 dark:border-neutral-700">
+                <h3 className="font-semibold mb-3">🤖 Auto-Assign Missed Picks</h3>
+                <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">Automatically assign picks to users who missed the weekly deadline. Assigns losing teams (95%) or lowest-scoring teams (5%).</p>
+                
+                <div className="flex gap-3 items-end mb-3">
+                  <label className="grid gap-1">
+                    <span className="text-xs text-neutral-600 dark:text-neutral-400">Season</span>
+                    <input type="number" className="h-9 w-24 border rounded px-2 bg-transparent dark:border-neutral-700" value={autoAssignSeason} onChange={e => setAutoAssignSeason(+e.target.value)} />
+                  </label>
+                  <label className="grid gap-1 flex-1">
+                    <span className="text-xs text-neutral-600 dark:text-neutral-400">Week</span>
+                    <select className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={autoAssignWeek} onChange={e => setAutoAssignWeek(+e.target.value)}>
+                      {Array.from({ length: 18 }).map((_, i) => <option key={i + 1} value={i + 1}>Week {i + 1}</option>)}
+                    </select>
+                  </label>
+                  <button onClick={runAutoAssignPicks} disabled={autoAssigning} className="h-9 px-4 rounded bg-black text-white disabled:opacity-50">
+                    {autoAssigning ? 'Assigning...' : 'Auto-Assign'}
+                  </button>
+                </div>
+                {autoAssignMsg && <div className="text-sm">{autoAssignMsg}</div>}
+                <p className="text-xs text-neutral-500 mt-2">⚠️ Only runs if all games for the week are FINAL</p>
               </div>
 
               {/* Wrinkles Management */}
