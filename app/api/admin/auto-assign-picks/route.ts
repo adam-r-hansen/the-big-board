@@ -4,6 +4,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 type AssignmentResult = {
   userId: string
@@ -24,7 +25,7 @@ function json(data: any, status = 200) {
   })
 }
 
-// Helper: Get available teams for a user (teams they haven't picked yet this season)
+// Helper functions remain the same...
 async function getAvailableTeams(
   supabase: any,
   userId: string,
@@ -52,7 +53,6 @@ async function getAvailableTeams(
     .filter((teamId: string) => !usedTeamIds.has(teamId))
 }
 
-// Helper: Get teams that lost their game (0 points) this week
 async function getLosingTeams(
   supabase: any,
   week: number,
@@ -89,7 +89,6 @@ async function getLosingTeams(
   return losingTeams
 }
 
-// Helper: Get lowest-scoring team from available teams
 async function getLowestScoringTeam(
   supabase: any,
   week: number,
@@ -142,7 +141,6 @@ async function getLowestScoringTeam(
   return teamScores[0].teamId
 }
 
-// Helper: Get game ID for a team in a specific week
 async function getGameForTeam(
   supabase: any,
   teamId: string,
@@ -160,7 +158,6 @@ async function getGameForTeam(
   return game?.id || null
 }
 
-// Main POST handler
 export async function POST(req: NextRequest) {
   try {
     const apiKey = req.headers.get('x-api-key')
@@ -170,7 +167,7 @@ export async function POST(req: NextRequest) {
     if (apiKey && validApiKey && apiKey === validApiKey) {
       // API key auth - valid
     } else {
-      // Session auth - check if user is authenticated
+      // Session auth
       const { createClient } = await import('@/utils/supabase/server')
       const sessionClient = await createClient()
       const { data: authData } = await sessionClient.auth.getUser()
@@ -179,10 +176,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Create service role client (bypasses RLS)
+    // Create service role client with explicit options to bypass RLS
     const supabase = createServiceClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        db: { schema: 'public' },
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+          detectSessionInUrl: false
+        },
+        global: {
+          headers: {
+            'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY!
+          }
+        }
+      }
     )
 
     const body = await req.json()
@@ -257,7 +267,7 @@ export async function POST(req: NextRequest) {
 
         // Get all members
         const { data: members } = await supabase
-          .from('league_members')
+          .from('league_memberships')
           .select('profile_id')
           .eq('league_id', league.id)
 
