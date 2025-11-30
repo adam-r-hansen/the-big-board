@@ -9,10 +9,7 @@ type TeamMap = Record<string, TeamShape>;
 
 function tuesdayToMondayWeekIndex(d: Date) {
   // Return NFL-style "week" number within the season window based on Tue→Mon
-  // You likely already know the official week; this is a UX helper.
-  // Start from NFL Week 1 Tuesday (change if needed).
   const year = d.getFullYear();
-  // Heuristic: first Tuesday after Sept 1
   const sept1 = new Date(year, 8, 1);
   const day = sept1.getDay(); // 0..6
   const offsetToTue = (9 - day) % 7; // Tuesday = 2
@@ -54,23 +51,17 @@ export default function ScoreboardPage() {
         const normalized: GameCardGame[] = rawGames.map((g: any) => ({
           id: g.id,
           week: g.week ?? week,
-          // Convert game_utc to user's local timezone with better formatting
-          kickoff: g.game_utc
-            ? new Date(g.game_utc).toLocaleString('en-US', {
-                weekday: 'short',
-                month: 'short',
-                day: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit',
-                timeZoneName: 'short',
-              })
-            : "",
-          home: g.home?.abbreviation ?? g.home_abbr ?? "?",
-          homeId: g.home?.id ?? g.home_team ?? "",
-          homeScore: g.home_score ?? null,
-          away: g.away?.abbreviation ?? g.away_abbr ?? "?",
-          awayId: g.away?.id ?? g.away_team ?? "",
-          awayScore: g.away_score ?? null,
+          game_utc: g.game_utc || g.start_time || null,
+          home: {
+            id: g.home?.id ?? g.home_team ?? "",
+            abbr: g.home?.abbreviation ?? g.home_abbr ?? null,
+            score: g.home_score ?? null,
+          },
+          away: {
+            id: g.away?.id ?? g.away_team ?? "",
+            abbr: g.away?.abbreviation ?? g.away_abbr ?? null,
+            score: g.away_score ?? null,
+          },
           status: (g.status ?? "UPCOMING").toUpperCase(),
         }));
 
@@ -83,9 +74,8 @@ export default function ScoreboardPage() {
 
   const sortedGames = useMemo(() => {
     return [...games].sort((a, b) => {
-      // Parse kickoff strings back to dates for sorting
-      const dateA = a.kickoff ? new Date(a.kickoff) : new Date(0);
-      const dateB = b.kickoff ? new Date(b.kickoff) : new Date(0);
+      const dateA = a.game_utc ? new Date(a.game_utc) : new Date(0);
+      const dateB = b.game_utc ? new Date(b.game_utc) : new Date(0);
       return dateA.getTime() - dateB.getTime();
     });
   }, [games]);
@@ -133,7 +123,7 @@ export default function ScoreboardPage() {
           <p className="text-center text-neutral-500">No games found for this week.</p>
         )}
         {sortedGames.map((game) => (
-          <GameCard key={game.id} game={game} teams={teamMap} />
+          <GameCard key={game.id} game={game} teamIndex={teamMap} />
         ))}
       </section>
     </main>
