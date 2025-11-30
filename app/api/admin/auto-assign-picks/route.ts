@@ -208,6 +208,8 @@ export async function POST(req: NextRequest) {
       return json({ error: 'season and week are required' }, 400)
     }
 
+    console.log('[AUTO-ASSIGN] Starting:', { season, week, leagueId })
+
     // Step 1: Check all games are FINAL
     const { data: games, error: gamesError } = await supabase
       .from('games')
@@ -228,6 +230,8 @@ export async function POST(req: NextRequest) {
       return json({ error: 'Not all games are FINAL yet' }, 400)
     }
 
+    console.log('[AUTO-ASSIGN] All games FINAL:', games.length)
+
     // Step 2: Get leagues to process
     let leaguesToProcess: any[] = []
     
@@ -240,6 +244,7 @@ export async function POST(req: NextRequest) {
         .maybeSingle()
       
       if (league) leaguesToProcess = [league]
+      console.log('[AUTO-ASSIGN] League found:', league?.name)
     } else {
       const { data: leagues } = await supabase
         .from('leagues')
@@ -247,6 +252,7 @@ export async function POST(req: NextRequest) {
         .eq('season', season)
       
       leaguesToProcess = leagues || []
+      console.log('[AUTO-ASSIGN] Processing all leagues:', leaguesToProcess.length)
     }
 
     const processed: Record<string, LeagueResult> = {}
@@ -255,6 +261,8 @@ export async function POST(req: NextRequest) {
     // Step 3: Process each league
     for (const league of leaguesToProcess) {
       try {
+        console.log('[AUTO-ASSIGN] Processing league:', league.name)
+
         // Check if week is in valid range
         const isPlayoffLeague = league.playoff_enabled
         const validWeek = isPlayoffLeague
@@ -271,6 +279,8 @@ export async function POST(req: NextRequest) {
           .from('league_members')
           .select('profile_id')
           .eq('league_id', league.id)
+
+        console.log('[AUTO-ASSIGN] League members:', members?.length || 0)
 
         if (!members || members.length === 0) continue
 
@@ -289,23 +299,31 @@ export async function POST(req: NextRequest) {
 
           const displayName = profile?.display_name || 'Unknown'
 
-          // Count picks made this week (exclude wrinkles)
+          // Count picks made this week
           const { data: weekPicks } = await supabase
             .from('picks')
-            .select('id')
+            .select('id, team_id, wrinkle_id')
             .eq('league_id', league.id)
             .eq('profile_id', userId)
             .eq('season', season)
             .eq('week', week)
 
-          const picksMade = weekPicks?.length || 0
+          console.log(`[AUTO-ASSIGN] ${displayName} week ${week} picks:`, weekPicks?.length || 0, weekPicks)
+
+          // Filter out wrinkle picks
+          const regularPicks = (weekPicks || []).filter((p: any) => !p.wrinkle_id)
+          const picksMade = regularPicks.length
           const picksNeeded = Math.max(0, 2 - picksMade)
+
+          console.log(`[AUTO-ASSIGN] ${displayName} needs ${picksNeeded} picks (has ${picksMade} regular picks)`)
 
           if (picksNeeded === 0) continue
 
           // Get available teams
           let availableTeams = await getAvailableTeams(supabase, userId, league.id, season)
           
+          console.log(`[AUTO-ASSIGN] ${displayName} has ${availableTeams.length} available teams`)
+
           const teamsAssigned: string[] = []
 
           for (let i = 0; i < picksNeeded; i++) {
@@ -335,6 +353,8 @@ export async function POST(req: NextRequest) {
             // Get game for this team
             const gameId = await getGameForTeam(supabase, teamToAssign, week, season)
 
+            console.log(`[AUTO-ASSIGN] Assigning team ${teamToAssign} to ${displayName}`)
+
             // Create the pick
             const { error: pickError } = await supabase
               .from('picks')
@@ -349,6 +369,7 @@ export async function POST(req: NextRequest) {
               })
 
             if (pickError) {
+              console.error(`[AUTO-ASSIGN] Error assigning pick:`, pickError)
               errors.push(`Failed to assign pick for ${displayName}: ${pickError.message}`)
               break
             }
@@ -376,15 +397,20 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        console.log('[AUTO-ASSIGN] Assignments for league:', assignments.length)
+
         processed[league.id] = {
           leagueName: league.name,
           assignments
         }
 
       } catch (err: any) {
+        console.error('[AUTO-ASSIGN] League error:', err)
         errors.push(`League ${league.name}: ${err.message}`)
       }
     }
+
+    console.log('[AUTO-ASSIGN] Complete. Processed:', Object.keys(processed).length, 'leagues')
 
     return json({
       success: true,
@@ -393,6 +419,7 @@ export async function POST(req: NextRequest) {
     })
 
   } catch (error: any) {
+    console.error('[AUTO-ASSIGN] Fatal error:', error)
     return json({ error: error.message }, 500)
   }
 }
