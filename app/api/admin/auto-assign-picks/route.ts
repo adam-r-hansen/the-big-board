@@ -1,6 +1,7 @@
 // app/api/admin/auto-assign-picks/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { createClient as createServiceClient } from '@supabase/supabase-js'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -174,32 +175,30 @@ export async function POST(req: NextRequest) {
     const apiKey = req.headers.get('x-api-key')
     const validApiKey = process.env.ADMIN_API_KEY
     
-    let supabase
-    let isApiKeyAuth = false
-    
+    // First, authenticate the request
     if (apiKey && validApiKey && apiKey === validApiKey) {
-      // API Key authentication - use service role
-      const { createClient: createServiceClient } = await import('@supabase/supabase-js')
-      supabase = createServiceClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        {
-          auth: {
-            autoRefreshToken: false,
-            persistSession: false
-          }
-        }
-      )
-      isApiKeyAuth = true
+      // API key is valid - proceed
     } else {
-      // Regular session-based auth
-      supabase = await createClient()
-      const { data: authData } = await supabase.auth.getUser()
+      // Check session auth
+      const sessionClient = await createClient()
+      const { data: authData } = await sessionClient.auth.getUser()
       if (!authData?.user) {
         return json({ error: 'Unauthorized' }, 401)
       }
       // TODO: Add admin role check here if needed
     }
+
+    // Always use service role client for data operations (bypasses RLS)
+    const supabase = createServiceClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    )
 
     const body = await req.json()
     const { season, week, leagueId } = body
@@ -272,7 +271,7 @@ export async function POST(req: NextRequest) {
           continue
         }
 
-        // Get all members
+        // Get all members (using service role to bypass RLS)
         const { data: members } = await supabase
           .from('league_members')
           .select('profile_id')
@@ -288,7 +287,7 @@ export async function POST(req: NextRequest) {
         for (const member of members) {
           const userId = member.profile_id
 
-          // Get profile separately to avoid nested typing issues
+          // Get profile
           const { data: profile } = await supabase
             .from('profiles')
             .select('display_name')
@@ -306,7 +305,7 @@ export async function POST(req: NextRequest) {
             .eq('season', season)
             .eq('week', week)
 
-          console.log(`[AUTO-ASSIGN] ${displayName} week ${week} picks:`, weekPicks?.length || 0, weekPicks)
+          console.log(`[AUTO-ASSIGN] ${displayName} week ${week} picks:`, weekPicks?.length || 0)
 
           // Filter out wrinkle picks if wrinkle_id column exists
           const regularPicks = (weekPicks || []).filter((p: any) => !p.wrinkle_id)
