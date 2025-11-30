@@ -9,10 +9,6 @@ on:
   # Allow manual triggering for testing
   workflow_dispatch:
 
-# Specify to run on dev branch since that's your production branch
-branches:
-  - dev
-
 jobs:
   process-transitions:
     runs-on: ubuntu-latest
