@@ -238,7 +238,7 @@ export async function POST(req: NextRequest) {
     if (leagueId) {
       const { data: league } = await supabase
         .from('leagues')
-        .select('id, name, playoff_enabled')
+        .select('id, name, start_week')
         .eq('id', leagueId)
         .eq('season', season)
         .maybeSingle()
@@ -248,7 +248,7 @@ export async function POST(req: NextRequest) {
     } else {
       const { data: leagues } = await supabase
         .from('leagues')
-        .select('id, name, playoff_enabled')
+        .select('id, name, start_week')
         .eq('season', season)
       
       leaguesToProcess = leagues || []
@@ -263,14 +263,12 @@ export async function POST(req: NextRequest) {
       try {
         console.log('[AUTO-ASSIGN] Processing league:', league.name)
 
-        // Check if week is in valid range
-        const isPlayoffLeague = league.playoff_enabled
-        const validWeek = isPlayoffLeague
-          ? week >= 1 && week <= 16
-          : week >= 3 && week <= 18
+        // Check if week is in valid range (start_week to 18)
+        const startWeek = league.start_week || 1
+        const validWeek = week >= startWeek && week <= 18
 
         if (!validWeek) {
-          errors.push(`League ${league.name}: Week ${week} out of range`)
+          errors.push(`League ${league.name}: Week ${week} out of range (starts at week ${startWeek})`)
           continue
         }
 
@@ -310,7 +308,7 @@ export async function POST(req: NextRequest) {
 
           console.log(`[AUTO-ASSIGN] ${displayName} week ${week} picks:`, weekPicks?.length || 0, weekPicks)
 
-          // Filter out wrinkle picks
+          // Filter out wrinkle picks if wrinkle_id column exists
           const regularPicks = (weekPicks || []).filter((p: any) => !p.wrinkle_id)
           const picksMade = regularPicks.length
           const picksNeeded = Math.max(0, 2 - picksMade)
