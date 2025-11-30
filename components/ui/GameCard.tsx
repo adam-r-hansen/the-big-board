@@ -31,24 +31,28 @@ export type GameCardProps = {
 
 /* ---------------- helpers ---------------- */
 
-function formatGameTime(gameUtc?: string | null): string {
+function formatGameTime(gameUtc?: string | null): { date: string; time: string } {
   try {
-    if (!gameUtc) return "";
+    if (!gameUtc) return { date: "", time: "" };
     const d = new Date(gameUtc);
     
-    // Auto-detect user's timezone and format accordingly
-    const formatted = d.toLocaleString('en-US', {
+    // Format date: "Thu, Nov 28"
+    const date = d.toLocaleString('en-US', {
       weekday: 'short',
       month: 'short',
       day: 'numeric',
+    });
+    
+    // Format time: "7:00 AM PST"
+    const time = d.toLocaleString('en-US', {
       hour: 'numeric',
       minute: '2-digit',
       timeZoneName: 'short',
     });
     
-    return formatted;
+    return { date, time };
   } catch {
-    return gameUtc || "";
+    return { date: gameUtc || "", time: "" };
   }
 }
 
@@ -111,14 +115,19 @@ export default function GameCard({ game, teamIndex, right }: GameCardProps) {
   const homeScore = typeof game.home.score === "number" ? game.home.score : null;
   const awayScore = typeof game.away.score === "number" ? game.away.score : null;
 
-  const kickoff = formatGameTime(game.game_utc);
+  const { date, time } = formatGameTime(game.game_utc);
 
   return (
     <article className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
       <header className="mb-3 flex items-center justify-between">
-        <span className="text-xs text-neutral-600 dark:text-neutral-400">
-          {kickoff}
-        </span>
+        <div className="flex flex-col gap-0.5">
+          <div className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+            {date}
+          </div>
+          <div className="text-xs text-neutral-600 dark:text-neutral-400">
+            {time}
+          </div>
+        </div>
         <div className="flex items-center gap-2">
           {right}
           <StatusPill status={s} />
