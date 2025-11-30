@@ -1,6 +1,5 @@
 // app/api/admin/auto-assign-picks/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 
 export const runtime = 'nodejs'
@@ -32,7 +31,6 @@ async function getAvailableTeams(
   leagueId: string,
   season: number
 ): Promise<string[]> {
-  // Get all teams
   const { data: allTeams } = await supabase
     .from('teams')
     .select('id')
@@ -40,7 +38,6 @@ async function getAvailableTeams(
 
   if (!allTeams) return []
 
-  // Get teams user has already picked this season
   const { data: userPicks } = await supabase
     .from('picks')
     .select('team_id')
@@ -79,10 +76,8 @@ async function getLosingTeams(
     const homeScore = game.home_score ?? 0
     const awayScore = game.away_score ?? 0
 
-    // Skip ties
     if (homeScore === awayScore) continue
 
-    // Add losing team if it's in available teams
     if (homeScore < awayScore && availableTeams.includes(game.home_team)) {
       losingTeams.push(game.home_team)
     }
@@ -119,18 +114,16 @@ async function getLowestScoringTeam(
     const homeScore = game.home_score ?? 0
     const awayScore = game.away_score ?? 0
 
-    // Calculate points based on your scoring rules
     let homePoints = 0
     let awayPoints = 0
 
     if (homeScore > awayScore) {
-      homePoints = homeScore // Win
-      awayPoints = 0 // Loss
+      homePoints = homeScore
+      awayPoints = 0
     } else if (awayScore > homeScore) {
-      awayPoints = awayScore // Win
-      homePoints = 0 // Loss
+      awayPoints = awayScore
+      homePoints = 0
     } else {
-      // Tie - half points
       homePoints = homeScore / 2
       awayPoints = awayScore / 2
     }
@@ -145,7 +138,6 @@ async function getLowestScoringTeam(
 
   if (teamScores.length === 0) return null
 
-  // Sort by points ascending, return lowest
   teamScores.sort((a, b) => a.points - b.points)
   return teamScores[0].teamId
 }
@@ -171,33 +163,26 @@ async function getGameForTeam(
 // Main POST handler
 export async function POST(req: NextRequest) {
   try {
-    // Check for API key auth (for GitHub Actions)
     const apiKey = req.headers.get('x-api-key')
     const validApiKey = process.env.ADMIN_API_KEY
     
-    // First, authenticate the request
+    // Authenticate the request
     if (apiKey && validApiKey && apiKey === validApiKey) {
-      // API key is valid - proceed
+      // API key auth - valid
     } else {
-      // Check session auth
+      // Session auth - check if user is authenticated
+      const { createClient } = await import('@/utils/supabase/server')
       const sessionClient = await createClient()
       const { data: authData } = await sessionClient.auth.getUser()
       if (!authData?.user) {
         return json({ error: 'Unauthorized' }, 401)
       }
-      // TODO: Add admin role check here if needed
     }
 
-    // Always use service role client for data operations (bypasses RLS)
+    // Create service role client (bypasses RLS)
     const supabase = createServiceClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
     const body = await req.json()
@@ -209,7 +194,7 @@ export async function POST(req: NextRequest) {
 
     console.log('[AUTO-ASSIGN] Starting:', { season, week, leagueId })
 
-    // Step 1: Check all games are FINAL
+    // Check all games are FINAL
     const { data: games, error: gamesError } = await supabase
       .from('games')
       .select('id, status')
@@ -231,7 +216,7 @@ export async function POST(req: NextRequest) {
 
     console.log('[AUTO-ASSIGN] All games FINAL:', games.length)
 
-    // Step 2: Get leagues to process
+    // Get leagues to process
     let leaguesToProcess: any[] = []
     
     if (leagueId) {
@@ -257,21 +242,20 @@ export async function POST(req: NextRequest) {
     const processed: Record<string, LeagueResult> = {}
     const errors: string[] = []
 
-    // Step 3: Process each league
+    // Process each league
     for (const league of leaguesToProcess) {
       try {
         console.log('[AUTO-ASSIGN] Processing league:', league.name)
 
-        // Check if week is in valid range (start_week to 18)
         const startWeek = league.start_week || 1
         const validWeek = week >= startWeek && week <= 18
 
         if (!validWeek) {
-          errors.push(`League ${league.name}: Week ${week} out of range (starts at week ${startWeek})`)
+          errors.push(`League ${league.name}: Week ${week} out of range`)
           continue
         }
 
-        // Get all members (using service role to bypass RLS)
+        // Get all members
         const { data: members } = await supabase
           .from('league_members')
           .select('profile_id')
@@ -283,11 +267,10 @@ export async function POST(req: NextRequest) {
 
         const assignments: AssignmentResult[] = []
 
-        // Step 4: Process each user
+        // Process each user
         for (const member of members) {
           const userId = member.profile_id
 
-          // Get profile
           const { data: profile } = await supabase
             .from('profiles')
             .select('display_name')
@@ -307,16 +290,14 @@ export async function POST(req: NextRequest) {
 
           console.log(`[AUTO-ASSIGN] ${displayName} week ${week} picks:`, weekPicks?.length || 0)
 
-          // Filter out wrinkle picks if wrinkle_id column exists
           const regularPicks = (weekPicks || []).filter((p: any) => !p.wrinkle_id)
           const picksMade = regularPicks.length
           const picksNeeded = Math.max(0, 2 - picksMade)
 
-          console.log(`[AUTO-ASSIGN] ${displayName} needs ${picksNeeded} picks (has ${picksMade} regular picks)`)
+          console.log(`[AUTO-ASSIGN] ${displayName} needs ${picksNeeded} picks`)
 
           if (picksNeeded === 0) continue
 
-          // Get available teams
           let availableTeams = await getAvailableTeams(supabase, userId, league.id, season)
           
           console.log(`[AUTO-ASSIGN] ${displayName} has ${availableTeams.length} available teams`)
@@ -328,31 +309,25 @@ export async function POST(req: NextRequest) {
 
             let teamToAssign: string | null = null
 
-            // Roll for 95% losing team / 5% lowest scorer
             const roll = Math.floor(Math.random() * 100) + 1
 
             if (roll <= 95) {
-              // Try to get a losing team
               const losingTeams = await getLosingTeams(supabase, week, season, availableTeams)
               if (losingTeams.length > 0) {
-                // Pick random losing team
                 teamToAssign = losingTeams[Math.floor(Math.random() * losingTeams.length)]
               }
             }
 
-            // If no losing team (either 5% roll or no losers available), get lowest scorer
             if (!teamToAssign) {
               teamToAssign = await getLowestScoringTeam(supabase, week, season, availableTeams)
             }
 
             if (!teamToAssign) break
 
-            // Get game for this team
             const gameId = await getGameForTeam(supabase, teamToAssign, week, season)
 
             console.log(`[AUTO-ASSIGN] Assigning team ${teamToAssign} to ${displayName}`)
 
-            // Create the pick
             const { error: pickError } = await supabase
               .from('picks')
               .insert({
@@ -366,12 +341,11 @@ export async function POST(req: NextRequest) {
               })
 
             if (pickError) {
-              console.error(`[AUTO-ASSIGN] Error assigning pick:`, pickError)
+              console.error(`[AUTO-ASSIGN] Error:`, pickError)
               errors.push(`Failed to assign pick for ${displayName}: ${pickError.message}`)
               break
             }
 
-            // Get team abbreviation for response
             const { data: team } = await supabase
               .from('teams')
               .select('abbreviation')
@@ -379,8 +353,6 @@ export async function POST(req: NextRequest) {
               .maybeSingle()
 
             teamsAssigned.push(team?.abbreviation || teamToAssign)
-
-            // Remove from available teams
             availableTeams = availableTeams.filter(t => t !== teamToAssign)
           }
 
@@ -394,7 +366,7 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        console.log('[AUTO-ASSIGN] Assignments for league:', assignments.length)
+        console.log('[AUTO-ASSIGN] Assignments:', assignments.length)
 
         processed[league.id] = {
           leagueName: league.name,
@@ -407,7 +379,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    console.log('[AUTO-ASSIGN] Complete. Processed:', Object.keys(processed).length, 'leagues')
+    console.log('[AUTO-ASSIGN] Complete')
 
     return json({
       success: true,
