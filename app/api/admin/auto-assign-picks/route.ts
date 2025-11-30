@@ -246,10 +246,10 @@ export async function POST(req: NextRequest) {
           continue
         }
 
-        // Get all members
+        // Get all members with their profile info
         const { data: members } = await supabase
           .from('league_members')
-          .select('profile_id, profiles(display_name)')
+          .select('profile_id')
           .eq('league_id', league.id)
 
         if (!members || members.length === 0) continue
@@ -259,7 +259,15 @@ export async function POST(req: NextRequest) {
         // Step 4: Process each user
         for (const member of members) {
           const userId = member.profile_id
-          const displayName = member.profiles?.display_name || 'Unknown'
+
+          // Get profile separately to avoid nested typing issues
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('display_name')
+            .eq('id', userId)
+            .maybeSingle()
+
+          const displayName = profile?.display_name || 'Unknown'
 
           // Count picks made this week (exclude wrinkles)
           const { data: weekPicks } = await supabase
