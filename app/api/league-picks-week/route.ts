@@ -14,6 +14,8 @@ function j(data: any, init?: number | ResponseInit) {
 }
 
 export async function GET(req: NextRequest) {
+  console.log('[LEAGUE-PICKS-WEEK] API VERSION 2024-12-01-v2')
+  
   const supabase = await createClient()
   const { data: auth, error: authErr } = await supabase.auth.getUser()
   if (authErr || !auth?.user) return j({ error: 'unauthenticated' }, 401)
@@ -24,6 +26,8 @@ export async function GET(req: NextRequest) {
   const week = Number(searchParams.get('week') || '0')
 
   if (!leagueId || !season || !week) return j({ error: 'leagueId, season, week required' }, 400)
+
+  console.log('[LEAGUE-PICKS-WEEK] Query params:', { leagueId, season, week })
 
   // Get all picks for this league/season/week with game status
   const { data: picks, error: picksErr } = await supabase
@@ -57,6 +61,8 @@ export async function GET(req: NextRequest) {
 
   if (picksErr) return j({ error: picksErr.message }, 400)
 
+  console.log('[LEAGUE-PICKS-WEEK] Picks found:', picks?.length || 0)
+
   // Filter to only locked games (LIVE or FINAL) and calculate points
   const rows = (picks || [])
     .filter((p: any) => {
@@ -72,6 +78,12 @@ export async function GET(req: NextRequest) {
       const game = p.games
       const status = (game.status || '').toUpperCase()
       const profile = p.profiles || {}
+      
+      console.log('[LEAGUE-PICKS-WEEK] Processing pick:', { 
+        profile_id: p.profile_id, 
+        team_id: p.team_id, 
+        auto_assigned: p.auto_assigned 
+      })
       
       // Calculate points
       let points: number | null = null
@@ -108,9 +120,11 @@ export async function GET(req: NextRequest) {
         status: status === 'FINAL' ? 'FINAL' : 'LIVE',
         points,
         winless_double: p.winless_double || false,
-        auto_assigned: p.auto_assigned || false,
+        auto_assigned: p.auto_assigned === true,
       }
     })
+
+  console.log('[LEAGUE-PICKS-WEEK] Returning rows:', rows.length)
 
   return j({ rows }, 200)
 }
