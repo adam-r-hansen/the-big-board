@@ -173,7 +173,7 @@ export async function POST(req: NextRequest) {
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       )
     } else {
-      // Session auth - use admin's session (enables picks_admin_manage policy)
+      // Session auth - use admin's session
       supabase = await createClient()
       const { data: authData } = await supabase.auth.getUser()
       if (!authData?.user) {
@@ -276,10 +276,10 @@ export async function POST(req: NextRequest) {
 
           const displayName = profile?.display_name || 'Unknown'
 
-          // Count picks made this week
+          // Count picks made this week (just count all picks for this week)
           const { data: weekPicks, error: picksError } = await supabase
             .from('picks')
-            .select('id, team_id, wrinkle_id')
+            .select('id, team_id')
             .eq('league_id', league.id)
             .eq('profile_id', memberId)
             .eq('season', season)
@@ -293,8 +293,7 @@ export async function POST(req: NextRequest) {
 
           console.log(`[AUTO-ASSIGN] ${displayName} week ${week} picks:`, weekPicks?.length || 0)
 
-          const regularPicks = (weekPicks || []).filter((p: any) => !p.wrinkle_id)
-          const picksMade = regularPicks.length
+          const picksMade = weekPicks?.length || 0
           const picksNeeded = Math.max(0, 2 - picksMade)
 
           console.log(`[AUTO-ASSIGN] ${displayName} needs ${picksNeeded} picks`)
