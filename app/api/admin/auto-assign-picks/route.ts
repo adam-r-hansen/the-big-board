@@ -276,7 +276,7 @@ export async function POST(req: NextRequest) {
 
           const displayName = profile?.display_name || 'Unknown'
 
-          // Count picks made this week (just count all picks for this week)
+          // Count picks made this week
           const { data: weekPicks, error: picksError } = await supabase
             .from('picks')
             .select('id, team_id')
@@ -328,7 +328,14 @@ export async function POST(req: NextRequest) {
 
             const gameId = await getGameForTeam(supabase, teamToAssign, week, season)
 
-            console.log(`[AUTO-ASSIGN] Assigning team ${teamToAssign} to ${displayName}`)
+            // CRITICAL: Skip if no game found
+            if (!gameId) {
+              console.error(`[AUTO-ASSIGN] No game found for team ${teamToAssign} in week ${week}`)
+              errors.push(`No game found for team in week ${week} - skipping`)
+              continue
+            }
+
+            console.log(`[AUTO-ASSIGN] Assigning team ${teamToAssign} (game ${gameId}) to ${displayName}`)
 
             const { error: pickError } = await supabase
               .from('picks')
