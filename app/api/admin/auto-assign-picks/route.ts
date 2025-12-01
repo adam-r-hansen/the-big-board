@@ -1,6 +1,6 @@
 // app/api/admin/auto-assign-picks/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient as createServiceClient } from '@supabase/supabase-js'
+import { createClient } from '@/utils/supabase/server'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -25,7 +25,6 @@ function json(data: any, status = 200) {
   })
 }
 
-// Helper functions remain the same...
 async function getAvailableTeams(
   supabase: any,
   userId: string,
@@ -163,37 +162,25 @@ export async function POST(req: NextRequest) {
     const apiKey = req.headers.get('x-api-key')
     const validApiKey = process.env.ADMIN_API_KEY
     
-    // Authenticate the request
+    let supabase
+    let userId: string | null = null
+    
     if (apiKey && validApiKey && apiKey === validApiKey) {
-      // API key auth - valid
+      // API key auth - use service role
+      const { createClient: createServiceClient } = await import('@supabase/supabase-js')
+      supabase = createServiceClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      )
     } else {
-      // Session auth
-      const { createClient } = await import('@/utils/supabase/server')
-      const sessionClient = await createClient()
-      const { data: authData } = await sessionClient.auth.getUser()
+      // Session auth - use admin's session (enables picks_admin_manage policy)
+      supabase = await createClient()
+      const { data: authData } = await supabase.auth.getUser()
       if (!authData?.user) {
         return json({ error: 'Unauthorized' }, 401)
       }
+      userId = authData.user.id
     }
-
-    // Create service role client with explicit options to bypass RLS
-    const supabase = createServiceClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      {
-        db: { schema: 'public' },
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-          detectSessionInUrl: false
-        },
-        global: {
-          headers: {
-            'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY!
-          }
-        }
-      }
-    )
 
     const body = await req.json()
     const { season, week, leagueId } = body
@@ -202,7 +189,7 @@ export async function POST(req: NextRequest) {
       return json({ error: 'season and week are required' }, 400)
     }
 
-    console.log('[AUTO-ASSIGN] Starting:', { season, week, leagueId })
+    console.log('[AUTO-ASSIGN] Starting:', { season, week, leagueId, userId })
 
     // Check all games are FINAL
     const { data: games, error: gamesError } = await supabase
@@ -279,24 +266,30 @@ export async function POST(req: NextRequest) {
 
         // Process each user
         for (const member of members) {
-          const userId = member.profile_id
+          const memberId = member.profile_id
 
           const { data: profile } = await supabase
             .from('profiles')
             .select('display_name')
-            .eq('id', userId)
+            .eq('id', memberId)
             .maybeSingle()
 
           const displayName = profile?.display_name || 'Unknown'
 
           // Count picks made this week
-          const { data: weekPicks } = await supabase
+          const { data: weekPicks, error: picksError } = await supabase
             .from('picks')
             .select('id, team_id, wrinkle_id')
             .eq('league_id', league.id)
-            .eq('profile_id', userId)
+            .eq('profile_id', memberId)
             .eq('season', season)
             .eq('week', week)
+
+          if (picksError) {
+            console.error(`[AUTO-ASSIGN] Error fetching picks for ${displayName}:`, picksError)
+            errors.push(`Failed to fetch picks for ${displayName}: ${picksError.message}`)
+            continue
+          }
 
           console.log(`[AUTO-ASSIGN] ${displayName} week ${week} picks:`, weekPicks?.length || 0)
 
@@ -308,7 +301,7 @@ export async function POST(req: NextRequest) {
 
           if (picksNeeded === 0) continue
 
-          let availableTeams = await getAvailableTeams(supabase, userId, league.id, season)
+          let availableTeams = await getAvailableTeams(supabase, memberId, league.id, season)
           
           console.log(`[AUTO-ASSIGN] ${displayName} has ${availableTeams.length} available teams`)
 
@@ -342,7 +335,7 @@ export async function POST(req: NextRequest) {
               .from('picks')
               .insert({
                 league_id: league.id,
-                profile_id: userId,
+                profile_id: memberId,
                 season,
                 week,
                 team_id: teamToAssign,
@@ -368,7 +361,7 @@ export async function POST(req: NextRequest) {
 
           if (teamsAssigned.length > 0) {
             assignments.push({
-              userId,
+              userId: memberId,
               displayName,
               picksAssigned: teamsAssigned.length,
               teams: teamsAssigned
