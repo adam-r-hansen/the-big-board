@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
       team_id,
       game_id,
       winless_double,
+      auto_assigned,
       profiles (
         id,
         display_name,
@@ -107,6 +108,7 @@ export async function GET(req: NextRequest) {
         status: status === 'FINAL' ? 'FINAL' : 'LIVE',
         points,
         winless_double: p.winless_double || false,
+        auto_assigned: p.auto_assigned || false,
       }
     })
 
