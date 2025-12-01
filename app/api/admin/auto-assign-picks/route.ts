@@ -146,7 +146,7 @@ async function getGameForTeam(
   week: number,
   season: number
 ): Promise<string | null> {
-  const { data: game } = await supabase
+  const { data: game, error } = await supabase
     .from('games')
     .select('id')
     .eq('season', season)
@@ -154,7 +154,24 @@ async function getGameForTeam(
     .or(`home_team.eq.${teamId},away_team.eq.${teamId}`)
     .maybeSingle()
 
-  return game?.id || null
+  if (error) {
+    console.error('[AUTO-ASSIGN] Error finding game:', error)
+    return null
+  }
+
+  if (!game || !game.id) {
+    console.error(`[AUTO-ASSIGN] No game found for team ${teamId} in week ${week} season ${season}`)
+    return null
+  }
+
+  // Validate the game_id is a valid UUID
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(game.id)) {
+    console.error(`[AUTO-ASSIGN] Invalid game_id format: ${game.id}`)
+    return null
+  }
+
+  return game.id
 }
 
 export async function POST(req: NextRequest) {
@@ -324,18 +341,37 @@ export async function POST(req: NextRequest) {
               teamToAssign = await getLowestScoringTeam(supabase, week, season, availableTeams)
             }
 
-            if (!teamToAssign) break
+            if (!teamToAssign) {
+              console.error(`[AUTO-ASSIGN] Could not find team to assign for ${displayName}`)
+              break
+            }
 
             const gameId = await getGameForTeam(supabase, teamToAssign, week, season)
 
-            // CRITICAL: Skip if no game found
+            // CRITICAL: Skip if no valid game found
             if (!gameId) {
-              console.error(`[AUTO-ASSIGN] No game found for team ${teamToAssign} in week ${week}`)
-              errors.push(`No game found for team in week ${week} - skipping`)
+              console.error(`[AUTO-ASSIGN] No valid game found for team ${teamToAssign} in week ${week}`)
+              errors.push(`No game found for team in week ${week} - skipping ${displayName}`)
+              // Remove this team from available so we don't try it again
+              availableTeams = availableTeams.filter(t => t !== teamToAssign)
               continue
             }
 
             console.log(`[AUTO-ASSIGN] Assigning team ${teamToAssign} (game ${gameId}) to ${displayName}`)
+
+            // Verify the game exists before inserting
+            const { data: verifyGame } = await supabase
+              .from('games')
+              .select('id')
+              .eq('id', gameId)
+              .maybeSingle()
+
+            if (!verifyGame) {
+              console.error(`[AUTO-ASSIGN] Game ${gameId} does not exist! Skipping.`)
+              errors.push(`Game verification failed for ${displayName}`)
+              availableTeams = availableTeams.filter(t => t !== teamToAssign)
+              continue
+            }
 
             const { error: pickError } = await supabase
               .from('picks')
