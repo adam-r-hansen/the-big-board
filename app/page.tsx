@@ -42,7 +42,7 @@ type MemberLockedPicks = {
   display_name?: string | null;
   preferred_color?: string | null;
   points_week?: number | null;
-  picks?: Array<{ team_id: string; status?: string; points?: number | null; winless_double?: boolean }>;
+  picks?: Array<{ team_id: string; status?: string; points?: number | null; winless_double?: boolean; auto_assigned?: boolean }>;
 };
 type PlayerStats = {
   totalPoints: number;
@@ -193,7 +193,7 @@ function groupLockedFromRows(raw: any): MemberLockedPicks[] {
 
     const winlessDouble = r.winless_double ?? false;
     
-    const preferredColor = r.preferred_color || r.preferredColor || null;
+    const autoAssigned = r.auto_assigned ?? false;    const preferredColor = r.preferred_color || r.preferredColor || null;
 
     let entry = byMember.get(profile_id);
     if (!entry) {
@@ -208,7 +208,7 @@ function groupLockedFromRows(raw: any): MemberLockedPicks[] {
     }
 
     if (team_id) {
-      entry.picks!.push({ team_id, status, points: rowPoints, winless_double: winlessDouble });
+      entry.picks!.push({ team_id, status, points: rowPoints, winless_double: winlessDouble, auto_assigned: autoAssigned });
     }
 
     if (typeof rowPoints === "number") {
@@ -691,13 +691,21 @@ function HomeInner() {
                             return (
                               <div key={`${m.profile_id}-${idx}`} className="flex flex-col gap-1">
                                 {team && (
-                                  <TeamCard
-                                    team={team}
-                                    variant="solid"
-                                    displayText="abbreviation"
-                                    disabled
-                                    className="w-full"
-                                  />
+                                {team && (
+                                  <div className="relative">
+                                    <TeamCard
+                                      team={team}
+                                      variant="solid"
+                                      displayText="abbreviation"
+                                      disabled
+                                      className="w-full"
+                                    />
+                                    {pk.auto_assigned && (
+                                      <div className="absolute top-1 right-1 bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-200 rounded uppercase tracking-wide">
+                                        AUTO
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
                                 <div className="flex items-center justify-center gap-1">
                                   {typeof pk.points === "number" && (
