@@ -691,7 +691,6 @@ function HomeInner() {
                             return (
                               <div key={`${m.profile_id}-${idx}`} className="flex flex-col gap-1">
                                 {team && (
-                                {team && (
                                   <div className="relative">
                                     <TeamCard
                                       team={team}
