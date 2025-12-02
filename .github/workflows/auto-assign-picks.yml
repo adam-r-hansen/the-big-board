@@ -5,7 +5,6 @@ on:
     # Runs at 12:01 AM Pacific (8:01 AM UTC) every Tuesday
     - cron: '1 8 * * 2'
   
-  # Allow manual triggering for testing
   workflow_dispatch:
     inputs:
       week:
@@ -17,7 +16,6 @@ on:
         required: false
         type: number
   
-  # Also trigger on pushes to dev (for testing)
   push:
     branches:
       - dev
@@ -27,41 +25,30 @@ jobs:
   auto-assign:
     runs-on: ubuntu-latest
     
-    # Only run on schedule or manual trigger, not on every push
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     
     steps:
       - name: Calculate week and season
         id: calc
         run: |
-          # Get current date in Pacific timezone
           CURRENT_DATE=$(TZ='America/Los_Angeles' date '+%Y-%m-%d')
           YEAR=$(TZ='America/Los_Angeles' date '+%Y')
           
-          # Calculate NFL week using Tuesday-to-Monday logic
-          # September 1st of current year
           SEPT_1="${YEAR}-09-01"
           SEPT_1_TS=$(date -d "$SEPT_1" +%s)
-          SEPT_1_DOW=$(date -d "$SEPT_1" +%u) # 1=Mon, 7=Sun
+          SEPT_1_DOW=$(date -d "$SEPT_1" +%u)
           
-          # Days to next Tuesday from Sept 1
           OFFSET=$((9 - SEPT_1_DOW))
           OFFSET=$((OFFSET % 7))
           
-          # First Tuesday timestamp
           FIRST_TUE_TS=$((SEPT_1_TS + OFFSET * 86400))
-          
-          # Current timestamp
           CURRENT_TS=$(date -d "$CURRENT_DATE" +%s)
           
-          # Weeks since first Tuesday
           DAYS_DIFF=$(((CURRENT_TS - FIRST_TUE_TS) / 86400))
           CURRENT_WEEK=$((DAYS_DIFF / 7 + 1))
           
-          # We want the week that just ended (previous week)
           WEEK=$((CURRENT_WEEK - 1))
           
-          # Use manual inputs if provided
           if [ -n "${{ github.event.inputs.week }}" ]; then
             WEEK="${{ github.event.inputs.week }}"
           fi
@@ -84,7 +71,6 @@ jobs:
           
           echo "Response: $response"
           
-          # Check if response contains "success": true
           if echo "$response" | grep -q '"success":true'; then
             echo "✅ Auto-assign completed successfully"
             exit 0
