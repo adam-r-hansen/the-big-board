@@ -1,0 +1,95 @@
+name: Auto-Assign Picks
+
+on:
+  schedule:
+    # Runs at 12:01 AM Pacific (8:01 AM UTC) every Tuesday
+    # Note: GitHub Actions uses UTC, so we convert PST/PDT to UTC
+    # 12:01 AM PST = 8:01 AM UTC (winter)
+    # 12:01 AM PDT = 7:01 AM UTC (summer)
+    # Using 8:01 AM UTC to cover PST schedule
+    - cron: '1 8 * * 2'
+  
+  # Allow manual triggering for testing
+  workflow_dispatch:
+    inputs:
+      week:
+        description: 'Week number (optional, defaults to previous week)'
+        required: false
+        type: number
+      season:
+        description: 'Season year (optional, defaults to current year)'
+        required: false
+        type: number
+
+jobs:
+  auto-assign:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Calculate week and season
+        id: calc
+        run: |
+          # Get current date in Pacific timezone
+          CURRENT_DATE=$(TZ='America/Los_Angeles' date '+%Y-%m-%d')
+          YEAR=$(TZ='America/Los_Angeles' date '+%Y')
+          
+          # Calculate NFL week using Tuesday-to-Monday logic
+          # September 1st of current year
+          SEPT_1="${YEAR}-09-01"
+          SEPT_1_TS=$(date -d "$SEPT_1" +%s)
+          SEPT_1_DOW=$(date -d "$SEPT_1" +%u) # 1=Mon, 7=Sun
+          
+          # Days to next Tuesday from Sept 1
+          OFFSET=$((9 - SEPT_1_DOW))
+          OFFSET=$((OFFSET % 7))
+          
+          # First Tuesday timestamp
+          FIRST_TUE_TS=$((SEPT_1_TS + OFFSET * 86400))
+          
+          # Current timestamp
+          CURRENT_TS=$(date -d "$CURRENT_DATE" +%s)
+          
+          # Weeks since first Tuesday
+          DAYS_DIFF=$(((CURRENT_TS - FIRST_TUE_TS) / 86400))
+          CURRENT_WEEK=$((DAYS_DIFF / 7 + 1))
+          
+          # We want the week that just ended (previous week)
+          WEEK=$((CURRENT_WEEK - 1))
+          
+          # Use manual inputs if provided
+          if [ -n "${{ github.event.inputs.week }}" ]; then
+            WEEK="${{ github.event.inputs.week }}"
+          fi
+          
+          if [ -n "${{ github.event.inputs.season }}" ]; then
+            YEAR="${{ github.event.inputs.season }}"
+          fi
+          
+          echo "season=${YEAR}" >> $GITHUB_OUTPUT
+          echo "week=${WEEK}" >> $GITHUB_OUTPUT
+          echo "Running auto-assign for Season ${YEAR}, Week ${WEEK}"
+
+      - name: Auto-assign picks
+        run: |
+          response=$(curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: ${{ secrets.ADMIN_API_KEY }}" \
+            -d "{\"season\": ${{ steps.calc.outputs.season }}, \"week\": ${{ steps.calc.outputs.week }}}" \
+            https://the-big-board-seven.vercel.app/api/admin/auto-assign-picks)
+          
+          echo "Response: $response"
+          
+          # Check if response contains "success": true
+          if echo "$response" | grep -q '"success":true'; then
+            echo "✅ Auto-assign completed successfully"
+            exit 0
+          else
+            echo "❌ Auto-assign failed"
+            echo "$response"
+            exit 1
+          fi
+
+      - name: Report results
+        if: always()
+        run: |
+          echo "Auto-assign job completed for Season ${{ steps.calc.outputs.season }}, Week ${{ steps.calc.outputs.week }}"
