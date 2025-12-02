@@ -3,10 +3,6 @@ name: Auto-Assign Picks
 on:
   schedule:
     # Runs at 12:01 AM Pacific (8:01 AM UTC) every Tuesday
-    # Note: GitHub Actions uses UTC, so we convert PST/PDT to UTC
-    # 12:01 AM PST = 8:01 AM UTC (winter)
-    # 12:01 AM PDT = 7:01 AM UTC (summer)
-    # Using 8:01 AM UTC to cover PST schedule
     - cron: '1 8 * * 2'
   
   # Allow manual triggering for testing
@@ -20,10 +16,19 @@ on:
         description: 'Season year (optional, defaults to current year)'
         required: false
         type: number
+  
+  # Also trigger on pushes to dev (for testing)
+  push:
+    branches:
+      - dev
+      - main
 
 jobs:
   auto-assign:
     runs-on: ubuntu-latest
+    
+    # Only run on schedule or manual trigger, not on every push
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     
     steps:
       - name: Calculate week and season
