@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import SpecialPicksCard from '@/components/SpecialPicksCard'
+import OOFPicksCard from '@/components/OOFPicksCard'
 import TeamCard from '@/components/TeamCard'
 import { getTeamCardVariant } from '@/lib/teamCardHelpers'
 
@@ -88,6 +89,7 @@ export default function PicksPage() {
   const [seasonPicks, setSeasonPicks] = useState<Pick[]>([])
   const [invite, setInvite] = useState('')
   const [joining, setJoining] = useState(false)
+  const [hasOOFWrinkle, setHasOOFWrinkle] = useState(false)
 
   // Load leagues + team map
   async function loadLeagues() {
@@ -128,6 +130,21 @@ export default function PicksPage() {
       }
     } catch {}
   }, [season])
+
+  // Check for OOF wrinkle
+  useEffect(() => {
+    if (!leagueId || !season || !week) return
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/wrinkles/active?leagueId=${leagueId}&season=${season}&week=${week}`, { cache: 'no-store' })
+        const data = await res.json().catch(() => ({}))
+        const wrinkles = Array.isArray(data?.wrinkles) ? data.wrinkles : []
+        setHasOOFWrinkle(wrinkles.some((w: any) => w.kind === 'bonus_game_oof'))
+      } catch {
+        setHasOOFWrinkle(false)
+      }
+    })()
+  }, [leagueId, season, week])
 
   const singleLeague = leagues.length === 1
   const noLeagues = leagues.length === 0
@@ -408,7 +425,22 @@ export default function PicksPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* LEFT 2/3 */}
           <div className="lg:col-span-8 grid gap-6">
-            <SpecialPicksCard leagueId={leagueId} season={season} week={week} teams={teamIndex as unknown as Record<string, any>} />
+            {/* Show OOF picks card if OOF wrinkle exists, otherwise show regular special picks */}
+            {hasOOFWrinkle ? (
+              <OOFPicksCard 
+                leagueId={leagueId} 
+                season={season} 
+                week={week} 
+                teams={teamMap as unknown as Record<string, any>} 
+              />
+            ) : (
+              <SpecialPicksCard 
+                leagueId={leagueId} 
+                season={season} 
+                week={week} 
+                teams={teamIndex as unknown as Record<string, any>} 
+              />
+            )}
 
             <SectionCard title={`Week ${week} — ${picksLeft} of 2 picks left`} right={<span className="text-xs text-neutral-500">{msg}</span>}>
               {loading && <div className="text-sm text-neutral-500">Loading…</div>}
