@@ -1,5 +1,4 @@
 'use client'
-
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
@@ -46,25 +45,24 @@ export default function AdminPage() {
   const [busyCreate, setBusyCreate] = useState(false)
   const [joinInput, setJoinInput] = useState('')
   const [joinMsg, setJoinMsg] = useState('')
-  const [busyJoin, setBusyJoin] = useState(false)
 
-  // Wrinkles state
-  const [wrinkleWeek, setWrinkleWeek] = useState(1)
+  // Wrinkles
   const [wrinkleSeason, setWrinkleSeason] = useState(new Date().getFullYear())
+  const [wrinkleWeek, setWrinkleWeek] = useState(1)
   const [wrinkleKind, setWrinkleKind] = useState<WrinkleKind>('bonus_game')
   const [wrinkleName, setWrinkleName] = useState('Bonus Pick')
   const [wrinkleStatus, setWrinkleStatus] = useState<'active' | 'paused'>('active')
   const [wrinkleGameId, setWrinkleGameId] = useState('')
   const [wrinkleSpread, setWrinkleSpread] = useState('')
+  const [wrinkleMsg, setWrinkleMsg] = useState('')
+  const [creatingWrinkle, setCreatingWrinkle] = useState(false)
+  const [wrinkles, setWrinkles] = useState<Wrinkle[]>([])
   const [games, setGames] = useState<Game[]>([])
   const [teams, setTeams] = useState<Record<string, Team>>({})
-  const [wrinkles, setWrinkles] = useState<Wrinkle[]>([])
-  const [creatingWrinkle, setCreatingWrinkle] = useState(false)
-  const [wrinkleMsg, setWrinkleMsg] = useState('')
 
-  // Team Records state
-  const [recordsWeek, setRecordsWeek] = useState(1)
+  // Team Records
   const [recordsSeason, setRecordsSeason] = useState(new Date().getFullYear())
+  const [recordsWeek, setRecordsWeek] = useState(1)
   const [refreshingRecords, setRefreshingRecords] = useState(false)
   const [recordsMsg, setRecordsMsg] = useState('')
 
@@ -86,28 +84,25 @@ export default function AdminPage() {
     }
   }, [wrinkleSeason, wrinkleWeek])
 
-  // Load wrinkles when league/season/week changes
+  // Load wrinkles when week changes
   useEffect(() => {
     if (selectedLeagueId && wrinkleSeason && wrinkleWeek) {
       loadWrinkles()
     }
   }, [selectedLeagueId, wrinkleSeason, wrinkleWeek])
 
-  // Update wrinkle name when kind changes
-  useEffect(() => {
-    const selected = WRINKLE_TYPES.find(t => t.value === wrinkleKind)
-    if (selected) setWrinkleName(selected.label)
-  }, [wrinkleKind])
-
   async function loadLeagues() {
     try {
       const res = await fetch('/api/my-leagues', { cache: 'no-store' })
       const j = await res.json()
-      if (res.ok) {
-        setLeagues(j.leagues || [])
+      setLeagues(j.leagues || [])
+      if (j.leagues?.[0]) {
+        setSelectedLeagueId(j.leagues[0].id)
+        setSeason(j.leagues[0].season)
+        setWrinkleSeason(j.leagues[0].season)
       }
-    } catch (err: any) {
-      console.error('Failed to load leagues:', err)
+    } catch (e: any) {
+      setMsg(e?.message || 'Failed to load leagues')
     }
   }
 
@@ -123,90 +118,99 @@ export default function AdminPage() {
     try {
       const res = await fetch(`/api/games-for-week?season=${wrinkleSeason}&week=${wrinkleWeek}`)
       const j = await res.json()
-      const gs: any[] = j.games ?? []
-      setGames(gs.map((x) => ({
-        id: x.id,
-        game_utc: x.game_utc || x.start_time,
-        home: { id: x.home?.id || x.home_team, abbr: x.home?.abbreviation },
-        away: { id: x.away?.id || x.away_team, abbr: x.away?.abbreviation },
+      setGames((j.games || []).map((g: any) => ({
+        id: g.id,
+        game_utc: g.game_utc || g.start_time,
+        home: { id: g.home?.id || g.home_team, abbr: g.home?.abbreviation },
+        away: { id: g.away?.id || g.away_team, abbr: g.away?.abbreviation },
       })))
     } catch {}
   }
 
   async function loadWrinkles() {
     try {
-      const res = await fetch(`/api/admin/wrinkles?leagueId=${selectedLeagueId}&season=${wrinkleSeason}&week=${wrinkleWeek}`)
+      const res = await fetch(`/api/wrinkles/active?leagueId=${selectedLeagueId}&season=${wrinkleSeason}&week=${wrinkleWeek}`)
       const j = await res.json()
       setWrinkles(j.wrinkles || [])
     } catch {}
   }
 
-  async function createLeague(e: React.FormEvent) {
-    e.preventDefault()
-    setMsg('')
+  async function createLeague() {
+    if (!name.trim()) {
+      setMsg('Please enter a league name')
+      return
+    }
+
     setBusyCreate(true)
+    setMsg('')
+
     try {
       const res = await fetch('/api/leagues', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name, season }),
       })
+
       const j = await res.json()
-      if (!res.ok) throw new Error(j?.error || 'Create failed')
-      setMsg('League created! ✅')
+      if (!res.ok) throw new Error(j?.error || 'Failed to create league')
+
+      setMsg('✅ League created!')
       setName('')
       await loadLeagues()
+      setTimeout(() => setMsg(''), 3000)
     } catch (err: any) {
-      setMsg(err?.message || 'Create failed')
+      setMsg(`❌ ${err?.message || 'Failed to create league'}`)
     } finally {
       setBusyCreate(false)
     }
   }
 
-  async function joinExisting(e: React.FormEvent) {
-    e.preventDefault()
+  async function joinLeague() {
+    if (!joinInput.trim()) {
+      setJoinMsg('Please enter a league ID or invite link')
+      return
+    }
+
     setJoinMsg('')
-    setBusyJoin(true)
+
     try {
+      // Extract league ID from input (supports full URL or just ID)
       let leagueId = joinInput.trim()
-      if (joinInput.includes('/join?leagueId=')) {
+      try {
         const url = new URL(joinInput)
-        leagueId = url.searchParams.get('leagueId') || ''
-      }
-      if (!leagueId) throw new Error('Invalid league ID or link')
+        const id = url.searchParams.get('leagueId')
+        if (id) leagueId = id
+      } catch {}
 
       const res = await fetch('/api/leagues/join', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ leagueId }),
       })
+
       const j = await res.json()
-      if (!res.ok) throw new Error(j?.error || 'Join failed')
-      setJoinMsg(j.already ? 'You are already a member. ✅' : 'Joined! ✅')
+      if (!res.ok) throw new Error(j?.error || 'Failed to join league')
+
+      setJoinMsg('✅ Joined league!')
       setJoinInput('')
       await loadLeagues()
+      setTimeout(() => setJoinMsg(''), 3000)
     } catch (err: any) {
-      setJoinMsg(err?.message || 'Join failed')
-    } finally {
-      setBusyJoin(false)
+      setJoinMsg(`❌ ${err?.message || 'Failed to join league'}`)
     }
   }
 
-  function inviteLink(id: string) {
-    if (typeof window === 'undefined') return ''
-    return `${window.location.origin}/join?leagueId=${id}`
-  }
+  // OOF wrinkles don't need manual game selection
+  const isOOF = wrinkleKind === 'bonus_game_oof'
+  const needsGame = (wrinkleKind === 'bonus_game' || wrinkleKind === 'bonus_game_ats') && !isOOF
+  const needsSpread = wrinkleKind === 'bonus_game_ats'
 
-  async function copyLink(id: string) {
-    try {
-      await navigator.clipboard.writeText(inviteLink(id))
-      setMsg('Invite link copied!')
-      setTimeout(() => setMsg(''), 1500)
-    } catch {
-      setMsg('Copy failed')
-      setTimeout(() => setMsg(''), 2000)
-    }
-  }
+  const gameOptions = games.map(g => {
+    const home = teams[g.home.id]
+    const away = teams[g.away.id]
+    const label = `${away?.abbreviation || g.away.abbr || '?'} @ ${home?.abbreviation || g.home.abbr || '?'} • ${new Date(g.game_utc).toLocaleString()}`
+    return { value: g.id, label }
+  })
 
   async function createWrinkle() {
     if (!selectedLeagueId) {
@@ -218,9 +222,6 @@ export default function AdminPage() {
     setCreatingWrinkle(true)
 
     try {
-      const needsGame = ['bonus_game', 'bonus_game_ats', 'bonus_game_oof'].includes(wrinkleKind)
-      const needsSpread = wrinkleKind === 'bonus_game_ats'
-
       if (needsGame && !wrinkleGameId) {
         throw new Error('Please select a game')
       }
@@ -238,7 +239,7 @@ export default function AdminPage() {
           name: wrinkleName,
           status: wrinkleStatus,
           kind: wrinkleKind,
-          extraPicks: needsGame ? 1 : 0,
+          extraPicks: (needsGame || isOOF) ? 1 : 0,
           autoHydrate: wrinkleKind === 'winless_double',
         }),
       })
@@ -249,8 +250,23 @@ export default function AdminPage() {
       const wrinkleId = j?.wrinkle?.id || j?.id
       if (!wrinkleId) throw new Error('No wrinkle ID returned')
 
-      // Attach game if needed
-      if (needsGame && wrinkleGameId) {
+      // Handle OOF auto-hydration
+      if (isOOF) {
+        const oofRes = await fetch(`/api/admin/wrinkles/${wrinkleId}/hydrate-oof`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+        })
+
+        if (!oofRes.ok) {
+          const oofData = await oofRes.json()
+          throw new Error(oofData?.error || 'Failed to auto-populate OOF games')
+        }
+
+        const oofData = await oofRes.json()
+        setWrinkleMsg(`✅ Created with ${oofData?.qualifying_games || 0} qualifying games (using Week ${oofData?.records_week || wrinkleWeek - 1} records)`)
+      }
+      // Attach game for regular bonus picks
+      else if (needsGame && wrinkleGameId) {
         const payload: any = { gameIds: [wrinkleGameId] }
         if (needsSpread) payload.spreads = { [wrinkleGameId]: parseFloat(wrinkleSpread) }
 
@@ -264,13 +280,16 @@ export default function AdminPage() {
           const hj = await hRes.json()
           throw new Error(hj?.error || 'Failed to attach game')
         }
+        
+        setWrinkleMsg('✅ Wrinkle created!')
+      } else {
+        setWrinkleMsg('✅ Wrinkle created!')
       }
 
-      setWrinkleMsg('✅ Wrinkle created!')
       setWrinkleGameId('')
       setWrinkleSpread('')
       await loadWrinkles()
-      setTimeout(() => setWrinkleMsg(''), 3000)
+      setTimeout(() => setWrinkleMsg(''), 5000)
     } catch (err: any) {
       setWrinkleMsg(`❌ ${err?.message || 'Failed to create wrinkle'}`)
     } finally {
@@ -283,25 +302,25 @@ export default function AdminPage() {
     setRecordsMsg('')
 
     try {
-      const res = await fetch('/api/team-records/calculate', {
+      const res = await fetch('/api/admin/update-team-records', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ season: recordsSeason, week: recordsWeek }),
       })
 
       const j = await res.json()
-      if (!res.ok) throw new Error(j?.error || 'Failed to refresh team records')
+      if (!res.ok) throw new Error(j?.error || 'Failed to update records')
 
-      setRecordsMsg(`✅ Team records calculated for Week ${recordsWeek}`)
-      setTimeout(() => setRecordsMsg(''), 3000)
+      setRecordsMsg(`✅ Updated ${j.teams || 0} teams through Week ${j.week}`)
+      setTimeout(() => setRecordsMsg(''), 5000)
     } catch (err: any) {
-      setRecordsMsg(`❌ ${err?.message || 'Failed to refresh team records'}`)
+      setRecordsMsg(`❌ ${err?.message || 'Failed to update records'}`)
     } finally {
       setRefreshingRecords(false)
     }
   }
 
-  async function runAutoAssignPicks() {
+  async function autoAssignPicks() {
     if (!selectedLeagueId) {
       setAutoAssignMsg('Please select a league first')
       return
@@ -314,28 +333,17 @@ export default function AdminPage() {
       const res = await fetch('/api/admin/auto-assign-picks', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ 
-          season: autoAssignSeason, 
+        body: JSON.stringify({
+          leagueId: selectedLeagueId,
+          season: autoAssignSeason,
           week: autoAssignWeek,
-          leagueId: selectedLeagueId
         }),
       })
 
       const j = await res.json()
       if (!res.ok) throw new Error(j?.error || 'Failed to auto-assign picks')
 
-      // Build success message
-      const processed = j.processed || {}
-      const leagueResult = processed[selectedLeagueId]
-      
-      if (!leagueResult || leagueResult.assignments.length === 0) {
-        setAutoAssignMsg('✅ No picks needed - all users have 2 picks for this week')
-      } else {
-        const totalAssigned = leagueResult.assignments.reduce((sum: number, a: any) => sum + a.picksAssigned, 0)
-        const userCount = leagueResult.assignments.length
-        setAutoAssignMsg(`✅ Assigned ${totalAssigned} pick(s) to ${userCount} user(s) for Week ${autoAssignWeek}`)
-      }
-
+      setAutoAssignMsg(`✅ ${j.message || 'Picks assigned'}`)
       setTimeout(() => setAutoAssignMsg(''), 5000)
     } catch (err: any) {
       setAutoAssignMsg(`❌ ${err?.message || 'Failed to auto-assign picks'}`)
@@ -344,256 +352,318 @@ export default function AdminPage() {
     }
   }
 
-  const selectedLeague = leagues.find(l => l.id === selectedLeagueId)
-  const needsGame = ['bonus_game', 'bonus_game_ats', 'bonus_game_oof'].includes(wrinkleKind)
-  const needsSpread = wrinkleKind === 'bonus_game_ats'
-
-  const gameOptions = games.map(g => {
-    const h = teams[g.home.id]
-    const a = teams[g.away.id]
-    const hAbbr = h?.abbreviation || g.home.abbr || 'H'
-    const aAbbr = a?.abbreviation || g.away.abbr || 'A'
-    return {
-      value: g.id,
-      label: `${aAbbr} @ ${hAbbr} • ${new Date(g.game_utc).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
-    }
-  })
-
   return (
-    <main className="mx-auto max-w-3xl px-4 py-6">
-      <h1 className="text-2xl font-bold mb-4">Admin</h1>
+    <main className="mx-auto max-w-6xl px-4 py-8 grid gap-8">
+      <header>
+        <h1 className="text-3xl font-bold mb-2">Admin Dashboard</h1>
+        <p className="text-neutral-600 dark:text-neutral-400">Manage leagues, wrinkles, and global settings</p>
+      </header>
 
       {/* Global Admin Tools */}
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 mb-6">
-        <h2 className="text-lg font-semibold mb-3">Global Admin Tools</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Link href="/admin/teams" className="p-4 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:border-blue-500 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all group">
-            <div className="font-semibold text-blue-600 dark:text-blue-400 group-hover:text-blue-700 dark:group-hover:text-blue-300">🎨 Team Colors</div>
-            <div className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">Manage light & dark mode colors for all teams</div>
+      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5">
+        <h2 className="text-xl font-semibold mb-4">Global Admin Tools</h2>
+        
+        <div className="grid md:grid-cols-3 gap-4">
+          <Link href="/admin/teams" className="p-4 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors">
+            <div className="text-2xl mb-2">🎨</div>
+            <div className="font-semibold">Team Colors</div>
+            <div className="text-sm text-neutral-600 dark:text-neutral-400">Manage light & dark mode colors for all teams</div>
           </Link>
-          <Link href="/admin/schedule" className="p-4 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:border-blue-500 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all group">
-            <div className="font-semibold text-blue-600 dark:text-blue-400 group-hover:text-blue-700 dark:group-hover:text-blue-300">📅 Global Schedule</div>
-            <div className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">Sync schedule from ESPN</div>
+
+          <Link href="/admin/schedule" className="p-4 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors">
+            <div className="text-2xl mb-2">🗓️</div>
+            <div className="font-semibold">Global Schedule</div>
+            <div className="text-sm text-neutral-600 dark:text-neutral-400">Sync schedule from ESPN</div>
           </Link>
-          <Link href="/admin/invites" className="p-4 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:border-blue-500 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all group">
-            <div className="font-semibold text-blue-600 dark:text-blue-400 group-hover:text-blue-700 dark:group-hover:text-blue-300">✉️ Invites</div>
-            <div className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">Manage league invitations</div>
+
+          <Link href="/admin/invites" className="p-4 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors">
+            <div className="text-2xl mb-2">✉️</div>
+            <div className="font-semibold">Invites</div>
+            <div className="text-sm text-neutral-600 dark:text-neutral-400">Manage league invitations</div>
           </Link>
         </div>
       </section>
 
-      {/* League-Specific Management */}
-      {leagues.length > 0 && (
-        <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 mb-6">
-          <h2 className="text-lg font-semibold mb-3">League Management</h2>
-          <label className="grid gap-1 mb-4">
+      {/* League Management */}
+      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5">
+        <h2 className="text-xl font-semibold mb-4">League Management</h2>
+
+        <div className="mb-4">
+          <label className="grid gap-1">
             <span className="text-sm text-neutral-600 dark:text-neutral-400">Select League</span>
             <select
-              className="border rounded px-3 py-2 bg-transparent dark:border-neutral-700"
+              className="h-10 border rounded px-2 bg-transparent dark:border-neutral-700"
               value={selectedLeagueId}
-              onChange={(e) => setSelectedLeagueId(e.target.value)}
+              onChange={e => setSelectedLeagueId(e.target.value)}
             >
-              <option value="">Choose a league...</option>
+              <option value="">Select a league...</option>
               {leagues.map(l => (
-                <option key={l.id} value={l.id}>{l.name} ({l.season})</option>
+                <option key={l.id} value={l.id}>
+                  {l.name} ({l.season})
+                </option>
               ))}
             </select>
           </label>
+        </div>
 
-          {selectedLeague && (
-            <div className="grid gap-4">
-              {/* Manage League Button */}
-              <div className="pb-4 border-b dark:border-neutral-700">
-                <Link 
-                  href={`/admin/leagues/${selectedLeagueId}`}
-                  className="inline-block px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
+        {selectedLeagueId && (
+          <Link
+            href={`/admin/leagues/${selectedLeagueId}`}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+          >
+            <span>🎯</span>
+            <span className="font-semibold">Manage League (Members, Invites, Manual Picks)</span>
+          </Link>
+        )}
+
+        {selectedLeagueId && <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-2">Manage members, roles, invites, and create picks for users</p>}
+
+        {/* Auto-Assign Missed Picks */}
+        {selectedLeagueId && (
+          <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+            <h3 className="font-semibold mb-3">🤖 Auto-Assign Missed Picks</h3>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">
+              Automatically assign picks to users who missed the weekly deadline. Assigns losing teams (95%) or lowest-scoring teams (5%).
+            </p>
+
+            <div className="grid md:grid-cols-3 gap-3 mb-3">
+              <label className="grid gap-1">
+                <span className="text-xs text-neutral-600 dark:text-neutral-400">Season</span>
+                <input
+                  type="number"
+                  className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700"
+                  value={autoAssignSeason}
+                  onChange={e => setAutoAssignSeason(+e.target.value)}
+                />
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs text-neutral-600 dark:text-neutral-400">Week</span>
+                <select
+                  className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700"
+                  value={autoAssignWeek}
+                  onChange={e => setAutoAssignWeek(+e.target.value)}
                 >
-                  👥 Manage League (Members, Invites, Manual Picks)
-                </Link>
-                <p className="text-xs text-neutral-500 mt-2">Manage members, roles, invites, and create picks for users</p>
-              </div>
-
-              {/* Auto-Assign Picks */}
-              <div className="border-t pt-4 dark:border-neutral-700">
-                <h3 className="font-semibold mb-3">🤖 Auto-Assign Missed Picks</h3>
-                <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">Automatically assign picks to users who missed the weekly deadline. Assigns losing teams (95%) or lowest-scoring teams (5%).</p>
-                
-                <div className="flex gap-3 items-end mb-3">
-                  <label className="grid gap-1">
-                    <span className="text-xs text-neutral-600 dark:text-neutral-400">Season</span>
-                    <input type="number" className="h-9 w-24 border rounded px-2 bg-transparent dark:border-neutral-700" value={autoAssignSeason} onChange={e => setAutoAssignSeason(+e.target.value)} />
-                  </label>
-                  <label className="grid gap-1 flex-1">
-                    <span className="text-xs text-neutral-600 dark:text-neutral-400">Week</span>
-                    <select className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={autoAssignWeek} onChange={e => setAutoAssignWeek(+e.target.value)}>
-                      {Array.from({ length: 18 }).map((_, i) => <option key={i + 1} value={i + 1}>Week {i + 1}</option>)}
-                    </select>
-                  </label>
-                  <button onClick={runAutoAssignPicks} disabled={autoAssigning} className="h-9 px-4 rounded bg-black text-white disabled:opacity-50">
-                    {autoAssigning ? 'Assigning...' : 'Auto-Assign'}
-                  </button>
-                </div>
-                {autoAssignMsg && <div className="text-sm">{autoAssignMsg}</div>}
-                <p className="text-xs text-neutral-500 mt-2">⚠️ Only runs if all games for the week are FINAL</p>
-              </div>
-
-              {/* Wrinkles Management */}
-              <div className="border-t pt-4 dark:border-neutral-700">
-                <h3 className="font-semibold mb-3">🎲 Manage Wrinkles</h3>
-                
-                <div className="grid gap-3 mb-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <label className="grid gap-1">
-                      <span className="text-xs text-neutral-600 dark:text-neutral-400">Season</span>
-                      <input type="number" className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleSeason} onChange={e => setWrinkleSeason(+e.target.value)} />
-                    </label>
-                    <label className="grid gap-1">
-                      <span className="text-xs text-neutral-600 dark:text-neutral-400">Week</span>
-                      <input type="number" className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleWeek} onChange={e => setWrinkleWeek(+e.target.value)} />
-                    </label>
-                  </div>
-
-                  <label className="grid gap-1">
-                    <span className="text-xs text-neutral-600 dark:text-neutral-400">Type</span>
-                    <select className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleKind} onChange={e => setWrinkleKind(e.target.value as WrinkleKind)}>
-                      {WRINKLE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                    </select>
-                    <span className="text-xs text-neutral-500">{WRINKLE_TYPES.find(t => t.value === wrinkleKind)?.description}</span>
-                  </label>
-
-                  <label className="grid gap-1">
-                    <span className="text-xs text-neutral-600 dark:text-neutral-400">Name</span>
-                    <input className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleName} onChange={e => setWrinkleName(e.target.value)} />
-                  </label>
-
-                  {needsGame && (
-                    <label className="grid gap-1">
-                      <span className="text-xs text-neutral-600 dark:text-neutral-400">Game</span>
-                      <select className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleGameId} onChange={e => setWrinkleGameId(e.target.value)}>
-                        <option value="">Select game...</option>
-                        {gameOptions.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
-                      </select>
-                    </label>
-                  )}
-
-                  {needsSpread && (
-                    <label className="grid gap-1">
-                      <span className="text-xs text-neutral-600 dark:text-neutral-400">Spread (e.g., -3.5)</span>
-                      <input className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleSpread} onChange={e => setWrinkleSpread(e.target.value)} placeholder="-3.5" />
-                    </label>
-                  )}
-
-                  {wrinkleKind === 'winless_double' && (
-                    <div className="p-3 rounded bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-sm text-blue-900 dark:text-blue-100">
-                      <strong>Winless Double:</strong> Will auto-detect teams with 0 wins and mark existing picks for 2x points.
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-3 mb-3">
-                  <button onClick={createWrinkle} disabled={creatingWrinkle} className="px-4 py-2 rounded bg-black text-white disabled:opacity-50">
-                    {creatingWrinkle ? 'Creating...' : 'Create Wrinkle'}
-                  </button>
-                  {wrinkleMsg && <span className="text-sm">{wrinkleMsg}</span>}
-                </div>
-
-                {wrinkles.length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-semibold mb-2">Existing Wrinkles - Week {wrinkleWeek}</h4>
-                    <ul className="grid gap-2">
-                      {wrinkles.map(w => (
-                        <li key={w.id} className="flex items-center justify-between border rounded px-3 py-2 dark:border-neutral-700 text-sm">
-                          <div>
-                            <div className="font-medium">{w.name}</div>
-                            <div className="text-xs text-neutral-500">{WRINKLE_TYPES.find(t => t.value === w.kind)?.label} • {w.status}</div>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-
-              {/* Team Records */}
-              <div className="border-t pt-4 dark:border-neutral-700">
-                <h3 className="font-semibold mb-3">📊 Team Records Calculator</h3>
-                <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">Calculate team records for Winless Double and OOF wrinkles.</p>
-                
-                <div className="flex gap-3 items-end mb-3">
-                  <label className="grid gap-1">
-                    <span className="text-xs text-neutral-600 dark:text-neutral-400">Season</span>
-                    <input type="number" className="h-9 w-24 border rounded px-2 bg-transparent dark:border-neutral-700" value={recordsSeason} onChange={e => setRecordsSeason(+e.target.value)} />
-                  </label>
-                  <label className="grid gap-1 flex-1">
-                    <span className="text-xs text-neutral-600 dark:text-neutral-400">Week</span>
-                    <select className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={recordsWeek} onChange={e => setRecordsWeek(+e.target.value)}>
-                      {Array.from({ length: 18 }).map((_, i) => <option key={i + 1} value={i + 1}>Week {i + 1}</option>)}
-                    </select>
-                  </label>
-                  <button onClick={refreshTeamRecords} disabled={refreshingRecords} className="h-9 px-4 rounded bg-black text-white disabled:opacity-50">
-                    {refreshingRecords ? 'Calculating...' : 'Refresh'}
-                  </button>
-                </div>
-                {recordsMsg && <div className="text-sm">{recordsMsg}</div>}
+                  {Array.from({ length: 18 }, (_, i) => i + 1).map(w => (
+                    <option key={w} value={w}>Week {w}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex items-end">
+                <button
+                  onClick={autoAssignPicks}
+                  disabled={autoAssigning}
+                  className="h-9 w-full px-4 rounded bg-black text-white dark:bg-white dark:text-black disabled:opacity-50"
+                >
+                  {autoAssigning ? 'Assigning...' : 'Auto-Assign'}
+                </button>
               </div>
             </div>
-          )}
-        </section>
-      )}
+            
+            <div className="p-3 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-900 dark:text-amber-100">
+              <strong>⚠️ Only runs if all games for the week are FINAL</strong>
+            </div>
 
-      {/* Create League */}
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 mb-6">
-        <h2 className="text-lg font-semibold mb-3">Create a league</h2>
-        <form onSubmit={createLeague} className="grid gap-3 max-w-xl">
+            {autoAssignMsg && <div className="mt-2 text-sm">{autoAssignMsg}</div>}
+          </div>
+        )}
+
+        {/* Manage Wrinkles */}
+        {selectedLeagueId && (
+          <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+            <h3 className="font-semibold mb-3">🎲 Manage Wrinkles</h3>
+            
+            <div className="grid gap-3 mb-4">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="grid gap-1">
+                  <span className="text-xs text-neutral-600 dark:text-neutral-400">Season</span>
+                  <input type="number" className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleSeason} onChange={e => setWrinkleSeason(+e.target.value)} />
+                </label>
+                <label className="grid gap-1">
+                  <span className="text-xs text-neutral-600 dark:text-neutral-400">Week</span>
+                  <input type="number" className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleWeek} onChange={e => setWrinkleWeek(+e.target.value)} />
+                </label>
+              </div>
+
+              <label className="grid gap-1">
+                <span className="text-xs text-neutral-600 dark:text-neutral-400">Type</span>
+                <select className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleKind} onChange={e => setWrinkleKind(e.target.value as WrinkleKind)}>
+                  {WRINKLE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+                <span className="text-xs text-neutral-500">{WRINKLE_TYPES.find(t => t.value === wrinkleKind)?.description}</span>
+              </label>
+
+              <label className="grid gap-1">
+                <span className="text-xs text-neutral-600 dark:text-neutral-400">Name</span>
+                <input className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleName} onChange={e => setWrinkleName(e.target.value)} />
+              </label>
+
+              {isOOF && (
+                <div className="p-3 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-900 dark:text-amber-100">
+                  <strong>OOF Bonus Pick:</strong> Games will be automatically selected based on teams with win percentage below .400 using Week {wrinkleWeek - 1} records.
+                </div>
+              )}
+
+              {needsGame && !isOOF && (
+                <label className="grid gap-1">
+                  <span className="text-xs text-neutral-600 dark:text-neutral-400">Game</span>
+                  <select className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleGameId} onChange={e => setWrinkleGameId(e.target.value)}>
+                    <option value="">Select game...</option>
+                    {gameOptions.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
+                  </select>
+                </label>
+              )}
+
+              {needsSpread && (
+                <label className="grid gap-1">
+                  <span className="text-xs text-neutral-600 dark:text-neutral-400">Spread (e.g., -3.5)</span>
+                  <input className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700" value={wrinkleSpread} onChange={e => setWrinkleSpread(e.target.value)} placeholder="-3.5" />
+                </label>
+              )}
+
+              {wrinkleKind === 'winless_double' && (
+                <div className="p-3 rounded bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-sm text-blue-900 dark:text-blue-100">
+                  <strong>Winless Double:</strong> Will auto-detect teams with 0 wins and mark existing picks for 2x points.
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={createWrinkle}
+                disabled={creatingWrinkle || !selectedLeagueId}
+                className="px-4 py-2 rounded bg-black text-white dark:bg-white dark:text-black disabled:opacity-50"
+              >
+                {creatingWrinkle ? 'Creating...' : 'Create Wrinkle'}
+              </button>
+              {wrinkleMsg && <span className="text-sm">{wrinkleMsg}</span>}
+            </div>
+
+            {wrinkles.length > 0 && (
+              <div className="mt-4">
+                <h4 className="text-sm font-semibold mb-2">Existing Wrinkles - Week {wrinkleWeek}</h4>
+                <ul className="grid gap-2">
+                  {wrinkles.map(w => (
+                    <li key={w.id} className="flex items-center justify-between border rounded px-3 py-2 dark:border-neutral-700 text-sm">
+                      <div>
+                        <div className="font-medium">{w.name}</div>
+                        <div className="text-xs text-neutral-500">
+                          {WRINKLE_TYPES.find(t => t.value === w.kind)?.label} • {w.status} • +{w.extra_picks} pick{w.extra_picks !== 1 ? 's' : ''}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Team Records Update */}
+        {selectedLeagueId && (
+          <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+            <h3 className="font-semibold mb-3">📊 Update Team Records</h3>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">
+              Calculate cumulative team win-loss records for OOF wrinkle eligibility.
+            </p>
+
+            <div className="grid md:grid-cols-3 gap-3 mb-3">
+              <label className="grid gap-1">
+                <span className="text-xs text-neutral-600 dark:text-neutral-400">Season</span>
+                <input
+                  type="number"
+                  className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700"
+                  value={recordsSeason}
+                  onChange={e => setRecordsSeason(+e.target.value)}
+                />
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs text-neutral-600 dark:text-neutral-400">Week</span>
+                <input
+                  type="number"
+                  className="h-9 border rounded px-2 bg-transparent dark:border-neutral-700"
+                  value={recordsWeek}
+                  onChange={e => setRecordsWeek(+e.target.value)}
+                />
+              </label>
+              <div className="flex items-end">
+                <button
+                  onClick={refreshTeamRecords}
+                  disabled={refreshingRecords}
+                  className="h-9 w-full px-4 rounded bg-black text-white dark:bg-white dark:text-black disabled:opacity-50"
+                >
+                  {refreshingRecords ? 'Updating...' : 'Update Records'}
+                </button>
+              </div>
+            </div>
+
+            {recordsMsg && <div className="text-sm">{recordsMsg}</div>}
+          </div>
+        )}
+      </section>
+
+      {/* Create New League */}
+      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5">
+        <h2 className="text-xl font-semibold mb-4">Create New League</h2>
+
+        <div className="grid md:grid-cols-2 gap-3 mb-3">
           <label className="grid gap-1">
-            <span className="text-sm text-neutral-600 dark:text-neutral-400">Name</span>
-            <input className="border rounded px-3 py-2 bg-transparent dark:border-neutral-700" value={name} onChange={(e) => setName(e.target.value)} placeholder="2025 Big Board" required />
+            <span className="text-sm text-neutral-600 dark:text-neutral-400">League Name</span>
+            <input
+              className="h-10 border rounded px-2 bg-transparent dark:border-neutral-700"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="My League"
+            />
           </label>
           <label className="grid gap-1">
             <span className="text-sm text-neutral-600 dark:text-neutral-400">Season</span>
-            <input type="number" className="border rounded px-3 py-2 bg-transparent dark:border-neutral-700" value={season} onChange={(e) => setSeason(Number(e.target.value))} min={2000} max={3000} required />
+            <input
+              type="number"
+              className="h-10 border rounded px-2 bg-transparent dark:border-neutral-700"
+              value={season}
+              onChange={e => setSeason(+e.target.value)}
+            />
           </label>
-          <div className="flex items-center gap-3">
-            <button disabled={busyCreate} className="px-4 py-2 rounded-lg border dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50">
-              {busyCreate ? 'Creating…' : 'Create league'}
-            </button>
-            {msg && <span className="text-sm">{msg}</span>}
-          </div>
-        </form>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={createLeague}
+            disabled={busyCreate || !name.trim()}
+            className="px-4 py-2 rounded bg-black text-white dark:bg-white dark:text-black disabled:opacity-50"
+          >
+            {busyCreate ? 'Creating...' : 'Create League'}
+          </button>
+          {msg && <span className="text-sm">{msg}</span>}
+        </div>
       </section>
 
       {/* Join League */}
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5 mb-6">
-        <h2 className="text-lg font-semibold mb-3">Join a league</h2>
-        <form onSubmit={joinExisting} className="flex flex-col sm:flex-row gap-3 max-w-xl">
-          <input className="border rounded px-3 py-2 bg-transparent dark:border-neutral-700 flex-1" placeholder="Paste invite link or league id…" value={joinInput} onChange={(e) => setJoinInput(e.target.value)} />
-          <button disabled={busyJoin} className="px-4 py-2 rounded-lg border dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50">
-            {busyJoin ? 'Joining…' : 'Join'}
-          </button>
-        </form>
-        {joinMsg && <p className="text-sm mt-2">{joinMsg}</p>}
-      </section>
+      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5">
+        <h2 className="text-xl font-semibold mb-4">Join Existing League</h2>
 
-      {/* Your Leagues */}
-      <section className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 md:p-5">
-        <h2 className="text-lg font-semibold mb-3">Your leagues</h2>
-        {leagues.length === 0 ? (
-          <div className="text-sm text-neutral-500 dark:text-neutral-400">No leagues yet</div>
-        ) : (
-          <ul className="grid gap-2">
-            {leagues.map((league) => (
-              <li key={league.id} className="flex items-center justify-between border rounded-lg px-3 py-2 dark:border-neutral-700">
-                <div>
-                  <div className="font-semibold">{league.name}</div>
-                  <div className="text-xs text-neutral-500 dark:text-neutral-400">Season {league.season}</div>
-                </div>
-                <button onClick={() => copyLink(league.id)} className="text-xs px-2 py-1 rounded border dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800">
-                  Copy invite link
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className="mb-3">
+          <label className="grid gap-1">
+            <span className="text-sm text-neutral-600 dark:text-neutral-400">Invite Link or League ID</span>
+            <input
+              className="h-10 border rounded px-2 bg-transparent dark:border-neutral-700"
+              value={joinInput}
+              onChange={e => setJoinInput(e.target.value)}
+              placeholder="https://... or 00000000-0000-0000-0000-000000000000"
+            />
+          </label>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={joinLeague}
+            disabled={!joinInput.trim()}
+            className="px-4 py-2 rounded bg-black text-white dark:bg-white dark:text-black disabled:opacity-50"
+          >
+            Join League
+          </button>
+          {joinMsg && <span className="text-sm">{joinMsg}</span>}
+        </div>
       </section>
     </main>
   )
