@@ -84,9 +84,9 @@ export default function LeagueWrinklesPage() {
   }, [season, week])
 
   // OOF wrinkles don't need manual game selection
-  const needsGame = (kind === 'bonus_game' || kind === 'bonus_game_ats') && kind !== 'bonus_game_oof'
-  const needsSpread = kind === 'bonus_game_ats'
   const isOOF = kind === 'bonus_game_oof'
+  const needsGame = (kind === 'bonus_game' || kind === 'bonus_game_ats')
+  const needsSpread = kind === 'bonus_game_ats'
   
   const canSubmit =
     leagueId &&
@@ -223,7 +223,7 @@ export default function LeagueWrinklesPage() {
           </div>
         )}
 
-        {['bonus_game','bonus_game_ats'].includes(kind) && !isOOF && (
+        {needsGame && !isOOF && (
           <>
             <label className="text-sm">Game
               <select className="block mt-1 w-full h-9 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 text-sm"
