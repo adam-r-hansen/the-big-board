@@ -1,6 +1,6 @@
 // app/api/admin/update-team-records/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase'
+import { createClient } from '@supabase/supabase-js'
 
 export const runtime = 'nodejs'
 export const revalidate = 0
@@ -10,6 +10,15 @@ function json(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+  })
+}
+
+function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE!
+  if (!url || !key) throw new Error('Missing Supabase credentials')
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
   })
 }
 
