@@ -1,6 +1,6 @@
 // app/api/admin/update-team-records/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/utils/supabase/admin'
+import { createAdminClient } from '@/lib/supabase'
 
 export const runtime = 'nodejs'
 export const revalidate = 0
