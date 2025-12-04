@@ -75,6 +75,11 @@ export async function POST(req: NextRequest) {
       targetWeek = latestGames[0].week
     }
 
+    // TypeScript guard - should never happen due to logic above
+    if (!targetWeek) {
+      return json({ error: 'Could not determine target week' }, 500)
+    }
+
     // Get all teams
     const { data: teams, error: tErr } = await sb
       .from('teams')
