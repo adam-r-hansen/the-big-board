@@ -1,0 +1,41 @@
+name: Team Records Update
+
+on:
+  # Runs daily at 3:00 AM ET (8:00 AM UTC) Tuesday through Wednesday
+  # This catches Monday Night Football and any score corrections
+  schedule:
+    - cron: '0 8 * * 2-3'  # Tuesday-Wednesday at 8:00 AM UTC (3:00 AM ET)
+  # Manual run button in the Actions tab
+  workflow_dispatch:
+
+jobs:
+  update-records:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call Team Records Update API
+        env:
+          VERCEL_URL: ${{ secrets.VERCEL_URL }}
+        run: |
+          # Call the API endpoint to update team records
+          # It will auto-detect current season and most recent completed week
+          
+          echo "Calling team records update API..."
+          
+          CODE=$(curl -sS -o resp.json -w "%{http_code}" -X POST \
+            "https://${VERCEL_URL}/api/admin/update-team-records" \
+            -H "Content-Type: application/json" \
+            -d '{}') || true
+          
+          echo "HTTP Status: $CODE"
+          echo "Response:"
+          cat resp.json | jq '.' || cat resp.json
+          
+          # Check if successful
+          if [ "$CODE" -ge 200 ] && [ "$CODE" -lt 300 ]; then
+            echo "✅ Team records updated successfully"
+            exit 0
+          else
+            echo "❌ Team records update failed"
+            exit 1
+          fi
